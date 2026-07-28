@@ -73,7 +73,7 @@ Preqrequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 7. Examine your `apps/` folder to look at how the hello-world example is constructed.
 
 ## Creating your own apps
-You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Harbor will then recognize it under `<your_app_id>`. See [docs/apps.md](docs/apps.md) for more information on the layout of apps or just check out the examples in this repo. A lot of the examples are apps that I actually deploy to my local homelab.
+You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Harbor will then recognize it under `<your_app_id>`. The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
 
 
 ## Audience
@@ -84,7 +84,9 @@ In the future, Harbor will target more non technical users by building out a web
 At the moment, I would love feedback on your experience using harbor or creating happs.
 
 
-## Future work & Roadmap
+## Development status and Roadmap
+
+Harbor is currently in a **pre-beta** stage. I do not yet consider it feature complete for a v1.0 release. I am regularly making structural changes without a forward migration path. You are welcome to join development if you like!
 
 (in rough order of priority)
 
