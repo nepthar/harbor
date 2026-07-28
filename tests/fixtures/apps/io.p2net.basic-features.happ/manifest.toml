@@ -1,0 +1,24 @@
+# Fixture happ: exercises config (plain + secret) and data/temp/app volumes.
+
+[app]
+version      = "0.1.0"
+display_name = "Basic Features"
+description  = "Config and volumes fixture"
+runtime      = "image"
+
+[config]
+# Generated automatically on first stage (secret, default = auto).
+admin_pass = { secret = true, default = "auto" }
+# Required: no default, must be set by the operator before starting.
+admin_user = {}
+
+[volumes]
+config = { kind = "data" }
+cache  = { kind = "temp" }
+bin    = { kind = "app", src = "bin" }
+
+[run.main]
+image  = "alpine:latest"
+cmd    = ["/bin/sh", "-c", "/myapp/bin/hello.sh"]
+env    = { ADMIN_USER = "${admin_user}", ADMIN_PASS = "${admin_pass}" }
+volumes = { config = "/myapp/config", cache = "/myapp/cache", bin = "/myapp/bin" }

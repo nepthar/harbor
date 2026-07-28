@@ -1,0 +1,15 @@
+# Fixture happ: a single external volume that blocks start until it is bound.
+
+[app]
+version      = "0.1.0"
+display_name = "External Volumes"
+description  = "External bind volume fixture"
+runtime      = "image"
+
+[volumes]
+extvol1 = { kind = "ext", desc = "Where your extra stuff lives" }
+
+[run.main]
+image  = "alpine:latest"
+cmd    = ["/usr/bin/env", "ls", "-la", "/extvol1"]
+volumes = { extvol1 = "/extvol1" }

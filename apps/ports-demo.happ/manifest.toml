@@ -1,0 +1,11 @@
+[app]
+version      = "0.1.0"
+display_name = "Ports Demo"
+description  = "Publishes one allocated and one pinned LAN port"
+
+[run.main]
+image = "nginx:alpine"
+
+[run.main.routes]
+auto   = { port = "80" }
+pinned = { port = "9000:80" }

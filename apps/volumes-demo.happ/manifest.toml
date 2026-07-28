@@ -1,0 +1,15 @@
+[app]
+version      = "0.1.0"
+display_name = "Volume Showcase"
+description  = "Demonstrates explicit binding of a host directory"
+
+[volumes]
+app   = { kind = "app", desc = "The contents of the ./app folder" }
+state = { kind = "data", desc = "A data-type volume called state to store the state of this app" }
+files = { kind = "ext", desc = "Host directory to inspect, must be set before running", readonly = true }
+
+[run.main]
+image   = "alpine:latest"
+cmd     = ["/bin/sh", "-c", "/harbor/app/list_volumes.sh"]
+volumes = { app = "/harbor/app", state = "/harbor/state", files = "/harbor/host_files" }
+restart = "no"
