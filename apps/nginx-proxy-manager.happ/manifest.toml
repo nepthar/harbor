@@ -1,0 +1,14 @@
+[app]
+version      = "1.0.0"
+display_name = "Nginx Proxy Manager"
+description  = "Reverse proxy, w/ ssl certs managed by letsencrypt. Pinned to :latest"
+source       = "github:nepthar/harbor/main/apps/nginx-proxy-manager.happ"
+network_mode = "host"
+
+[volumes]
+data    = { kind = "data" }
+letsenc = { kind = "data" }
+
+[run.main]
+image   = "jc21/nginx-proxy-manager:latest"
+volumes = { data = "/data", letsenc = "/etc/letsencrypt" }

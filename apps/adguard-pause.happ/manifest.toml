@@ -1,0 +1,26 @@
+# Runs a service that pauses adguard, which is bookmarkable
+
+[app]
+version      = "0.1.0"
+display_name = "Adguard Pause Button"
+description  = "A service that pauses adguard DNS blocking for a while via giant button"
+subdomain    = "ag-pause"
+source       = "github:nepthar/harbor/main/apps/adguard-pause.happ"
+
+[config]
+ag_user = { desc = "Adguard login username"}
+ag_pass = { desc = "Adguard login password", secret = true }
+ag_host = { desc = "Adguard's admin http url"}
+pause_minutes = { desc = "Number of minutes to pause when the button is pressed", default = "15" }
+
+[volumes]
+script = { kind = "app", src = "app.py" }
+
+[run.main]
+image   = "python:3.12"
+cmd = ["python", "/app/app.py"]
+env = { AGH_USER = "${ag_user}", AGH_PASS = "${ag_pass}", AGH_URL = "${ag_host}", PAUSE_MINUTES = "${pause_minutes}", PORT = "8099" }
+volumes = { script = "/app/app.py" }
+
+[run.main.routes]
+main = { port = "8099", publish = "web" }

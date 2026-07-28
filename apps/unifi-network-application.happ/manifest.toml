@@ -1,0 +1,49 @@
+[app]
+version      = "1.0.0"
+display_name = "Unifi Network Application"
+subdomain    = "unifi"
+source       = "github:nepthar/harbor/main/apps/unifi-network-application.happ"
+
+[config]
+# This secret is automagically generated upon first install
+mongo_pass = { desc = "MongoDB Password", secret = true, default = "auto" }
+
+[volumes]
+db_data     = { kind = "data" }
+app_config  = { kind = "data" }
+init_script = { kind = "app", src = "init-mongo.sh"}
+
+[run.unifi-db]
+image = "docker.io/mongo:8.0.11"
+volumes = { db_data = "/data/db", init_script = "/docker-entrypoint-initdb.d/init-mongo.sh" }
+
+[run.unifi-db.env]
+MONGO_USER = "unifi"
+MONGO_PASS = "${mongo_pass}"
+MONGO_DBNAME = "unifi"
+MONGO_AUTHSOURCE = "admin"
+
+[run.main]
+image = "lscr.io/linuxserver/unifi-network-application:10.0.162"
+volumes = { app_config = "/config" }
+
+[run.main.routes]
+admin        = { port = "8443:8443", publish = "web", scheme = "https" }
+stun         = { port = "3478:3478" }
+ap_discovery = { port = "10001:10001/udp" }
+device_comm  = { port = "8080:8080" }
+discover_l2  = { port = "1900:1900/udp" }
+
+[run.main.env]
+PUID = "1000"
+PGID = "1000"
+TZ = "Etc/UTC"
+MONGO_USER = "unifi"
+MONGO_PASS = "${mongo_pass}"
+MONGO_HOST = "unifi-db"
+MONGO_PORT = "27017"
+MONGO_DBNAME = "unifi"
+MONGO_AUTHSOURCE = "admin"
+MEM_LIMIT = "1024"
+MEM_STARTUP = "1024"
+MONGO_TLS = ""

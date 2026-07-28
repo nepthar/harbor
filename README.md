@@ -5,9 +5,8 @@ Harbor is an opinionated runtime and management layer that makes container stack
 ## How does it work? 
 Harbor runs and manages "happs", that 1) define a `manifest.toml` which fully describe the container stack and 2) optionally contain any helper scripts or files. Here's a simplified example:
 
-```toml
 unifi-network-application.happ/manifest.toml:
-
+```toml
 [app]
 description = "Unifi Network Application from linuxserver.io"
 
