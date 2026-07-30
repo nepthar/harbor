@@ -245,9 +245,7 @@ def harbor_env(
   for happ in FIXTURES.glob("*.happ"):
     shutil.copytree(happ, apps / happ.name)
 
-  LogTab(root / "master.key").write(
-    "master_key", "0" * 64
-  )
+  LogTab(root / "master.key").write("master_key", "0" * 64)
   config = root / "config.toml"
   config.write_text(CONFIG)
 

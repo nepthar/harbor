@@ -73,8 +73,8 @@ class Config:
     return self.harbor_root / "harbordb.logtab"
 
   @property
-  def stacks_activity_log(self) -> Path:
-    return self.harbor_root / "stacks_activity.logtab"
+  def activity_log(self) -> Path:
+    return self.harbor_root / "activity.logtab"
 
   def app_run_path(self, app_id: AppID) -> Path:
     return self.run_root / app_id

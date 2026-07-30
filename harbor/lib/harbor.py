@@ -2,9 +2,12 @@
 A small facade that caches the per-invocation harbordb and docker status.
 """
 
+import json
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -12,6 +15,7 @@ from filelock import FileLock, Timeout
 from harbor.lib.apps import AppID
 from harbor.lib.config import Config
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
+from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
 from harbor.lib.store import AppDB, HarborDB
 
@@ -20,6 +24,10 @@ logger = logging.getLogger("harbor")
 # Long enough to ride out another harbor finishing a normal command, short
 # enough that a stale lockfile does not look like a hang.
 LOCK_TIMEOUT = 5.0
+
+# Where lock activity is recorded. Not an app id, so it cannot collide with the
+# per-app `<app_id>/status` keys the same log carries.
+LOCK_KEY = "harbor/lock"
 
 
 def _resolve_app_query(candidates: list[AppID], query: str) -> list[AppID]:
@@ -45,24 +53,68 @@ class HarborCtx:
     self._harbordb: HarborDB | None = None
     self._observations: dict[str, AppObservation] | None = None
     self._lock = FileLock(self.config.harbor_lockfile_path)
+    self._lock_depth = 0
 
   @contextmanager
-  def lock(self) -> Iterator[None]:
+  def lock(self, by: str) -> Iterator[None]:
     """Hold the harbor lock for the duration of a command.
 
-    Reentrant, so nesting is safe. Waiting is bounded: without a timeout a
-    stale lockfile is indistinguishable from a hang, with no output to explain
-    it.
+    Every acquire and release is recorded in the activity log under
+    ``harbor/lock``, so a command that times out waiting can say what it is
+    waiting *for*: a long command reads as a hang against a 5s timeout
+    otherwise. The log outlives the process, so even a crashed run leaves the
+    trail that explains the lock nobody is holding any more.
+
+    Reentrant, so nesting is safe; only the outermost acquire is recorded.
     """
     try:
       with self._lock.acquire(timeout=LOCK_TIMEOUT):
-        yield
+        self._lock_depth += 1
+        outermost = self._lock_depth == 1
+        try:
+          if outermost:
+            self._record_lock("acquired", by)
+          yield
+        finally:
+          if outermost:
+            self._record_lock("released", by)
+          self._lock_depth -= 1
     except Timeout:
       raise ValueError(
         f"Another process has locked harbor. Giving up after "
         f"{LOCK_TIMEOUT:g} seconds.\n"
+        f"{self._lock_holder_hint()}"
         f"If no other harbor is running, remove {self.config.harbor_lockfile_path}"
       ) from None
+
+  def _record_lock(self, state: str, by: str) -> None:
+    LogTab(self.config.activity_log).write(
+      LOCK_KEY,
+      json.dumps(
+        {
+          "state": state,
+          "by": by,
+          "pid": os.getpid(),
+          "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        },
+        separators=(",", ":"),
+      ),
+    )
+
+  def _lock_holder_hint(self) -> str:
+    """What the last lock record says, for a timed-out acquire."""
+    raw = LogTab(self.config.activity_log).read(LOCK_KEY)
+    if not raw:
+      return ""
+    try:
+      record = json.loads(raw)
+    except json.JSONDecodeError:
+      return ""
+    held = "Held" if record.get("state") == "acquired" else "Last held"
+    return (
+      f"{held} by `harbor {record.get('by', '?')}` "
+      f"(pid {record.get('pid', '?')}, since {record.get('at', '?')}).\n"
+    )
 
   def harbor_db(self) -> HarborDB:
     if self._harbordb is None:

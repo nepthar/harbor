@@ -38,7 +38,7 @@ class JsonConfigStore(ConfigStore):
   def __init__(self, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     self._table = LogTab(path)
-  
+
   def write(self, key: str, value: Any) -> None:
     self._table.write(key, json.dumps(value, separators=(",", ":")))
 

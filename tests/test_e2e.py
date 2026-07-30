@@ -15,7 +15,7 @@ from filelock import FileLock
 from harbor.lib import lifecycle
 from harbor.lib.apps import read_app_actions, read_last_app_action
 from harbor.lib.config import VOLUME_KINDS, load_config_file
-from harbor.lib.harbor import LOCK_TIMEOUT, HarborCtx
+from harbor.lib.harbor import LOCK_KEY, LOCK_TIMEOUT, HarborCtx
 from harbor.lib.logtab import LogTab
 from harbor.lib.store import HarborDB
 
@@ -514,18 +514,24 @@ def test_down_uses_staged_manifest_when_bundle_is_missing(harbor_env, monkeypatc
 
 
 def test_readme_quickstart_from_repo_examples(harbor_env):
-  """Getting-started path from a checkout: up examples/ports-demo.happ + ps."""
-  happ = Path(__file__).parents[1] / "examples" / "ports-demo.happ"
+  """Getting-started path from a checkout: up an apps/ happ by path, then ps.
+
+  Deliberately a happ shipped in the repo rather than a tests/fixtures one:
+  this is the path a reader follows straight from the README, so it should
+  break if the example happs do. `demo-routes` because its `lan_only` route
+  keeps the LAN receipt line under test.
+  """
+  happ = Path(__file__).parents[1] / "apps" / "demo-routes.happ"
   assert happ.is_dir(), happ
 
   started = harbor_env.run("up", str(happ))
   assert started.returncode == 0, started.stderr
-  assert "Running ports-demo" in started.stdout
+  assert "Running demo-routes" in started.stdout
   assert "LAN:" in started.stdout
 
   ps = harbor_env.run("ps")
   assert ps.returncode == 0, ps.stderr
-  assert "ports-demo" in ps.stdout
+  assert "demo-routes" in ps.stdout
 
 
 def test_status_and_inspect(harbor_env):
@@ -604,6 +610,72 @@ def test_gen_masterkey_appends_to_the_keyfile(harbor_env):
   assert after.startswith(before) and len(after) > len(before)
 
 
+def test_the_lock_is_recorded_then_released(harbor_env):
+  """A held lock and a released one are both visible in the activity log."""
+  ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  activity = LogTab(ctx.config.activity_log)
+
+  with ctx.lock("ps"):
+    held = json.loads(activity.read(LOCK_KEY))
+    assert held["state"] == "acquired"
+    assert held["by"] == "ps"
+    assert held["pid"] == os.getpid()
+
+  released = json.loads(activity.read(LOCK_KEY))
+  assert released["state"] == "released"
+  assert released["by"] == "ps"
+
+
+def test_nested_locks_record_only_the_outermost(harbor_env):
+  """Reentrancy must not log a release while the lock is still held."""
+  ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  activity = LogTab(ctx.config.activity_log)
+
+  with ctx.lock("outer"):
+    with ctx.lock("inner"):
+      pass
+    still_held = json.loads(activity.read(LOCK_KEY))
+    assert still_held["state"] == "acquired"
+    assert still_held["by"] == "outer"
+
+  assert json.loads(activity.read(LOCK_KEY))["state"] == "released"
+
+
+def test_the_lock_timeout_message_names_the_holder(harbor_env):
+  """The whole point of the record: explain a wait instead of just failing."""
+  config = load_config_file(harbor_env.config, "test")
+  LogTab(config.activity_log).write(
+    LOCK_KEY,
+    json.dumps(
+      {
+        "state": "acquired",
+        "by": "up ports-demo",
+        "pid": 999999,
+        "at": "2026-07-29T18:22:04-06:00",
+      }
+    ),
+  )
+
+  with FileLock(harbor_env.harbor_lockfile_path):
+    blocked = harbor_env.run("ps", timeout=LOCK_TIMEOUT + 20)
+
+  assert blocked.returncode == 1
+  assert "up ports-demo" in blocked.stderr
+  assert "999999" in blocked.stderr
+
+
+def test_the_recorded_holder_is_the_command_not_the_argv(harbor_env):
+  """`config --set k=secret` must never put the value in the activity log."""
+  app_id = "io.p2net.basic-features"
+  assert harbor_env.run("config", app_id, "--set", "admin_pass=hunter2").returncode == 0
+
+  config = load_config_file(harbor_env.config, "test")
+  recorded = LogTab(config.activity_log).read(LOCK_KEY)
+
+  assert "hunter2" not in recorded
+  assert json.loads(recorded)["by"] == f"config {app_id}"
+
+
 def test_a_command_holds_the_harbor_lock(harbor_env):
   """One lock per invocation, so a second harbor waits on the first."""
   lock = FileLock(harbor_env.harbor_lockfile_path)
@@ -661,7 +733,7 @@ def test_purged_is_recorded_when_an_app_is_removed(harbor_env):
 
   assert not (harbor_env.run_root / app_id).exists()
   assert read_last_app_action(app_id, config) == "purged"
-  assert f"{app_id}/status" in LogTab(config.stacks_activity_log).load()
+  assert f"{app_id}/status" in LogTab(config.activity_log).load()
 
 
 # --- ps status accuracy ----------------------------------------------------

@@ -73,6 +73,19 @@ class StdConn(Conn):
     return input(prompt)
 
 
+def _lock_description(args: argparse.Namespace) -> str:
+  """What to record as the lock holder: the command and its app, nothing more.
+
+  Deliberately not `sys.argv`, which would put `config --set pass=hunter2` into
+  a plaintext log that outlives the command.
+  """
+  for attr in ("app", "app_id", "target"):
+    target = getattr(args, attr, None)
+    if isinstance(target, str) and target:
+      return f"{args.command} {target}"
+  return str(args.command)
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(prog="harbor", description="Harbor CLI")
   parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
@@ -114,7 +127,7 @@ def main() -> None:
       # Commands opt out with `set_defaults(holds_lock=False)` when they are
       # long-running and change no state -- see harbor/cli/logs.py.
       if getattr(args, "holds_lock", True):
-        with ctx.lock():
+        with ctx.lock(_lock_description(args)):
           args.func(args, ctx, conn)
       else:
         args.func(args, ctx, conn)

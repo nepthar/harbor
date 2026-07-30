@@ -64,13 +64,13 @@ def resolve_app_or_path(ctx: HarborCtx, raw: str) -> tuple[AppID, Path]:
 def record_app_action(action: str, app_id: AppID, config: Config) -> None:
   """Record informational last-action metadata."""
   key = f"{app_id}/status"
-  LogTab(config.stacks_activity_log).write(key, action)
+  LogTab(config.activity_log).write(key, action)
 
 
 def read_last_app_action(app_id: AppID, config: Config) -> str | None:
   """Read informational last-action metadata."""
   key = f"{app_id}/status"
-  return LogTab(config.stacks_activity_log).read(key)
+  return LogTab(config.activity_log).read(key)
 
 
 def read_app_actions(config: Config) -> dict[str, str]:
@@ -80,7 +80,7 @@ def read_app_actions(config: Config) -> dict[str, str]:
   once rather than per app.
   """
   actions: dict[str, str] = {}
-  for key, action in LogTab(config.stacks_activity_log).load().items():
+  for key, action in LogTab(config.activity_log).load().items():
     app_id, _, field = key.rpartition("/")
     if field == "status" and app_id:
       actions[app_id] = action

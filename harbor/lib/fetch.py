@@ -188,10 +188,7 @@ def _rate_limited(resp: requests.Response) -> bool:
   """
   if resp.status_code == 429:
     return True
-  return (
-    resp.status_code == 403
-    and resp.headers.get("x-ratelimit-remaining") == "0"
-  )
+  return resp.status_code == 403 and resp.headers.get("x-ratelimit-remaining") == "0"
 
 
 def _get(url: str, *, accept: str, stream: bool = False) -> requests.Response:
