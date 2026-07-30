@@ -51,9 +51,9 @@ def _status(observation: AppObservation, ctx: HarborCtx) -> str:
     return "broken" if observation.run_dir_exists else "orphaned"
 
   try:
-    stack = app_stack(ctx.app_path(observation.app_id))
+    stack = app_stack(ctx.app_path(observation.app_id), observation.app_id)
   except ValueError:
-    # A moved happ directory or an unparseable manifest -- the app could not be
-    # loaded at all, which is not the same as it needing configuration.
+    # A missing or unparseable staged manifest -- the app could not be loaded
+    # at all, which is not the same as it needing configuration.
     return "unreadable"
   return "needs config" if load_run_data(stack, ctx).start_blockers else "exited"

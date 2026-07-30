@@ -1,17 +1,16 @@
 import argparse
 
 from harbor.cli.kv import parse_kv
-from harbor.lib.apps import resolve_app_or_path
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import up
+from harbor.lib.lifecycle import catalog_entry, start
 from harbor.lib.receipt import capability_receipt, location_receipt
 from harbor.lib.util import Conn
 
 
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
-    "up",
-    help="Materialize and start a happ (accepts app id or .happ path)",
+    "start",
+    help="Start a happ, staging it first if needed (accepts app id or .happ path)",
   )
   parser.add_argument(
     "app",
@@ -38,10 +37,14 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  app, source = resolve_app_or_path(ctx, args.app)
+  app, linked = catalog_entry(ctx, args.app)
+  if linked is not None:
+    conn.out(f"Linked {linked} -> {linked.resolve()}")
+
   sets = [parse_kv(item, "--set") for item in args.sets]
   binds = [parse_kv(item, "--bind") for item in args.binds]
-  result = up(app, ctx, source, sets=sets, binds=binds)
+  result = start(app, ctx, sets=sets, binds=binds)
+
   compact = capability_receipt(result.stack, result.run_data, ctx, compact=True)
   if compact.strip():
     conn.out(compact)

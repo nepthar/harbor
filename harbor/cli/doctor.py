@@ -48,5 +48,5 @@ def _notes(observation: AppObservation) -> tuple[str, ...]:
     and not observation.run_dir_exists
     and not observation.containers
   ):
-    notes.append("abandoned DB config")
+    notes.append("orphaned route allocation")
   return tuple(notes)

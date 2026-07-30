@@ -76,6 +76,12 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   conn.out(f"  volumes:     {root / 'volumes'} ({', '.join(VOLUME_KINDS)})")
   conn.out(f"  master.key:  {master_key_path}")
   conn.out(f"\nTo change your configuration, edit {config_path}")
+  conn.out(
+    "\nNext: put a happ in apps/ (or `harbor fetch <target>`), then\n"
+    "  harbor stage <app>   install it into run/ without starting it\n"
+    "  harbor start <app>   start it (staging first if needed)\n"
+    "  harbor stop <app>    stop it"
+  )
 
   default_root = DEFAULT_ROOT.expanduser().resolve()
   if root != default_root:

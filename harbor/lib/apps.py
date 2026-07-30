@@ -52,13 +52,11 @@ def is_pathlike(raw: str) -> bool:
   return os.sep in raw or raw.startswith(("~", ".")) or raw.endswith(".happ")
 
 
-def resolve_app_or_path(ctx: HarborCtx, raw: str) -> tuple[AppID, Path]:
+def resolve_app_id(ctx: HarborCtx, raw: str) -> AppID:
+  """Resolve an APP argument -- an app id, or a path to a .happ -- to an id."""
   if is_pathlike(raw):
-    source = Path(raw).expanduser().resolve()
-    return app_id_from_path(source), source
-
-  app = ctx.resolve_app(raw)
-  return app, ctx.bundle_path(app)
+    return app_id_from_path(Path(raw).expanduser().resolve())
+  return ctx.resolve_app(raw)
 
 
 def record_app_action(action: str, app_id: AppID, config: Config) -> None:

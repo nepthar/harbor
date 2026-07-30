@@ -18,8 +18,8 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app_id)
   source = ctx.app_path(app)
-  stack = app_stack(source)
-  run_data = load_run_data(stack, ctx, app_path=source)
+  stack = app_stack(source, app)
+  run_data = load_run_data(stack, ctx)
   state = ctx.run_state(app)
   total = len(state.containers)
   if state.running_count:

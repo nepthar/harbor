@@ -36,7 +36,7 @@ main = { port = "8443", publish = "web", scheme = "https" }
 Use harbor to fetch and start the app:
 ```
 $ harbor fetch github:nepthar/harbor/main/apps/unifi-network-application.happ
-$ harbor up unifi-network-application
+$ harbor start unifi-network-application
 ```
 
 Under the hood, Harbor is using the manifest + your configuration to create a docker compose stack.
@@ -68,7 +68,7 @@ Preqrequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 2. `$ harbor init`
 3. Configure harbor as requested by init (or just leave all defaults)
 4. `$ harbor fetch github:nepthar/harbor/main/apps/hello-world.happ`
-5. `$ harbor up hello-world`
+5. `$ harbor start hello-world`
 6. `$ harbor logs hello-world`
 7. Examine your `apps/` folder to look at how the hello-world example is constructed.
 

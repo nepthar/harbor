@@ -26,8 +26,8 @@ def _project_name(app_id: str) -> str:
   return re.sub(r"[^a-z0-9_-]", "_", app_id.lower())
 
 
-def _mount_string(volume_name: str, bound: BoundVolume) -> str:
-  mount = f"./volumes/{volume_name}:{bound.guest_path}"
+def _mount_string(bound: BoundVolume) -> str:
+  mount = f"{bound.volume.run_rel_path}:{bound.guest_path}"
   if bound.readonly:
     mount += ":ro"
   return mount
@@ -54,12 +54,12 @@ class ConfigIssue:
 
   stage_blocking: bool = False
 
-  # True when `up` repairs this on its own, so it is not something the operator
-  # has to act on. Route allocation is the case: `stage()` clears and
+  # True when staging repairs this on its own, so it is not something the
+  # operator has to act on. Route allocation is the case: `stage()` clears and
   # reallocates every route *before* it evaluates readiness, so an unallocated
-  # route is the normal pre-`up` state. Counting these as blockers made
+  # route is the normal pre-start state. Counting these as blockers made
   # `harbor ps` report "needs config" for an app that needed no configuration
-  # and started fine on the very next `up`.
+  # and started fine on the very next `harbor start`.
   self_healing: bool = False
 
   def line(self) -> str:
@@ -68,7 +68,15 @@ class ConfigIssue:
 
 @dataclass(frozen=True)
 class VolumeLink:
+  """One entry under ``run/<id>/volumes/<kind>/``.
+
+  ``source`` is the real host path, for existence checks and receipts;
+  ``target`` is what the symlink itself contains, which is not the same thing
+  for `app` volumes -- see :func:`_volume_paths`.
+  """
+
   source: Path
+  target: Path
   destination: Path
   mkdir: bool
 
@@ -119,7 +127,7 @@ class AppRunData:
   def start_blockers(self) -> tuple[ConfigIssue, ...]:
     """Issues the operator must resolve before the app can start.
 
-    Excludes anything `up` repairs itself -- see `ConfigIssue.self_healing`.
+    Excludes anything staging repairs itself -- see `ConfigIssue.self_healing`.
     """
     return tuple(issue for issue in self.issues if not issue.self_healing)
 
@@ -130,10 +138,10 @@ class AppRunData:
 def _load_config_values(
   stack: AppStack, issues: list[ConfigIssue], ctx: HarborCtx
 ) -> dict[str, ConfigValue]:
-  app_db = ctx.app_db(stack.app)
+  store = ctx.app_config(stack.app)
   result = dict()
   for config_name, config in stack.config.items():
-    is_secret, value = app_db.get_config(config_name)
+    is_secret, value = store.get_config(config_name)
     resolved = value
     if value is not None:
       if is_secret != config.secret:
@@ -147,8 +155,8 @@ def _load_config_values(
     elif config.has_default():
       resolved = config.default
     else:
-      # No value and nothing to fall back on. `up` cannot invent one, secret or
-      # not, so this is the operator's to supply.
+      # No value and nothing to fall back on. Harbor cannot invent one, secret
+      # or not, so this is the operator's to supply.
       issues.append(
         ConfigIssue(
           f"config {config_name} is unset and no default specified",
@@ -160,48 +168,45 @@ def _load_config_values(
 
 
 def _load_volume_links(
-  stack: AppStack,
-  issues: list[ConfigIssue],
-  ctx: HarborCtx,
-  app_path: Path | None = None,
+  stack: AppStack, issues: list[ConfigIssue], ctx: HarborCtx
 ) -> dict[str, VolumeLink]:
-  app_db = ctx.app_db(stack.app)
-
   app_id = stack.app
-  app_path = app_path or ctx.app_path(stack.app)
   run_path = ctx.config.run_root / app_id
 
   found_binds = {
-    name: Path(entry["host_path"]) for name, entry in app_db.list_binds().items()
+    name: Path(entry["host_path"])
+    for name, entry in ctx.app_config(app_id).list_binds().items()
   }
 
   volume_links = {}
   for volume_name, volume in stack.volumes.items():
-    source = _resolve_volume_host_path(
-      app_path, app_id, volume, found_binds, ctx.config
-    )
+    resolved = _volume_paths(run_path, app_id, volume, found_binds, ctx.config)
 
     mkdir = volume.kind not in ("app", "ext")
 
-    if not source:
+    if not resolved:
       issues.append(
         ConfigIssue(
           f"volume {volume_name}: not bound to a host path",
           "Bind with `harbor config <app_id> --bind`",
         )
       )
-    elif not source.exists() and not mkdir:
+      continue
+
+    source, target = resolved
+    if not source.exists() and not mkdir:
       issues.append(
         ConfigIssue(
           f"volume {volume_name}: host path does not exist: {source}",
           "Bind with `harbor config <app_id> --bind`",
         )
       )
-    else:
-      destination = run_path / volume.run_rel_path
-      volume_links[volume_name] = VolumeLink(source, destination, mkdir)
+      continue
 
-  return volume_links if volume_links else {}
+    destination = run_path / volume.run_rel_path
+    volume_links[volume_name] = VolumeLink(source, target, destination, mkdir)
+
+  return volume_links
 
 
 def _compare_route(
@@ -228,7 +233,7 @@ def _compare_route(
       issues.append(
         ConfigIssue(
           f"route {stack_route.route_name}: host port not allocated",
-          "Clear data with `harbor rm` and retry with `harbor up",
+          "Clear data with `harbor rm` and retry with `harbor start`",
           self_healing=True,
         )
       )
@@ -248,9 +253,7 @@ def _compare_route(
 def _load_routes(
   stack: AppStack, issues: list[ConfigIssue], ctx: HarborCtx
 ) -> dict[str, AssignedRoute]:
-  app_db = ctx.app_db(stack.app)
-
-  found_routes = app_db.list_routes()
+  found_routes = ctx.harbor_db().list_routes(stack.app)
 
   missing_routes = set(stack.routes.keys()) - set(found_routes.keys())
   extra_routes = set(found_routes.keys()) - set(stack.routes.keys())
@@ -259,7 +262,7 @@ def _load_routes(
     issues.append(
       ConfigIssue(
         f"route {name}: declared but not allocated",
-        "Clear data with `harbor rm` and retry with `harbor up`",
+        "Clear data with `harbor rm` and retry with `harbor start`",
         self_healing=True,
       )
     )
@@ -267,7 +270,7 @@ def _load_routes(
     issues.append(
       ConfigIssue(
         f"route {name}: allocated but not in the manifest",
-        "Clear data with `harbor rm` and retry with `harbor up`",
+        "Clear data with `harbor rm` and retry with `harbor start`",
         self_healing=True,
       )
     )
@@ -303,9 +306,7 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
     service["restart"] = run_unit.restart or "unless-stopped"
 
     if run_unit.volumes:
-      service["volumes"] = [
-        _mount_string(volname, bound) for volname, bound in run_unit.volumes.items()
-      ]
+      service["volumes"] = [_mount_string(bound) for bound in run_unit.volumes.values()]
       volstr = ",".join(
         _env_kvpair(volname, bound.guest_path)
         for volname, bound in run_unit.volumes.items()
@@ -345,14 +346,12 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
   }
 
 
-def load_run_data(
-  stack: AppStack, ctx: HarborCtx, app_path: Path | None = None
-) -> AppRunData:
+def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
   issues: list[ConfigIssue] = []
   run_path = ctx.run_path(stack.app)
   config_values = _load_config_values(stack, issues, ctx)
   routes = _load_routes(stack, issues, ctx)
-  vol_links = _load_volume_links(stack, issues, ctx, app_path)
+  vol_links = _load_volume_links(stack, issues, ctx)
   app_domain = (
     f"{stack.subdomain}.{ctx.config.domain}" if stack.subdomain is not None else None
   )
@@ -367,14 +366,23 @@ def load_run_data(
   )
 
 
-def _resolve_volume_host_path(
-  app_path: Path, app_id: str, volume: AppVolume, binds: dict[str, Path], config: Config
-) -> Path | None:
+def _volume_paths(
+  run_path: Path, app_id: str, volume: AppVolume, binds: dict[str, Path], config: Config
+) -> tuple[Path, Path] | None:
+  """The (host path, symlink target) for a volume, or None if unresolvable.
+
+  `app` links are relative because they point inside the run dir, so they stay
+  correct wherever that directory is restored. Managed and `ext` links are
+  absolute: `volume_roots` is configurable precisely so it can live on another
+  disk, which makes those links meaningful only on the machine that made them.
+  """
   match volume.kind:
     case "app":
       src = volume.src if volume.src else volume.name
-      return app_path / src
+      return run_path / "happ" / src, Path("../../happ") / src
     case "ext":
-      return binds.get(volume.name)
+      bound = binds.get(volume.name)
+      return (bound, bound) if bound else None
     case other:
-      return config.volume_roots[other] / app_id / volume.name
+      path = config.volume_roots[other] / app_id / volume.name
+      return path, path

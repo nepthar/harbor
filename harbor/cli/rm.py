@@ -1,25 +1,15 @@
 import argparse
 
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import reset, unstage
+from harbor.lib.lifecycle import RemovalPlan, removal_plan, rm
 
 
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "rm",
-    help="Remove an app's runtime and/or data (requires --runtime and/or --data)",
+    help="Stop a happ and delete its run state, managed volumes, and routes",
   )
   parser.add_argument("app_id", help="App ID of the happ to remove")
-  parser.add_argument(
-    "--runtime",
-    action="store_true",
-    help="Remove run state only (preserves volumes and config)",
-  )
-  parser.add_argument(
-    "--data",
-    action="store_true",
-    help="Delete managed volumes, config, and run state",
-  )
   parser.add_argument(
     "-y", "--yes", action="store_true", help="Skip confirmation prompt"
   )
@@ -27,23 +17,36 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  if not args.runtime and not args.data:
-    raise ValueError(
-      "Specify --runtime (remove run state) and/or --data (delete volumes and config)"
-    )
-
   state = ctx.run_state(args.app_id)
+  plan = removal_plan(state.app_id, ctx)
 
-  if args.data:
-    if not args.yes:
-      answer = conn.read(
-        f"Remove {args.app_id}? This deletes all data and config. [y/N] "
-      )
-      if answer.lower() not in ("y", "yes"):
-        return
-    reset(state.app_id, ctx)
-    conn.out(f"Removed {state.app_id} (runtime and data)")
+  if not args.yes and not _confirmed(plan, ctx, conn):
+    conn.out("Nothing removed.")
     return
 
-  unstage(state.app_id, ctx)
-  conn.out(f"Removed runtime for {state.app_id}")
+  rm(plan, ctx)
+  conn.out(f"Removed {plan.app_id}")
+
+
+def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn) -> bool:
+  conn.out(f"Removing {plan.app_id} deletes:")
+  conn.out(f"  {plan.run_path} (config, secrets, compose)")
+  for path in plan.volume_paths:
+    conn.out(f"  {path}")
+  conn.out("  its route and host-port allocations")
+
+  kept = [str(ctx.config.apps_root / f"{plan.app_id}.happ")]
+  kept += [f"{path} (external bind)" for path in plan.ext_paths]
+  conn.out("Left alone:")
+  for path in kept:
+    conn.out(f"  {path}")
+
+  # No snapshot is taken yet (docs/run-layout.md §8), so say plainly that there
+  # is nothing to roll back to rather than implying a safety net that is not
+  # there.
+  conn.out("This cannot be undone: harbor does not take snapshots yet.")
+  try:
+    answer = conn.read(f"Remove {plan.app_id}? [y/N] ")
+  except EOFError:
+    return False
+  return answer.strip().lower() in ("y", "yes")

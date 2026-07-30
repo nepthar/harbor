@@ -48,7 +48,7 @@ def test_next_free_port_skips_occupied(db: HarborDB):
 def test_list_app_routes_returns_records(db: HarborDB):
   db._store.write("routes/app-a/main", _route("main", 41000, publish="web"))
   db._store.write("routes/app-a/api", _route("api", 41001))
-  assert db.app_db("app-a").list_routes() == {
+  assert db.list_routes("app-a") == {
     "main": _route("main", 41000, publish="web"),
     "api": _route("api", 41001),
   }
@@ -56,8 +56,8 @@ def test_list_app_routes_returns_records(db: HarborDB):
 
 def test_clear_routes_frees_ports(db: HarborDB):
   db._store.write("routes/app-a/main", _route("main", 41000))
-  db.app_db("app-a").clear_routes()
-  assert db.app_db("app-a").list_routes() == {}
+  db.clear_routes("app-a")
+  assert db.list_routes("app-a") == {}
   assert db.next_free_port() == 41000
 
 
@@ -65,7 +65,7 @@ def test_purge_app_clears_routes(db: HarborDB):
   db._store.write("routes/app-a/main", _route("main", 41000))
   db._store.write("apps/app-a/config/x", {"secret": False, "value": "y"})
   assert db.purge_app("app-a") is True
-  assert db.app_db("app-a").list_routes() == {}
+  assert db.list_routes("app-a") == {}
   assert db.next_free_port() == 41000
 
 

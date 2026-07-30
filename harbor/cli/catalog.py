@@ -14,7 +14,7 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   bundles = ctx.known_bundles()
-  staged = ctx._staged_sources()
+  staged = ctx.staged_app_ids()
   rows = []
   for app_id in sorted(bundles):
     path = bundles[app_id]

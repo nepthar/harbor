@@ -17,17 +17,6 @@ from pydantic import (
 from harbor.lib.apps import AppID
 from harbor.lib.util import Identifier
 
-# TODO: Revisit these, see if you actually use any of them
-RESERVED_APP_CONTENTS = frozenset(
-  {
-    "compose.yml",
-    "metadata.toml",
-    "conn",
-    "volumes",
-    "run",
-  }
-)
-
 NetworkMode = Literal["normal", "host"]
 VolumeKind = Literal["app", "data", "temp", "bulk", "logs", "ext"]
 
@@ -180,7 +169,7 @@ def parse_manifest(manifest_path: str | Path) -> Manifest:
     raise ConfigError(f"manifest not found: {manifest_path}") from e
 
 
-def _validate_manifest(app: AppID, app_path: Path, manifest: Manifest) -> list[str]:
+def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
   """Ensure that the Manifest is valid & correct for the given AppHandle"""
   errors: list[str] = []
   app_id = app
@@ -196,18 +185,35 @@ def _validate_manifest(app: AppID, app_path: Path, manifest: Manifest) -> list[s
     if main_run_unit not in manifest.run:
       errors.append(f"[app]: main container ({main_run_unit}) not found in [run]")
 
+    errors.extend(_validate_volumes(manifest))
     errors.extend(_validate_run_volumes(manifest))
     errors.extend(_validate_routes(manifest))
-
-    ## Check the happ folder for reserved names:
-    for path in app_path.iterdir():
-      if path.name in RESERVED_APP_CONTENTS:
-        errors.append(f"[app]: {path.name} is a reserved name")
 
     return errors
   except ConfigError as e:
     errors.append(str(e))
     return [str(e)]
+
+
+def _validate_volumes(manifest: Manifest) -> list[str]:
+  """`app` volumes are the happ's own files: input, never state.
+
+  Harbor mounts every one of them read-only, so an explicit `readonly = false`
+  is refused rather than silently reversed -- the author wrote it meaning
+  something, and should be told it is impossible (docs/run-layout.md L4).
+  """
+  errors: list[str] = []
+  for name, volume in manifest.volumes.items():
+    if (
+      volume.kind == "app"
+      and "readonly" in volume.model_fields_set
+      and not volume.readonly
+    ):
+      errors.append(
+        f"[volumes.{name}]: app volumes are always mounted read-only; "
+        "remove `readonly = false`"
+      )
+  return errors
 
 
 def _validate_run_volumes(manifest: Manifest) -> list[str]:
@@ -272,7 +278,7 @@ ManifestParseResult = Manifest | ManifestParseFailure
 def app_to_manifest(app: AppID, app_path: Path) -> ManifestParseResult:
   try:
     manifest = parse_manifest(app_path / "manifest.toml")
-    errors = _validate_manifest(app, app_path, manifest)
+    errors = _validate_manifest(app, manifest)
 
     if errors:
       return ManifestParseFailure(errors)

@@ -20,8 +20,8 @@ from harbor.lib.logtab import LogTab
 from harbor.lib.store import HarborDB
 
 
-def test_up_materializes_compose_and_port_state(harbor_env):
-  result = harbor_env.run("up", "ports-demo")
+def test_start_materializes_compose_and_port_state(harbor_env):
+  result = harbor_env.run("start", "ports-demo")
 
   assert result.returncode == 0, result.stderr
   compose = yaml.safe_load(
@@ -39,7 +39,7 @@ def test_up_materializes_compose_and_port_state(harbor_env):
   assert admin["publish"] == "lan"
 
 
-def test_up_ps_down_tracks_docker_reality(harbor_env):
+def test_start_ps_stop_tracks_docker_reality(harbor_env):
   catalog = harbor_env.run("catalog")
   assert catalog.returncode == 0, catalog.stderr
   assert "ports-demo" in catalog.stdout
@@ -48,10 +48,10 @@ def test_up_ps_down_tracks_docker_reality(harbor_env):
   assert not_installed.returncode == 0
   assert "ports-demo" not in not_installed.stdout
 
-  not_up = harbor_env.run("up", "nope")
+  not_up = harbor_env.run("start", "nope")
   assert not_up.returncode == 1
 
-  started = harbor_env.run("up", "ports-demo")
+  started = harbor_env.run("start", "ports-demo")
   assert started.returncode == 0, started.stderr
   assert "Running ports-demo" in started.stdout
   assert "LAN:" in started.stdout
@@ -63,9 +63,9 @@ def test_up_ps_down_tracks_docker_reality(harbor_env):
   concise_row = next(
     line for line in concise.stdout.splitlines() if line.startswith("ports-demo")
   )
-  assert concise_row.split() == ["ports-demo", "running", "up"]
+  assert concise_row.split() == ["ports-demo", "running", "start"]
 
-  stopped = harbor_env.run("down", "ports-demo")
+  stopped = harbor_env.run("stop", "ports-demo")
   assert stopped.returncode == 0, stopped.stderr
 
   concise_stopped_row = next(
@@ -73,7 +73,7 @@ def test_up_ps_down_tracks_docker_reality(harbor_env):
     for line in harbor_env.run("ps").stdout.splitlines()
     if line.startswith("ports-demo")
   )
-  assert concise_stopped_row.split() == ["ports-demo", "exited", "down"]
+  assert concise_stopped_row.split() == ["ports-demo", "exited", "stop"]
 
   calls = [
     json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
@@ -82,25 +82,24 @@ def test_up_ps_down_tracks_docker_reality(harbor_env):
   assert ["compose", "down"] in calls
 
 
-def test_rm_data_removes_run_state_configuration_and_managed_volumes(harbor_env):
+def test_rm_removes_run_state_configuration_and_managed_volumes(harbor_env):
   app_id = "io.p2net.basic-features"
-  upped = harbor_env.run("up", app_id, "--set", "admin_user=alice")
-  assert upped.returncode == 0, upped.stderr
+  started = harbor_env.run("start", app_id, "--set", "admin_user=alice")
+  assert started.returncode == 0, started.stderr
   assert (harbor_env.run_root / app_id).is_dir()
   assert (harbor_env.volumes_root / "data" / app_id / "config").is_dir()
   assert (harbor_env.volumes_root / "temp" / app_id / "cache").is_dir()
 
-  removed = harbor_env.run("rm", app_id, "--data", "-y")
+  removed = harbor_env.run("rm", app_id, "-y")
   assert removed.returncode == 0, removed.stderr
 
   assert not (harbor_env.run_root / app_id).exists()
   assert not (harbor_env.volumes_root / "data" / app_id).exists()
   assert not (harbor_env.volumes_root / "temp" / app_id).exists()
-  db = harbor_env.read_db()
-  assert app_id not in db.get("apps", {})
+  assert app_id not in harbor_env.read_db().get("routes", {})
 
 
-def test_invalid_manifest_is_rejected_before_up(harbor_env):
+def test_invalid_manifest_is_rejected_before_start(harbor_env):
   app = harbor_env.root / "apps" / "invalid-mount.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
@@ -114,14 +113,14 @@ volumes = { missing = "/data" }
 """
   )
 
-  result = harbor_env.run("up", "invalid-mount")
+  result = harbor_env.run("start", "invalid-mount")
 
   assert result.returncode == 1
   assert "volume 'missing' is not declared" in result.stderr
   assert not (harbor_env.run_root / "invalid-mount").exists()
 
 
-def test_missing_secret_blocks_up_with_recovery_command(harbor_env):
+def test_missing_secret_blocks_start_with_recovery_command(harbor_env):
   app_id = "needs-secret"
   app = harbor_env.root / "apps" / f"{app_id}.happ"
   app.mkdir()
@@ -139,7 +138,7 @@ cmd = ["true"]
 """
   )
 
-  blocked = harbor_env.run("up", app_id)
+  blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1
   assert "Set with `harbor config`" in blocked.stderr
   assert (harbor_env.run_root / app_id).is_dir()
@@ -151,19 +150,26 @@ cmd = ["true"]
 
   configured = harbor_env.run("config", app_id, "--set", "api_key=sekrit")
   assert configured.returncode == 0, configured.stderr
-  started = harbor_env.run("up", app_id)
+  started = harbor_env.run("start", app_id)
   assert started.returncode == 0, started.stderr
 
 
-def test_up_set_flag_one_shot(harbor_env):
+def test_start_set_flag_one_shot(harbor_env):
   app_id = "io.p2net.basic-features"
-  started = harbor_env.run("up", app_id, "--set", "admin_user=alice")
+  started = harbor_env.run("start", app_id, "--set", "admin_user=alice")
   assert started.returncode == 0, started.stderr
   assert "Running" in started.stdout
 
 
-def test_config_works_before_up(harbor_env):
+def test_config_requires_staging_first(harbor_env):
+  """Config lives in the run dir, so there is nowhere to put it until staged."""
   app_id = "io.p2net.basic-features"
+  too_early = harbor_env.run("config", app_id, "--set", "admin_user=alice")
+  assert too_early.returncode == 1
+  assert f"harbor stage {app_id}" in too_early.stderr
+
+  assert harbor_env.run("stage", app_id).returncode == 0
+
   listed = harbor_env.run("config", app_id)
   assert listed.returncode == 0, listed.stderr
   assert "admin_user" in listed.stdout
@@ -178,6 +184,7 @@ def test_config_works_before_up(harbor_env):
 
 def test_config_set_secret(harbor_env):
   app_id = "io.p2net.basic-features"
+  assert harbor_env.run("stage", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--set", "admin_user=alice").returncode == 0
 
   missing = harbor_env.run("config", app_id, "--set", "admin_user")
@@ -235,34 +242,35 @@ def test_system_config_is_encrypted_listed_and_unset(harbor_env):
   assert "invalid choice" in old_command.stderr
 
 
-def test_external_bind_one_shot_via_up(harbor_env):
+def test_external_bind_one_shot_via_start(harbor_env):
   app_id = "ext-volumes"
-  blocked = harbor_env.run("up", app_id)
+  blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1
   assert "Bind with `harbor config <app_id> --bind`" in blocked.stderr
 
   host_volume = harbor_env.root / "external-data"
   host_volume.mkdir()
-  started = harbor_env.run("up", app_id, "--bind", f"extvol1={host_volume}")
+  started = harbor_env.run("start", app_id, "--bind", f"extvol1={host_volume}")
   assert started.returncode == 0, started.stderr
-  link = harbor_env.run_root / app_id / "volumes" / "extvol1"
+  link = harbor_env.run_root / app_id / "volumes" / "ext" / "extvol1"
   assert link.is_symlink()
   assert link.resolve() == host_volume
 
 
-def test_bind_then_up_without_restage(harbor_env):
+def test_bind_then_start_without_explicit_restage(harbor_env):
   app_id = "ext-volumes"
   host_volume = harbor_env.root / "external-data"
   host_volume.mkdir()
+  assert harbor_env.run("stage", app_id).returncode == 0
   bound = harbor_env.run("config", app_id, "--bind", f"extvol1={host_volume}")
   assert bound.returncode == 0, bound.stderr
-  started = harbor_env.run("up", app_id)
+  started = harbor_env.run("start", app_id)
   assert started.returncode == 0, started.stderr
 
 
 def test_missing_run_directory_with_container_refuses_lifecycle(harbor_env):
   app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
   shutil.rmtree(harbor_env.run_root / app_id)
 
   doctor = harbor_env.run("doctor")
@@ -270,111 +278,104 @@ def test_missing_run_directory_with_container_refuses_lifecycle(harbor_env):
   assert "run directory missing" in doctor.stderr
   assert "manual container recovery required" in doctor.stderr
 
-  for command in (("down",), ("rm", "--runtime")):
+  for command in (("stop",), ("rm", "-y")):
     refused = harbor_env.run(*command, app_id)
     assert refused.returncode == 1
     assert "fake-container" in refused.stderr
 
-  refused_rm = harbor_env.run("rm", app_id, "--data", "-y")
-  assert refused_rm.returncode == 1
-  assert "fake-container" in refused_rm.stderr
-  # Port claims survive until a successful --data wipe; refused rm must not purge.
+  # Port claims survive a refused rm; nothing is purged.
   assert app_id in harbor_env.read_db().get("routes", {})
   assert harbor_env.docker_state.exists()
 
 
-def test_removed_app_bundle_remains_observable_and_stoppable(harbor_env):
+def test_removed_app_bundle_remains_runnable_from_the_staged_copy(harbor_env):
+  """The run copy is what harbor runs, so deleting apps/<id>.happ is survivable.
+
+  It still shows up as a problem in `doctor` -- nothing can re-stage the app
+  until the catalog entry is back -- but stop and start keep working.
+  """
   app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
   shutil.rmtree(harbor_env.root / "apps" / f"{app_id}.happ")
 
   doctor = harbor_env.run("doctor")
   assert doctor.returncode == 1
   assert "app bundle missing" in doctor.stderr
 
-  stopped = harbor_env.run("down", app_id)
+  stopped = harbor_env.run("stop", app_id)
   assert stopped.returncode == 0, stopped.stderr
 
-  assert (harbor_env.run_root / app_id / "source").is_symlink()
-  started = harbor_env.run("up", app_id)
-  assert started.returncode == 1
-  assert f"Source for {app_id} is gone" in started.stderr
+  restarted = harbor_env.run("start", app_id)
+  assert restarted.returncode == 0, restarted.stderr
+
+  restaged = harbor_env.run("stage", app_id)
+  assert restaged.returncode == 1
+  assert "No app found" in restaged.stderr
 
 
-def test_up_by_id_records_source_link(harbor_env):
-  app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
-
-  link = harbor_env.run_root / app_id / "source"
-  assert link.is_symlink()
-  assert link.readlink() == (harbor_env.root / "apps" / f"{app_id}.happ").resolve()
-
-
-def test_up_by_path_from_arbitrary_dir(harbor_env):
+def test_start_by_path_from_arbitrary_dir(harbor_env):
   app_id = "ports-demo"
   elsewhere = harbor_env.root / "elsewhere" / f"{app_id}.happ"
   shutil.copytree(harbor_env.root / "apps" / f"{app_id}.happ", elsewhere)
   shutil.rmtree(harbor_env.root / "apps" / f"{app_id}.happ")
 
-  upped = harbor_env.run("up", str(elsewhere))
-  assert upped.returncode == 0, upped.stderr
-  link = harbor_env.run_root / app_id / "source"
-  assert link.is_symlink()
-  assert link.readlink() == elsewhere.resolve()
+  started = harbor_env.run("start", str(elsewhere))
+  assert started.returncode == 0, started.stderr
+  entry = harbor_env.root / "apps" / f"{app_id}.happ"
+  assert entry.is_symlink()
+  assert entry.readlink() == elsewhere.resolve()
 
-  stopped = harbor_env.run("down", app_id)
+  stopped = harbor_env.run("stop", app_id)
   assert stopped.returncode == 0, stopped.stderr
-  assert harbor_env.run("up", str(elsewhere)).returncode == 0
+  assert harbor_env.run("start", str(elsewhere)).returncode == 0
 
 
-def test_up_from_different_source_errors(harbor_env):
+def test_start_from_a_conflicting_path_is_refused(harbor_env):
   app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
-  assert harbor_env.run("down", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
 
   other = harbor_env.root / "elsewhere" / f"{app_id}.happ"
   shutil.copytree(harbor_env.root / "apps" / f"{app_id}.happ", other)
 
-  result = harbor_env.run("up", str(other))
+  result = harbor_env.run("start", str(other))
   assert result.returncode == 1
-  assert "already installed from" in result.stderr
-  assert "harbor rm --runtime" in result.stderr
+  assert "already in the catalog" in result.stderr
 
 
-def test_up_invalid_path_arg_errors(harbor_env):
+def test_start_invalid_path_arg_errors(harbor_env):
   not_happ = harbor_env.root / "not-a-happ"
   not_happ.mkdir()
-  bad_suffix = harbor_env.run("up", str(not_happ))
+  bad_suffix = harbor_env.run("start", str(not_happ))
   assert bad_suffix.returncode == 1
   assert "must end in .happ" in bad_suffix.stderr
 
   no_manifest = harbor_env.root / "empty.happ"
   no_manifest.mkdir()
-  missing = harbor_env.run("up", str(no_manifest))
+  missing = harbor_env.run("start", str(no_manifest))
   assert missing.returncode == 1
   assert "missing manifest.toml" in missing.stderr
 
-  absent = harbor_env.run("up", "./nope.happ")
+  absent = harbor_env.run("start", "./nope.happ")
   assert absent.returncode == 1
   assert "not a directory" in absent.stderr
 
   assert not (harbor_env.run_root / "empty").exists()
 
 
-def test_up_unknown_id_errors(harbor_env):
-  result = harbor_env.run("up", "nope")
+def test_start_unknown_id_errors(harbor_env):
+  result = harbor_env.run("start", "nope")
   assert result.returncode == 1
   assert "No app found" in result.stderr
 
 
-def test_rm_runtime_removes_run_dir_and_source_link(harbor_env):
+def test_rm_leaves_the_catalog_entry_alone(harbor_env):
   app_id = "ports-demo"
   bundle = harbor_env.root / "apps" / f"{app_id}.happ"
-  assert harbor_env.run("up", app_id).returncode == 0
-  assert harbor_env.run("down", app_id).returncode == 0
-  assert (harbor_env.run_root / app_id / "source").is_symlink()
+  assert harbor_env.run("start", app_id).returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
 
-  assert harbor_env.run("rm", app_id, "--runtime").returncode == 0
+  assert harbor_env.run("rm", app_id, "-y").returncode == 0
   assert not (harbor_env.run_root / app_id).exists()
   assert bundle.is_dir()
 
@@ -387,13 +388,30 @@ def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
   ps = harbor_env.run("ps")
   assert app_id not in ps.stdout
 
-  listed = harbor_env.run("config", app_id)
-  assert listed.returncode == 0, listed.stderr
+  inspected = harbor_env.run("inspect", app_id)
+  assert inspected.returncode == 0, inspected.stderr
 
 
-def test_doctor_reports_abandoned_db(harbor_env):
+def test_doctor_reports_orphaned_routes(harbor_env):
+  """Routes are the only per-app state harbordb still holds.
+
+  Config and binds live in the run directory now, so a harbordb entry with no
+  run directory can only be a route allocation nothing owns -- which still
+  pins a host port and so is worth reporting.
+  """
   harbor_env.seed_db(
-    {"apps/io.example.abandoned/config/admin_user": {"secret": False, "value": "x"}}
+    {
+      "routes/io.example.abandoned/web": {
+        "name": "web",
+        "subdomain": "",
+        "run_unit_name": "main",
+        "host_port": 41000,
+        "container_port": 8080,
+        "proto": "tcp",
+        "publish": "lan",
+        "scheme": "http",
+      }
+    }
   )
 
   ps = harbor_env.run("ps")
@@ -401,7 +419,7 @@ def test_doctor_reports_abandoned_db(harbor_env):
 
   doctor = harbor_env.run("doctor")
   assert doctor.returncode == 1
-  assert "abandoned DB config" in doctor.stderr
+  assert "orphaned route allocation" in doctor.stderr
 
 
 def test_doctor_exposes_mixed_container_states(harbor_env):
@@ -448,7 +466,7 @@ def test_curated_examples_materialize(harbor_env):
     shutil.copytree(source, harbor_env.root / "apps" / source.name, dirs_exist_ok=True)
     fresh = HarborCtx(load_config_file(harbor_env.config, "test"))
     app = fresh.resolve_app(source.stem)
-    lifecycle.stage(app, fresh, fresh.bundle_path(app))
+    lifecycle.stage(app, fresh)
     assert (harbor_env.run_root / source.stem / "compose.yml").is_file()
 
 
@@ -484,7 +502,7 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(harbor_env, monkeypatch):
   ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
 
   app = ctx.resolve_app("routes-demo")
-  lifecycle.stage(app, ctx, ctx.bundle_path(app))
+  lifecycle.stage(app, ctx)
 
   start_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
   with pytest.raises(ValueError, match="already owned"):
@@ -493,14 +511,14 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(harbor_env, monkeypatch):
   assert ["compose", "up", "-d"] not in docker_calls
 
 
-def test_down_uses_staged_manifest_when_bundle_is_missing(harbor_env, monkeypatch):
+def test_stop_uses_staged_manifest_when_bundle_is_missing(harbor_env, monkeypatch):
   provider = _RecordingRouteProvider()
   monkeypatch.setattr(lifecycle, "get_route_provider", lambda db, config: provider)
   monkeypatch.setattr("harbor.lib.harbor.load_harbor_run_unit_status", lambda: {})
   monkeypatch.setattr(lifecycle, "docker_run_command", lambda args, **kwargs: "")
   stage_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
   app = stage_ctx.resolve_app("routes-demo")
-  lifecycle.stage(app, stage_ctx, stage_ctx.bundle_path(app))
+  lifecycle.stage(app, stage_ctx)
   start_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
   lifecycle.start(app, start_ctx)
   shutil.rmtree(harbor_env.root / "apps" / "routes-demo.happ")
@@ -514,7 +532,7 @@ def test_down_uses_staged_manifest_when_bundle_is_missing(harbor_env, monkeypatc
 
 
 def test_readme_quickstart_from_repo_examples(harbor_env):
-  """Getting-started path from a checkout: up an apps/ happ by path, then ps.
+  """Getting-started path from a checkout: start an apps/ happ by path, then ps.
 
   Deliberately a happ shipped in the repo rather than a tests/fixtures one:
   this is the path a reader follows straight from the README, so it should
@@ -524,7 +542,7 @@ def test_readme_quickstart_from_repo_examples(harbor_env):
   happ = Path(__file__).parents[1] / "apps" / "demo-routes.happ"
   assert happ.is_dir(), happ
 
-  started = harbor_env.run("up", str(happ))
+  started = harbor_env.run("start", str(happ))
   assert started.returncode == 0, started.stderr
   assert "Running demo-routes" in started.stdout
   assert "LAN:" in started.stdout
@@ -535,7 +553,7 @@ def test_readme_quickstart_from_repo_examples(harbor_env):
 
 
 def test_status_and_inspect(harbor_env):
-  assert harbor_env.run("up", "ports-demo").returncode == 0
+  assert harbor_env.run("start", "ports-demo").returncode == 0
   status = harbor_env.run("status", "ports-demo")
   assert status.returncode == 0, status.stderr
   assert "running" in status.stdout
@@ -550,16 +568,16 @@ def test_status_and_inspect(harbor_env):
 
 def test_config_set_while_running_warns(harbor_env):
   app_id = "io.p2net.basic-features"
-  assert harbor_env.run("up", app_id, "--set", "admin_user=alice").returncode == 0
+  assert harbor_env.run("start", app_id, "--set", "admin_user=alice").returncode == 0
   result = harbor_env.run("config", app_id, "--set", "admin_user=bob")
   assert result.returncode == 0, result.stderr
   assert "is running" in result.stderr
-  assert f"harbor down {app_id}" in result.stderr
-  assert f"harbor up {app_id}" in result.stderr
+  assert f"harbor stop {app_id}" in result.stderr
+  assert f"harbor start {app_id}" in result.stderr
 
 
 def test_logs_accepts_native_flags_before_app(harbor_env):
-  assert harbor_env.run("up", "ports-demo").returncode == 0
+  assert harbor_env.run("start", "ports-demo").returncode == 0
   # Fake docker ignores unknown compose args; success means argparse accepted order.
   result = harbor_env.run("logs", "-f", "--tail", "10", "ports-demo")
   assert result.returncode == 0, result.stderr
@@ -649,7 +667,7 @@ def test_the_lock_timeout_message_names_the_holder(harbor_env):
     json.dumps(
       {
         "state": "acquired",
-        "by": "up ports-demo",
+        "by": "start ports-demo",
         "pid": 999999,
         "at": "2026-07-29T18:22:04-06:00",
       }
@@ -660,13 +678,14 @@ def test_the_lock_timeout_message_names_the_holder(harbor_env):
     blocked = harbor_env.run("ps", timeout=LOCK_TIMEOUT + 20)
 
   assert blocked.returncode == 1
-  assert "up ports-demo" in blocked.stderr
+  assert "start ports-demo" in blocked.stderr
   assert "999999" in blocked.stderr
 
 
 def test_the_recorded_holder_is_the_command_not_the_argv(harbor_env):
   """`config --set k=secret` must never put the value in the activity log."""
   app_id = "io.p2net.basic-features"
+  assert harbor_env.run("stage", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--set", "admin_pass=hunter2").returncode == 0
 
   config = load_config_file(harbor_env.config, "test")
@@ -710,49 +729,49 @@ def test_waiting_for_the_lock_is_bounded(harbor_env):
 
 def test_last_action_is_read_in_one_pass(harbor_env):
   """`ps` reports every app's action from a single read of the shared log."""
-  assert harbor_env.run("up", "ports-demo").returncode == 0
-  assert harbor_env.run("up", "routes-demo").returncode == 0
+  assert harbor_env.run("start", "ports-demo").returncode == 0
+  assert harbor_env.run("start", "routes-demo").returncode == 0
 
   config = load_config_file(harbor_env.config, "test")
-  assert read_app_actions(config) == {"ports-demo": "up", "routes-demo": "up"}
+  assert read_app_actions(config) == {"ports-demo": "start", "routes-demo": "start"}
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
-  assert listed.stdout.count("up") >= 2
+  assert listed.stdout.count("start") >= 2
 
 
-def test_purged_is_recorded_when_an_app_is_removed(harbor_env):
+def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
   """The activity log outlives the app, so removal is recorded, not erased."""
   app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
 
   config = load_config_file(harbor_env.config, "test")
-  assert read_last_app_action(app_id, config) == "up"
+  assert read_last_app_action(app_id, config) == "start"
 
-  assert harbor_env.run("rm", app_id, "--data", "-y").returncode == 0
+  assert harbor_env.run("rm", app_id, "-y").returncode == 0
 
   assert not (harbor_env.run_root / app_id).exists()
-  assert read_last_app_action(app_id, config) == "purged"
+  assert read_last_app_action(app_id, config) == "removed"
   assert f"{app_id}/status" in LogTab(config.activity_log).load()
 
 
 # --- ps status accuracy ----------------------------------------------------
 #
-# `up` establishes preconditions before it judges readiness: stage() generates
+# `start` establishes preconditions before it judges readiness: stage() generates
 # config defaults and reallocates every route, *then* evaluates blockers. `ps`
-# calls load_run_data() with neither having run, so anything up repairs itself
+# calls load_run_data() with neither having run, so anything start repairs itself
 # must not be reported as something the operator has to fix.
 
 
 def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
   """The reported bug: `ps` said "needs config" for an app needing none."""
   app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
-  assert harbor_env.run("down", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
 
-  # Route rows gone while the run dir survives -- the pre-`up` allocation state.
+  # Route rows gone while the run dir survives -- the pre-start allocation state.
   config = load_config_file(harbor_env.config, "test")
-  HarborDB.from_config(config).app_db(app_id).clear_routes()
+  HarborDB.from_config(config).clear_routes(app_id)
   assert (harbor_env.run_root / app_id / "compose.yml").is_file()
 
   listed = harbor_env.run("ps")
@@ -760,23 +779,24 @@ def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
   assert "needs config" not in listed.stdout, listed.stdout
 
   # ...and it is genuinely startable, configuring nothing.
-  assert harbor_env.run("up", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
 
 
 def test_an_unmet_bind_is_still_reported_as_needing_config(harbor_env):
   """The label must keep working for the case it actually describes.
 
-  An ext volume whose host path has gone is the operator's to fix -- `up`
+  An ext volume whose host path has gone is the operator's to fix -- `start`
   cannot invent it -- so this one really does need `harbor config --bind`.
   """
   app_id = "ext-volumes"
   host_volume = harbor_env.root / "external-data"
   host_volume.mkdir()
+  assert harbor_env.run("stage", app_id).returncode == 0
   assert (
     harbor_env.run("config", app_id, "--bind", f"extvol1={host_volume}").returncode == 0
   )
-  assert harbor_env.run("up", app_id).returncode == 0
-  assert harbor_env.run("down", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
 
   shutil.rmtree(host_volume)
 
@@ -786,13 +806,12 @@ def test_an_unmet_bind_is_still_reported_as_needing_config(harbor_env):
 
 
 def test_an_unloadable_app_is_not_reported_as_needing_config(harbor_env):
-  """A moved happ directory is unreadable, not unconfigured."""
+  """A staged happ that will not parse is unreadable, not unconfigured."""
   app_id = "ports-demo"
-  assert harbor_env.run("up", app_id).returncode == 0
-  assert harbor_env.run("down", app_id).returncode == 0
+  assert harbor_env.run("start", app_id).returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
 
-  bundle = harbor_env.root / "apps" / f"{app_id}.happ"
-  bundle.rename(bundle.with_suffix(".moved"))
+  (harbor_env.run_root / app_id / "happ" / "manifest.toml").write_text("not toml {[")
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
@@ -800,7 +819,7 @@ def test_an_unloadable_app_is_not_reported_as_needing_config(harbor_env):
   assert "needs config" not in listed.stdout, listed.stdout
 
 
-def test_up_blocks_until_a_required_config_value_is_set(harbor_env):
+def test_start_blocks_until_a_required_config_value_is_set(harbor_env):
   """A value with no default must be supplied, whether or not it is secret.
 
   `admin_user` is declared `{}` in the fixture -- required, non-secret. It was
@@ -808,7 +827,7 @@ def test_up_blocks_until_a_required_config_value_is_set(harbor_env):
   """
   app_id = "io.p2net.basic-features"
 
-  blocked = harbor_env.run("up", app_id)
+  blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1, blocked.stdout
   assert "admin_user" in blocked.stderr
   assert "Set with `harbor config`" in blocked.stderr
@@ -819,12 +838,12 @@ def test_up_blocks_until_a_required_config_value_is_set(harbor_env):
   ]
   assert ["compose", "up", "-d"] not in calls
 
-  started = harbor_env.run("up", app_id, "--set", "admin_user=alice")
+  started = harbor_env.run("start", app_id, "--set", "admin_user=alice")
   assert started.returncode == 0, started.stderr
 
 
 def test_a_required_config_value_shows_as_needing_config(harbor_env):
-  """The non-secret counterpart of test_missing_secret_blocks_up_...
+  """The non-secret counterpart of test_missing_secret_blocks_start_...
 
   A dedicated happ whose only config is non-secret and default-less, so the
   blocker cannot be attributed to some other value.
@@ -846,7 +865,7 @@ cmd = ["true"]
 """
   )
 
-  blocked = harbor_env.run("up", app_id)
+  blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1
   assert "hostname is unset and no default specified" in blocked.stderr
   assert "Set with `harbor config`" in blocked.stderr
@@ -857,7 +876,7 @@ cmd = ["true"]
   assert row.split()[:3] == [app_id, "needs", "config"]
 
   assert harbor_env.run("config", app_id, "--set", "hostname=box").returncode == 0
-  started = harbor_env.run("up", app_id)
+  started = harbor_env.run("start", app_id)
   assert started.returncode == 0, started.stderr
 
 
@@ -867,7 +886,7 @@ def test_logs_does_not_hold_the_harbor_lock(harbor_env):
   Holding the lock for that long would lock the operator out of harbor for as
   long as they watch logs, so this command runs unlocked.
   """
-  assert harbor_env.run("up", "ports-demo").returncode == 0
+  assert harbor_env.run("start", "ports-demo").returncode == 0
 
   with FileLock(harbor_env.harbor_lockfile_path):
     tailed = harbor_env.run("logs", "ports-demo", timeout=LOCK_TIMEOUT + 20)

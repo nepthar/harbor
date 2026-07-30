@@ -5,7 +5,7 @@ from harbor.lib.lifecycle import stop
 
 
 def register(subparsers) -> None:
-  parser = subparsers.add_parser("down", help="Stop a running happ")
+  parser = subparsers.add_parser("stop", help="Stop a running happ")
   parser.add_argument("app_id", help="App ID of the happ to stop")
   parser.set_defaults(func=run)
 

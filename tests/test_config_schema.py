@@ -6,50 +6,18 @@ Covers the params -> config rename plus the new field schema
 Self-contained: does not depend on the broader e2e suite.
 """
 
-from contextlib import nullcontext
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from harbor.lib.appconfig import AppConfigStore
 from harbor.lib.apps import AppID
 from harbor.lib.crypto import FernetCryptoEngine, NoopCryptoEngine
 from harbor.lib.manifest import ConfigEntry, parse_manifest_bytes
 from harbor.lib.stack import HARBOR_CONFIG_ENV_PREFIX, AppConfig, build_app_stack
-from harbor.lib.store import AppDB
 
 FIXTURES = Path(__file__).parent / "fixtures" / "apps"
-
-
-class FakeStore:
-  """In-memory ConfigStore, isolating store tests from the on-disk LogTab."""
-
-  def __init__(self) -> None:
-    self._data: dict[str, Any] = {}
-
-  def lock(self):
-    return nullcontext()
-
-  def write(self, key: str, value: Any) -> None:
-    self._data[key] = value
-
-  def read(self, key: str) -> Any:
-    return self._data.get(key)
-
-  def scan(self, prefix: str = "", suffix: str = "") -> dict[str, Any]:
-    return {
-      k.removeprefix(prefix): v
-      for k, v in self._data.items()
-      if k.startswith(prefix) and k.endswith(suffix)
-    }
-
-  def clear(self, prefix_or_key: str) -> None:
-    for k in [k for k in self._data if k.startswith(prefix_or_key)]:
-      del self._data[k]
-
-  def delete(self, key: str) -> None:
-    self._data.pop(key, None)
 
 
 # ── ConfigEntry schema ────────────────────────────────────────────────────
@@ -141,33 +109,41 @@ def test_fixtures_parse_with_config_section():
     assert manifest.config  # non-empty [config] section
 
 
-# ── Store round-trip (secret bool persistence) ────────────────────────────
-def _app_db(crypto):
-  return AppDB(FakeStore(), "io.test.example", crypto)
+# ── config.logtab round-trip (secret bool persistence) ────────────────────
+def test_store_secret_round_trip_encrypts(tmp_path):
+  path = tmp_path / "config.logtab"
+  store = AppConfigStore(path, FernetCryptoEngine("master-key"))
+  store.set_config("admin_pass", secret=True, value="hunter2")
 
-
-def test_store_secret_round_trip_encrypts():
-  store = FakeStore()
-  db = AppDB(store, "io.test.example", FernetCryptoEngine("master-key"))
-  db.set_config("admin_pass", secret=True, value="hunter2")
-
-  secret, value = db.get_config("admin_pass")
+  secret, value = store.get_config("admin_pass")
   assert secret is True
   assert value == "hunter2"
 
-  # At rest it is stored as {"secret": true, "value": <ciphertext>}
-  raw = store.read("apps/io.test.example/config/admin_pass")
-  assert raw["secret"] is True
-  assert raw["value"] != "hunter2"
-  assert "hunter2" not in raw["value"]
+  # At rest it is stored as {"secret": true, "value": <ciphertext>}, and the
+  # plaintext appears nowhere in the file.
+  assert "hunter2" not in path.read_text()
 
 
-def test_store_plain_round_trip_is_plaintext():
-  db = _app_db(NoopCryptoEngine())
-  db.set_config("admin_user", secret=False, value="alice")
+def test_store_plain_round_trip_is_plaintext(tmp_path):
+  store = AppConfigStore(tmp_path / "config.logtab", NoopCryptoEngine())
+  store.set_config("admin_user", secret=False, value="alice")
 
-  secret, value = db.get_config("admin_user")
+  secret, value = store.get_config("admin_user")
   assert secret is False
   assert value == "alice"
 
-  assert db.get_config("missing") == (None, None)
+  assert store.has_config("admin_user")
+  assert not store.has_config("missing")
+  assert store.get_config("missing") == (None, None)
+
+
+def test_store_keeps_binds_and_meta(tmp_path):
+  store = AppConfigStore(tmp_path / "config.logtab", NoopCryptoEngine())
+  store.set_bind("media", "/mnt/nas/media", readonly=True)
+  store.set_meta("origin", "/harbor/apps/io.test.example.happ")
+
+  assert store.list_binds() == {
+    "media": {"host_path": "/mnt/nas/media", "readonly": True}
+  }
+  assert store.get_meta("origin") == "/harbor/apps/io.test.example.happ"
+  assert store.get_meta("staged_at") is None

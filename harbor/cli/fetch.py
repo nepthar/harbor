@@ -63,7 +63,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
       discard(staged)
 
   conn.out(f"Installed {staged.app_id} at {dest}")
-  conn.out(f"Start it with: harbor up {staged.app_id}")
+  conn.out(f"Start it with: harbor start {staged.app_id}")
 
 
 def _confirmed(conn) -> bool:

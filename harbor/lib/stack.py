@@ -87,7 +87,12 @@ class AppVolume:
 
   @property
   def run_rel_path(self) -> str:
-    return f"./volumes/{self.name}"
+    """Where the run dir links this volume, relative to the compose file.
+
+    Typed by kind so that "which volumes are durable" is a path glob rather
+    than a manifest lookup (docs/run-layout.md L3).
+    """
+    return f"./volumes/{self.kind}/{self.name}"
 
 
 @dataclass(frozen=True)
@@ -256,9 +261,11 @@ def _resolve_run_units(
 def _resolve_volumes(manifest: Manifest) -> Mapping[str, AppVolume]:
   volumes = {}
   for volume_name, volume in manifest.volumes.items():
-    volumes[volume_name] = AppVolume(
-      volume_name, volume.kind, volume.readonly, volume.src
-    )
+    # `app` volumes carry the happ's own files and are always read-only, so a
+    # container write fails at mount time instead of being silently discarded
+    # by the next `stage` (docs/run-layout.md L4).
+    readonly = True if volume.kind == "app" else volume.readonly
+    volumes[volume_name] = AppVolume(volume_name, volume.kind, readonly, volume.src)
   return volumes
 
 
@@ -314,9 +321,13 @@ def build_app_stack(manifest: Manifest) -> AppStack:
   )
 
 
-def app_stack(app_path: Path) -> AppStack:
-  """Parse and validate an app bundle into an AppStack."""
-  app_id = app_id_from_path(app_path)
+def app_stack(app_path: Path, app_id: AppID | None = None) -> AppStack:
+  """Parse and validate an app bundle into an AppStack.
+
+  Pass ``app_id`` for harbor's own copy at ``run/<id>/happ``, whose directory
+  name carries neither the id nor the ``.happ`` suffix to derive it from.
+  """
+  app_id = app_id if app_id is not None else app_id_from_path(app_path)
   manifest = app_to_manifest(app_id, app_path)
   match manifest:
     case Manifest():

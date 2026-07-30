@@ -46,7 +46,7 @@ def lan_lines(stack: AppStack, run_data: AppRunData | None) -> list[str]:
 
 
 def volume_lines(
-  stack: AppStack, run_data: AppRunData | None, ctx: HarborCtx | None = None
+  stack: AppStack, run_data: AppRunData | None, ctx: HarborCtx
 ) -> list[str]:
   """Managed volume dirs and external bind paths."""
   lines: list[str] = []
@@ -59,7 +59,7 @@ def volume_lines(
       lines.append(f"{name}: (unbound)")
     elif volume.kind == "app":
       continue
-    elif ctx is not None:
+    else:
       root = ctx.config.volume_roots.get(volume.kind)
       if root is not None:
         lines.append(f"{name}: {root / app_id / name}")
@@ -102,8 +102,8 @@ def location_receipt(
 
 def capability_receipt(
   stack: AppStack,
-  run_data: AppRunData | None = None,
-  ctx: HarborCtx | None = None,
+  run_data: AppRunData | None,
+  ctx: HarborCtx,
   *,
   compact: bool = True,
 ) -> str:
@@ -133,7 +133,7 @@ def capability_receipt(
       for extra in declared_ports[1:]:
         lines.append(f"           {extra}")
 
-    if stack.subdomain and ctx is not None:
+    if stack.subdomain:
       webs = web_fqdns(stack, ctx.config.domain)
       if webs:
         lines.append(f"  Routes:  {webs[0]}")

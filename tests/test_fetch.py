@@ -582,8 +582,8 @@ def test_a_fetched_happ_is_an_ordinary_happ(github, ctx, harbor_env):
   assert catalog.returncode == 0, catalog.stderr
   assert "hello-world" in catalog.stdout
 
-  up = harbor_env.run("up", "hello-world")
-  assert up.returncode == 0, up.stderr
+  started = harbor_env.run("start", "hello-world")
+  assert started.returncode == 0, started.stderr
   assert (harbor_env.run_root / "hello-world" / "compose.yml").is_file()
 
 

@@ -3,10 +3,11 @@ import argparse
 from tabulate import tabulate
 
 from harbor.cli.kv import parse_kv
-from harbor.lib.apps import resolve_app_or_path
+from harbor.lib.appconfig import AppConfigStore
+from harbor.lib.apps import AppID, resolve_app_id
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack, app_stack
 
 
 def register(subparsers) -> None:
@@ -50,31 +51,41 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  app, source = resolve_app_or_path(ctx, args.app)
-  stack = app_stack(source)
+  app = resolve_app_id(ctx, args.app)
+  # Config lives in the run directory, so there is nowhere to put it (or read
+  # it from) until the app is staged. `harbor start --set` is the one-shot.
+  stack = app_stack(ctx.app_path(app), app)
+  store = ctx.app_config(app)
 
   if args.get_name is not None:
     if args.sets or args.binds:
       raise ValueError("--get cannot be combined with --set or --bind")
-    _get(app, stack, args.get_name, ctx, conn, show_secret=args.show_secret)
+    _get(stack, store, args.get_name, conn, show_secret=args.show_secret)
     return
 
   if args.show_secret:
     raise ValueError("--show-secret requires --get")
 
   if args.sets or args.binds:
-    _apply(app, stack, source, args.sets, args.binds, ctx, conn)
+    _apply(app, stack, args.sets, args.binds, ctx, conn)
     return
 
-  _list(app, stack, ctx, conn)
+  _list(app, stack, store, conn)
 
 
-def _get(app, stack, name: str, ctx: HarborCtx, conn, *, show_secret: bool) -> None:
+def _get(
+  stack: AppStack,
+  store: AppConfigStore,
+  name: str,
+  conn,
+  *,
+  show_secret: bool,
+) -> None:
   config = stack.config.get(name)
   if not config:
     raise ValueError(f"config {name!r} not declared in manifest")
 
-  secret, value = ctx.app_db(app).get_config(name)
+  secret, value = store.get_config(name)
   if value is None:
     if config.has_default():
       conn.err(f"Config {config.name} using default value")
@@ -87,14 +98,21 @@ def _get(app, stack, name: str, ctx: HarborCtx, conn, *, show_secret: bool) -> N
     conn.out(value)
 
 
-def _apply(app, stack, source, sets_raw, binds_raw, ctx: HarborCtx, conn) -> None:
+def _apply(
+  app: AppID,
+  stack: AppStack,
+  sets_raw: list[str],
+  binds_raw: list[str],
+  ctx: HarborCtx,
+  conn,
+) -> None:
   sets = [parse_kv(item, "--set") for item in sets_raw]
   binds = [parse_kv(item, "--bind") for item in binds_raw]
 
   if sets:
     apply_config_sets(stack, sets, ctx)
   for volname, host_path in binds:
-    bind(app, volname, host_path, ctx, source_path=source)
+    bind(stack, volname, host_path, ctx)
 
   try:
     state = ctx.run_state(app)
@@ -102,17 +120,15 @@ def _apply(app, stack, source, sets_raw, binds_raw, ctx: HarborCtx, conn) -> Non
     state = None
   if state is not None and state.running_count:
     conn.err(
-      f"App {app} is running; run `harbor down {app}` "
-      f"&& `harbor up {app}` to apply new config"
+      f"App {app} is running; run `harbor stop {app}` "
+      f"&& `harbor start {app}` to apply new config"
     )
 
 
-def _list(app, stack, ctx: HarborCtx, conn) -> None:
-  app_db = ctx.app_db(app)
-
+def _list(app: AppID, stack: AppStack, store: AppConfigStore, conn) -> None:
   rows = []
   for name, entry in stack.config.items():
-    secret, value = app_db.get_config(name)
+    secret, value = store.get_config(name)
     if value is None:
       if entry.has_default():
         display = f"{entry.default} (default)"
@@ -130,7 +146,7 @@ def _list(app, stack, ctx: HarborCtx, conn) -> None:
   if not ext:
     return
 
-  binds = app_db.list_binds()
+  binds = store.list_binds()
   bind_rows = []
   for name, _volume in ext:
     entry = binds.get(name)

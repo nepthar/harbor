@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from logging import getLogger
 from pathlib import Path
 
 import yaml
 
-from harbor.lib.apps import AppID, record_app_action
+from harbor.lib.appconfig import config_path
+from harbor.lib.apps import AppID, app_id_from_path, is_pathlike, record_app_action
 from harbor.lib.docker import DockerError, docker_run_command
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.routes import (
@@ -27,6 +30,11 @@ from harbor.lib.stack import AppStack, app_stack
 
 logger = getLogger("harbor.lifecycle")
 
+# Scratch names used while swapping in a new happ copy. Both are inside the run
+# dir so the swap is a rename on one filesystem rather than a second copy.
+INCOMING = ".happ.incoming"
+OUTGOING = ".happ.outgoing"
+
 
 def _record(action: str, app_id: AppID, ctx: HarborCtx) -> None:
   record_app_action(action, app_id, ctx.config)
@@ -41,71 +49,58 @@ def _container_recovery_message(app_id: AppID, ctx: HarborCtx) -> str:
   )
 
 
-def _symlink_to(link: Path, target: Path) -> None:
-  if link.is_symlink():
-    link.unlink()
-  elif link.exists():
-    return
-  link.symlink_to(target)
+def _managed_volume_dirs(app_id: AppID, ctx: HarborCtx) -> list[Path]:
+  return [root / app_id for root in ctx.config.volume_roots.values()]
 
 
-def _copy_to(source: Path, dest: Path) -> None:
-  shutil.copy2(source, dest)
+def _has_volume_data(app_id: AppID, ctx: HarborCtx) -> bool:
+  """Whether any managed volume holds something an app could depend on."""
+  for app_dir in _managed_volume_dirs(app_id, ctx):
+    if not app_dir.is_dir():
+      continue
+    if any(not entry.is_dir() for entry in app_dir.rglob("*")):
+      return True
+  return False
 
 
-def _remove_managed_volumes(app_id: AppID, ctx: HarborCtx) -> None:
-  for kind, root in ctx.config.volume_roots.items():
-    app_dir = root / app_id
-    if app_dir.is_dir():
-      shutil.rmtree(app_dir)
-      logger.info("removed %s volume %s", kind, app_dir)
+def _swap_happ(catalog: Path, run_path: Path) -> None:
+  """Copy the catalog entry in, then move it into place.
+
+  `happ/` is never edited in place: a copy that fails half way through would
+  otherwise leave a bundle that is neither the old app nor the new one. Inner
+  symlinks are dereferenced so the run copy is self-contained.
+  """
+  incoming = run_path / INCOMING
+  outgoing = run_path / OUTGOING
+  for scratch in (incoming, outgoing):
+    if scratch.exists():
+      shutil.rmtree(scratch)
+
+  shutil.copytree(catalog, incoming)
+  happ = run_path / "happ"
+  if happ.exists():
+    os.replace(happ, outgoing)
+  os.replace(incoming, happ)
+  if outgoing.exists():
+    shutil.rmtree(outgoing)
 
 
-def _materialize_run_structure(
-  stack: AppStack, app_path: Path, run_data: AppRunData
-) -> None:
-  run_path = run_data.run_path
+def _generate_missing_config(stack: AppStack, ctx: HarborCtx) -> None:
+  """Fill in defaults and `auto` secrets, for keys that have no value yet.
 
-  # Make the run folder itself + $run/volumes
-  run_path.mkdir(parents=True, exist_ok=True)
-  volumes_path = run_path / "volumes"
-  volumes_path.mkdir(exist_ok=True)
-  for existing in volumes_path.iterdir():
-    if existing.is_symlink() or existing.is_file():
-      existing.unlink()
-    else:
-      shutil.rmtree(existing)
-
-  # Copy in the manifest - so we can diff against it
-  _copy_to(app_path / "manifest.toml", run_path / "manifest.toml")
-
-  for volume_name, volume_link in run_data.volume_links.items():
-    logger.debug(
-      "volume %s: %s -> %s", volume_name, volume_link.source, volume_link.destination
-    )
-    if volume_link.mkdir:
-      volume_link.source.mkdir(parents=True, exist_ok=True)
-    if not volume_link.source.exists():
-      raise ValueError(
-        f"volume {volume_name} source does not exist: {volume_link.source}"
-      )
-    volume_link.destination.parent.mkdir(parents=True, exist_ok=True)
-    _symlink_to(volume_link.destination, volume_link.source)
-
-  with open(run_path / "compose.yml", "w") as f:
-    yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
-
-
-def _generate_and_save_config(stack: AppStack, ctx: HarborCtx) -> None:
-  app_db = ctx.app_db(stack.app)
+  Only the missing ones. Re-staging must never mint a new secret over one the
+  app's existing data already depends on, which fails as an authentication
+  error that nothing in the app explains (docs/run-layout.md §5 step 5).
+  """
+  store = ctx.app_config(stack.app)
   for config_name, config in stack.config.items():
-    _, existing = app_db.get_config(config_name)
-    if existing is None and config.default is not None:
-      try:
-        new_value = generate_secret(config.default) if config.secret else config.default
-        app_db.set_config(config_name, config.secret, new_value)
-      except SecretGenerationError as e:
-        logger.error(f"{config_name}: {e}")
+    if config.default is None or store.has_config(config_name):
+      continue
+    try:
+      value = generate_secret(config.default) if config.secret else config.default
+      store.set_config(config_name, config.secret, value)
+    except SecretGenerationError as e:
+      logger.error(f"{config_name}: {e}")
 
 
 def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
@@ -119,9 +114,7 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
   app_subdomain = stack.subdomain or ""
 
   hdb = ctx.harbor_db()
-  app_db = hdb.app_db(stack.app)
-
-  app_db.clear_routes()
+  hdb.clear_routes(stack.app)
   for route_name, route in stack.routes.items():
     if route.needs_allocation:
       host_port = hdb.next_free_port()
@@ -139,13 +132,62 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
       scheme=route.scheme,
     )
 
-    hdb._store.write(f"routes/{stack.app}/{route_name}", assigned.__dict__)
+    hdb.set_route(stack.app, route_name, assigned.__dict__)
 
 
-@dataclass
+def _existing_volume_kinds(volumes_root: Path) -> dict[str, str]:
+  """volume name -> kind, read back from the links a previous stage left."""
+  found: dict[str, str] = {}
+  if not volumes_root.is_dir():
+    return found
+  for kind_dir in volumes_root.iterdir():
+    if not kind_dir.is_dir():
+      continue
+    for link in kind_dir.iterdir():
+      found[link.name] = kind_dir.name
+  return found
+
+
+def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
+  """Point `volumes/<kind>/<name>` at the current manifest's volumes.
+
+  Returns the names the manifest no longer declares. Their links go; their data
+  never does -- a manifest edit must not be able to delete bytes.
+  """
+  volumes_root = run_data.run_path / "volumes"
+  existing = _existing_volume_kinds(volumes_root)
+
+  for name, kind in existing.items():
+    volume = stack.volumes.get(name)
+    if volume is not None and volume.kind != kind:
+      raise ValueError(
+        f"App {stack.app} - volume {name} changed kind from {kind} to "
+        f"{volume.kind}, but its data lives under the {kind} root. Move it by "
+        f"hand, or run `harbor rm {stack.app}` to delete it."
+      )
+
+  # Only links live here; the data they point at is outside the run dir, or (for
+  # app volumes) under happ/. So the whole tree can be torn down and rebuilt.
+  if volumes_root.exists():
+    shutil.rmtree(volumes_root)
+
+  for volume_name, link in run_data.volume_links.items():
+    logger.debug("volume %s: %s -> %s", volume_name, link.destination, link.target)
+    if link.mkdir:
+      link.source.mkdir(parents=True, exist_ok=True)
+    if not link.source.exists():
+      raise ValueError(f"volume {volume_name} source does not exist: {link.source}")
+    link.destination.parent.mkdir(parents=True, exist_ok=True)
+    link.destination.symlink_to(link.target)
+
+  return tuple(sorted(name for name in existing if name not in stack.volumes))
+
+
+@dataclass(frozen=True)
 class StageSuccess:
   stack: AppStack
   run_data: AppRunData
+  dropped_volumes: tuple[str, ...] = ()
 
 
 def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
@@ -163,32 +205,49 @@ def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
   return lines
 
 
-def stage(app: AppID, ctx: HarborCtx, source_path: Path) -> StageSuccess:
-  """Generates all configuration possible (secrets, default config values), then
-  materializes a staged app in harbor/run/<app_id>.
+def catalog_entry(ctx: HarborCtx, target: str) -> tuple[AppID, Path | None]:
+  """Resolve a stage/start target to an app id backed by an `apps/` entry.
 
-  Re-materializing from the same source refreshes generated files and volume
-  links. A different source is refused (``harbor rm --runtime`` first). Nothing
-  is written until validation passes, so a failed materialize leaves no run dir.
+  A path argument is symlinked into the catalog first, so `apps/` is literally
+  the only thing staging copies from and a developer's checkout keeps working
+  (docs/run-layout.md L14). Returns the entry created, if any, so the caller
+  can say so.
+  """
+  if not is_pathlike(target):
+    return ctx.resolve_app(target), None
+
+  source = Path(target).expanduser().resolve()
+  app = app_id_from_path(source)
+  entry = ctx.config.apps_root / f"{app}.happ"
+
+  if entry.is_symlink() or entry.exists():
+    if entry.resolve() != source:
+      raise ValueError(
+        f"App {app} is already in the catalog as {entry} -> {entry.resolve()}. "
+        f"Remove that entry to stage from {source} instead."
+      )
+    return app, None
+
+  entry.parent.mkdir(parents=True, exist_ok=True)
+  entry.symlink_to(source)
+  return app, entry
+
+
+def stage(
+  app: AppID,
+  ctx: HarborCtx,
+  *,
+  sets: list[tuple[str, str]] | None = None,
+  binds: list[tuple[str, str]] | None = None,
+) -> StageSuccess:
+  """Install `apps/<id>.happ` into `run/<id>/` without starting it.
+
+  The happ copy, the volume links, the routes and compose.yml are all rebuilt
+  from the manifest every time. Config values and volume *contents* are not:
+  they belong to the installation, not the bundle (docs/run-layout.md §5).
   """
   run_path = ctx.run_path(app)
-  link = run_path / "source"
-
-  if link.exists() and not link.is_symlink():
-    raise ValueError(
-      f"{link} exists but is not a symlink; remove it or run "
-      f"`harbor rm --runtime {app}`"
-    )
-  if link.is_symlink():
-    existing = link.readlink()
-    if existing.resolve() != source_path.resolve():
-      raise ValueError(
-        f"App {app} is already installed from {existing}; run "
-        f"`harbor rm --runtime {app}` before bringing up from {source_path}"
-      )
-
-  if not source_path.exists():
-    raise ValueError(f"Source does not exist: {source_path}")
+  catalog = ctx.bundle_path(app)
 
   try:
     running_count = ctx.run_state(app).running_count
@@ -197,54 +256,68 @@ def stage(app: AppID, ctx: HarborCtx, source_path: Path) -> StageSuccess:
   if running_count:
     raise ValueError(
       f"App {app} has {running_count} running Harbor-labeled container(s); "
-      f"run `harbor down {app}` before `harbor up`"
+      f"run `harbor stop {app}` first"
     )
 
-  stack = app_stack(source_path)
+  stack = app_stack(catalog, app)
 
-  _generate_and_save_config(stack, ctx)
+  # Config gone while the data it belongs to is still here means someone
+  # deleted the run dir by hand. Staging would generate fresh `auto` secrets
+  # against data expecting the old ones, so refuse instead.
+  if not config_path(run_path).is_file() and _has_volume_data(app, ctx):
+    raise ValueError(
+      f"App {app} has volume data but no config at {config_path(run_path)}. "
+      f"Staging would generate new secrets that its existing data does not "
+      f"expect. Restore the run directory from a backup, or run "
+      f"`harbor rm {app}` to delete its config and data together."
+    )
+
+  run_path.mkdir(parents=True, exist_ok=True)
+  _swap_happ(catalog, run_path)
+
+  if sets:
+    apply_config_sets(stack, sets, ctx)
+  for volname, host_path in binds or []:
+    bind(stack, volname, host_path, ctx)
+
+  _generate_missing_config(stack, ctx)
   _clear_and_reallocate_ports(stack, ctx)
 
-  run_data = load_run_data(stack, ctx, app_path=source_path)
-
+  run_data = load_run_data(stack, ctx)
   if run_data.stage_blockers:
     raise ValueError("\n".join(i.problem for i in run_data.stage_blockers))
 
   try:
-    run_path.mkdir(parents=True, exist_ok=True)
-    _symlink_to(link, source_path)
-    _materialize_run_structure(stack, source_path, run_data)
-    return StageSuccess(stack, run_data)
+    dropped = _rebuild_volume_links(stack, run_data)
+    with open(run_path / "compose.yml", "w") as f:
+      yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
   except Exception:
-    if run_path.exists():
-      _record("up-failed", app, ctx)
+    _record("stage-failed", app, ctx)
     raise
+
+  store = ctx.app_config(app)
+  store.set_meta("origin", str(catalog))
+  store.set_meta("staged_at", datetime.now().astimezone().isoformat(timespec="seconds"))
+  _record("staged", app, ctx)
+  return StageSuccess(stack, run_data, dropped)
 
 
 def apply_config_sets(
   stack: AppStack, sets: list[tuple[str, str]], ctx: HarborCtx
 ) -> None:
-  app_db = ctx.app_db(stack.app)
+  store = ctx.app_config(stack.app)
   for name, value in sets:
     config = stack.config.get(name)
     if not config:
       raise ValueError(f"No config {name} in {stack.app}'s manifest")
     if not value:
       raise ValueError(f"Empty value for config {name!r}")
-    app_db.set_config(name, config.secret, value)
+    store.set_config(name, config.secret, value)
 
 
-def bind(
-  app: AppID,
-  volname: str,
-  host_path_str: str,
-  ctx: HarborCtx,
-  *,
-  source_path: Path | None = None,
-) -> None:
-  """Record an external volume bind. Does not require materialization."""
-  source = source_path or ctx.bundle_path(app)
-  stack = app_stack(source)
+def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> None:
+  """Record an external volume bind against the staged happ."""
+  app = stack.app
 
   if volname not in stack.volumes:
     raise ValueError(f"App {app} - no such volume {volname}")
@@ -259,48 +332,39 @@ def bind(
   if not host_path.exists():
     raise ValueError(f"App {app} - Path does not exist: {host_path_str}")
 
-  ctx.app_db(app).set_bind(volname, str(host_path), readonly=vol.readonly)
+  ctx.app_config(app).set_bind(volname, str(host_path), readonly=vol.readonly)
 
 
-def up(
+def start(
   app: AppID,
   ctx: HarborCtx,
-  source_path: Path,
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
 ) -> StageSuccess:
-  stack = app_stack(source_path)
-  if sets:
-    apply_config_sets(stack, sets, ctx)
-  for volname, host_path in binds or []:
-    bind(app, volname, host_path, ctx, source_path=source_path)
+  """Stage if needed, then bring the app up and publish its web routes.
 
-  result = stage(app, ctx, source_path)
-  if result.run_data.start_blockers:
-    lines = recovery_lines(app, result.run_data.start_blockers)
-    raise ValueError("\n".join(lines))
+  `--set` and `--bind` re-stage, because config and binds are inputs to the
+  volume links and compose file that staging generates.
+  """
+  if sets or binds or not ctx.is_staged(app):
+    result = stage(app, ctx, sets=sets, binds=binds)
+  else:
+    stack = app_stack(ctx.app_path(app), app)
+    result = StageSuccess(stack, load_run_data(stack, ctx))
 
-  start(app, ctx)
-  return result
-
-
-def start(app: AppID, ctx: HarborCtx) -> None:
-  """Start a runnable app via docker compose, then publish manifest routes."""
-  state = ctx.run_state(app)
-  if not state.compose_exists:
-    raise ValueError(f"App {app} is not installed; run `harbor up {app}` first")
-
-  run_path = state.run_path
-  stack = app_stack(ctx.app_path(app))
-  run_data = load_run_data(stack, ctx)
+  stack, run_data = result.stack, result.run_data
   if run_data.start_blockers:
     raise ValueError("\n".join(recovery_lines(app, run_data.start_blockers)))
+
+  run_path = ctx.run_path(app)
+  if not (run_path / "compose.yml").is_file():
+    raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
 
   try:
     preflight_app_routes(run_data, ctx)
   except RouteProviderError as e:
-    _record("up-failed", app, ctx)
+    _record("start-failed", app, ctx)
     raise ValueError(str(e)) from e
 
   try:
@@ -312,25 +376,26 @@ def start(app: AppID, ctx: HarborCtx) -> None:
       env=run_data.config_env(),
     )
   except DockerError as e:
-    _record("up-failed", app, ctx)
+    _record("start-failed", app, ctx)
     raise ValueError(str(e)) from e
 
   try:
-    register_app_routes(stack, run_data, ctx)
+    register_app_routes(run_data, ctx)
   except RouteProviderError as e:
-    _record("up-failed", app, ctx)
+    _record("start-failed", app, ctx)
     raise ValueError(
-      f"{e}. Containers may still be running; run `harbor down {app}` to stop them."
+      f"{e}. Containers may still be running; run `harbor stop {app}` to stop them."
     ) from e
 
-  _record("up", app, ctx)
+  _record("start", app, ctx)
+  return result
 
 
 def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
-  """Stream ``docker compose logs`` for an installed app."""
+  """Stream ``docker compose logs`` for a staged app."""
   state = ctx.run_state(app_id)
   if not state.compose_exists:
-    raise ValueError(f"App {app_id} is not installed; run `harbor up {app_id}` first")
+    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
 
   docker_run_command(
     ["compose", "logs", *(extra_args or [])],
@@ -347,7 +412,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
   if not state.compose_exists:
     if state.containers:
       raise ValueError(_container_recovery_message(app_id, ctx))
-    raise ValueError(f"App {app_id} is not installed; run `harbor up {app_id}` first")
+    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
 
   try:
     unregister_app_routes(app_id, ctx)
@@ -361,55 +426,74 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
       json_output=False,
       check=True,
     )
-    _record("down", app_id, ctx)
+    _record("stop", app_id, ctx)
   except DockerError as e:
-    _record("down-failed", app_id, ctx)
+    _record("stop-failed", app_id, ctx)
     raise ValueError(str(e)) from e
 
 
-def unstage(app_id: AppID, ctx: HarborCtx) -> None:
-  """Remove the run folder. Keeps volumes and appdb."""
-  state = ctx.run_state(app_id)
-  if state.containers:
-    ids = ", ".join(
-      container.container_id or container.name for container in state.containers
-    )
-    raise ValueError(
-      f"App {app_id} still has Harbor-labeled containers ({ids}); "
-      f"run `harbor down {app_id}` or remove them before unstaging"
-    )
+@dataclass(frozen=True)
+class RemovalPlan:
+  """What `harbor rm` will delete, and what it deliberately will not."""
 
-  run_path = state.run_path
-  if run_path.exists():
-    shutil.rmtree(run_path)
-    logger.info("unstaged %s", app_id)
-    return
-
-  logger.warning(f"Run path did not exist, expected {run_path}")
+  app_id: AppID
+  run_path: Path
+  volume_paths: tuple[Path, ...]
+  ext_paths: tuple[Path, ...]
+  stop_first: bool
 
 
-def reset(app_id: AppID, ctx: HarborCtx) -> None:
-  """Stop, unstage, and delete all persistent data + config for the app."""
+def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
+  """Work out what removing an app would destroy, without destroying it."""
   state = ctx.run_state(app_id)
   if state.containers and not state.compose_exists:
     raise ValueError(_container_recovery_message(app_id, ctx))
 
-  if state.compose_exists:
+  ext_paths: tuple[Path, ...] = ()
+  if config_path(state.run_path).is_file():
+    ext_paths = tuple(
+      Path(entry["host_path"]) for entry in ctx.app_config(app_id).list_binds().values()
+    )
+
+  return RemovalPlan(
+    app_id=app_id,
+    run_path=state.run_path,
+    volume_paths=tuple(d for d in _managed_volume_dirs(app_id, ctx) if d.is_dir()),
+    ext_paths=ext_paths,
+    stop_first=state.compose_exists,
+  )
+
+
+def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
+  """Stop an app and delete its run dir, managed volumes and route claims.
+
+  The catalog entry and any `ext` volume contents survive, so
+  `harbor rm foo; harbor start foo` is a clean reinstall.
+
+  TODO(docs/run-layout.md §8): capture a snapshot and verify its checksum
+  before the first byte is deleted, once `harbor snapshot` exists. Until then
+  this is unrecoverable and the CLI says so.
+  """
+  app_id = plan.app_id
+  if plan.stop_first:
     logger.info("Stopping %s", app_id)
     stop(app_id, ctx)
 
-  if state.run_path.exists():
-    shutil.rmtree(state.run_path)
-    logger.info("unstaged %s", app_id)
+  if plan.run_path.exists():
+    shutil.rmtree(plan.run_path)
+    logger.info("removed run directory %s", plan.run_path)
 
-  _remove_managed_volumes(app_id, ctx)
+  for path in plan.volume_paths:
+    if path.is_dir():
+      shutil.rmtree(path)
+      logger.info("removed volume %s", path)
+
   ctx.harbor_db().purge_app(app_id)
 
   # The activity log outlives the app on purpose, so close it out rather than
   # leaving the trail ending at whatever happened before the removal.
-  _record("purged", app_id, ctx)
-
-  logger.info("reset %s", app_id)
+  _record("removed", app_id, ctx)
+  logger.info("removed %s", app_id)
 
 
 def _web_routes(run_data: AppRunData) -> list[tuple[str, AssignedRoute]]:
@@ -427,7 +511,7 @@ def _web_routes(run_data: AppRunData) -> list[tuple[str, AssignedRoute]]:
 def preflight_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
   """Sanity check that the routes requested by the run data can be satisfied
 
-  If two apps request the same subdomain, the first app `up` wins, and th
+  If two apps request the same subdomain, the first app started wins, and the
   second fails here.
   """
   web_routes = _web_routes(run_data)
@@ -447,7 +531,7 @@ def preflight_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
     raise refuse_foreign_route(f"{subdomain}.{domain}", owner)
 
 
-def register_app_routes(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -> None:
+def register_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
   web_routes = _web_routes(run_data)
   if not web_routes:
     return
@@ -458,12 +542,12 @@ def register_app_routes(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -
     host_port = run_data.routes[route_name].host_port
     if host_port < 0:
       raise RouteProviderError(
-        f"route {route_name!r} has no allocated host port; run `harbor up` first"
+        f"route {route_name!r} has no allocated host port; run `harbor stage` first"
       )
 
     subdomain = route.subdomain
     provider.register_route(
-      stack.app, host_port, subdomain, domain, scheme=route.scheme
+      run_data.app, host_port, subdomain, domain, scheme=route.scheme
     )
     logger.info(
       "registered route %s: %s.%s -> %s://:%d",
@@ -476,7 +560,7 @@ def register_app_routes(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -
 
 
 def unregister_app_routes(app: AppID, ctx: HarborCtx) -> None:
-  routes = ctx.app_db(app).list_routes()
+  routes = ctx.harbor_db().list_routes(app)
   published = [
     AssignedRoute(**route) for route in routes.values() if route["publish"] == "web"
   ]

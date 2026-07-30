@@ -12,12 +12,14 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from harbor.lib.appconfig import AppConfigStore, config_path
 from harbor.lib.apps import AppID
 from harbor.lib.config import Config
+from harbor.lib.crypto import CryptoEngine
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
 from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
-from harbor.lib.store import AppDB, HarborDB
+from harbor.lib.store import HarborDB
 
 logger = logging.getLogger("harbor")
 
@@ -126,95 +128,71 @@ class HarborCtx:
     return self.config.run_root / app_id
 
   def app_path(self, app: AppID | str) -> Path:
-    """Resolve a materialized happ's bundle via its `run/<app_id>/source` link.
+    """The happ harbor is actually running: its own copy at ``run/<id>/happ``.
 
-    Every up'd app records its origin as this symlink. If the app was never
-    materialized there is no link and this is an error. A dangling link
-    (source deleted or moved) is a hard error telling the operator to restore
-    it or ``harbor rm --runtime``.
+    Staging copies the bundle in, so what is installed is a fact on disk. It no
+    longer depends on the catalog entry still existing, or still containing
+    what it did at stage time.
     """
-    link = self.run_path(app) / "source"
-    if not link.is_symlink():
-      raise ValueError(f"App {app} is not installed; run `harbor up {app}` first")
-    target = link.readlink()
-    if not target.exists():
-      raise ValueError(
-        f"Source for {app} is gone, was previously at {target}. "
-        f"Restore the source or run `harbor rm --runtime {app}`."
-      )
-    return target
+    happ = self.run_path(app) / "happ"
+    if not (happ / "manifest.toml").is_file():
+      raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
+    return happ
 
   def bundle_path(self, app: AppID | str) -> Path:
-    """Resolve a loadable happ bundle without requiring materialization.
+    """The catalog entry ``apps/<id>.happ`` -- the only thing `stage` copies from."""
+    known = self.known_bundles().get(str(app))
+    if known is None:
+      raise ValueError(f'No app found for "{app}"')
+    return known
 
-    Prefers the recorded ``run/<id>/source`` link when present and valid,
-    otherwise the apps_root catalog entry. Raises if neither yields a
-    ``*.happ`` directory with ``manifest.toml``.
+  def is_staged(self, app: AppID | str) -> bool:
+    return (self.run_path(app) / "happ" / "manifest.toml").is_file()
+
+  def app_config(self, app: AppID | str) -> AppConfigStore:
+    """The app's own config store under its run directory.
+
+    Config lives with the app, so an app must be staged before it can be
+    configured. `harbor start --set` covers the one-shot case.
     """
     app_id = str(app)
-    staged = self._staged_sources().get(app_id)
-    if staged is not None and not staged.exists():
-      raise ValueError(
-        f"Source for {app_id} is gone, was previously at {staged}. "
-        f"Restore the source or run `harbor rm --runtime {app_id}`."
-      )
-
-    known = self.known_bundles().get(app_id)
-    if known is not None:
-      return known.resolve()
-    raise ValueError(f'No app found for "{app_id}"')
-
-  def app_db(self, app_id: AppID) -> AppDB:
-    return self.harbor_db().app_db(app_id)
-
-  def _staged_sources(self) -> dict[str, Path]:
-    """Map app_id -> recorded source path for every staged happ.
-
-    Reads the `run/<app_id>/source` links that staging writes for every app.
-    Dangling links are included so the app still resolves (to the helpful error
-    raised by ``app_path`` / ``bundle_path``).
-    """
-    run_root = self.config.run_root
-    if not run_root.is_dir():
-      return {}
-    sources: dict[str, Path] = {}
-    for entry in run_root.iterdir():
-      link = entry / "source"
-      if link.is_symlink():
-        sources[entry.name] = link.readlink()
-    return sources
+    run_path = self.run_path(app_id)
+    if not run_path.is_dir():
+      raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
+    return AppConfigStore(config_path(run_path), CryptoEngine.from_config(self.config))
 
   def known_bundles(self) -> dict[str, Path]:
-    """Map app_id -> Harbor App bundle directory.
+    """Map app_id -> catalog entry under apps/.
     A directory is a "Harbor App Bundle" iff:
      - It ends in .happ
      - It has a manifest.toml file
 
+    Entries may be real directories or symlinks; harbor does not distinguish.
     This does not attempt to parse or validate the manifest contents.
     """
-    bundles = {
+    return {
       entry.stem: entry
       for entry in self.config.apps_root.glob("*.happ")
       if entry.is_dir() and (entry / "manifest.toml").is_file()
     }
-    for app_id, source in self._staged_sources().items():
-      if (
-        source.exists()
-        and source.suffix == ".happ"
-        and source.is_dir()
-        and (source / "manifest.toml").is_file()
-      ):
-        bundles[app_id] = source
-      else:
-        bundles.pop(app_id, None)
-    return bundles
+
+  def staged_app_ids(self) -> set[str]:
+    """Every app id with a happ copy under run/."""
+    run_root = self.config.run_root
+    if not run_root.is_dir():
+      return set()
+    return {
+      entry.name
+      for entry in run_root.iterdir()
+      if (entry / "happ" / "manifest.toml").is_file()
+    }
 
   def known_apps(self) -> list[AppID]:
-    apps = {app_id: AppID(app_id) for app_id in self.known_bundles()}
-    # Keep dangling installed apps resolvable by id (for unstage/down/etc.).
-    for app_id in self._staged_sources():
-      apps.setdefault(app_id, AppID(app_id))
-    return list(apps.values())
+    # Staged apps stay resolvable by id even with no catalog entry, so an app
+    # whose `apps/` folder was deleted can still be stopped and removed.
+    ids = dict.fromkeys(self.known_bundles())
+    ids.update(dict.fromkeys(sorted(self.staged_app_ids())))
+    return [AppID(app_id) for app_id in ids]
 
   def resolve_app(self, query_app_id: str) -> AppID:
     candidates = self.known_apps()

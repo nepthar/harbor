@@ -1,8 +1,13 @@
-"""Per-app state: config values, volume binds, and host-port claims."""
+"""Harbor-wide state: route allocations, system secrets, and tokens.
+
+Per-app config, secrets, and binds live in the app's run directory instead --
+see :mod:`harbor.lib.appconfig`.
+"""
 
 import json
 import logging
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -71,8 +76,17 @@ class HarborDB:
     self._crypto = crypto
     self._port_base = port_base
 
-  def app_db(self, app_id: str) -> "AppDB":
-    return AppDB(self._store, app_id, self._crypto)
+  # Routes - the only per-app state left here. Everything else about an app
+  # lives in its run directory; routes stay central because allocating a host
+  # port is contention between apps, not state belonging to one.
+  def list_routes(self, app_id: str) -> dict[str, dict[str, Any]]:
+    return self._store.scan(f"routes/{app_id}/")
+
+  def set_route(self, app_id: str, route_name: str, entry: Mapping[str, Any]) -> None:
+    self._store.write(f"routes/{app_id}/{route_name}", dict(entry))
+
+  def clear_routes(self, app_id: str) -> None:
+    self._store.clear(f"routes/{app_id}/")
 
   def next_free_port(self) -> int:
     rout_entries = self._store.scan(prefix="routes/")
@@ -126,69 +140,15 @@ class HarborDB:
 
   # App Management
   def app_ids(self) -> list[str]:
-    app_ids = set()
+    """Every app harbordb still holds state for -- which now means routes.
 
-    for k in self._store.scan("apps/").keys():
-      app_ids.add(k.split("/")[0])
-
-    return sorted(app_ids)
+    Config and binds moved to the run directory, so an id here with no run
+    directory is an orphaned route allocation, and that is what `doctor`
+    reports.
+    """
+    return sorted({key.split("/")[0] for key in self._store.scan("routes/")})
 
   def purge_app(self, app_id: str) -> bool:
-    had = bool(self._store.scan(f"apps/{app_id}/")) or bool(
-      self._store.scan(f"routes/{app_id}/")
-    )
-    self._store.clear(f"apps/{app_id}/")
-    self._store.clear(f"routes/{app_id}/")
+    had = bool(self._store.scan(f"routes/{app_id}/"))
+    self.clear_routes(app_id)
     return had
-
-
-class AppDB:
-  def __init__(
-    self, harbor_store: ConfigStore, app_id: str, crypto: CryptoEngine
-  ) -> None:
-    self._store = harbor_store
-    self._app_id = app_id
-    self._crypto = crypto
-    self._prefix = f"apps/{app_id}"
-
-  @property
-  def app_id(self) -> str:
-    return self._app_id
-
-  def _k(self, section: str, key: str) -> str:
-    return f"{self._prefix}/{section}/{key}"
-
-  def _data(self, section: str):
-    return self._store.scan(f"{self._prefix}/{section}/")
-
-  def set_config(self, name: str, secret: bool, value: str) -> None:
-    if len(name) > MAX_NAME_LEN:
-      raise ValueError(f"Name too long for config {name!r}")
-    if len(value) > MAX_VALUE_LEN:
-      raise ValueError(f"Value too long for config {name!r}")
-    stored = self._crypto.encrypt(value) if secret else value
-    key = self._k("config", name)
-    self._store.write(key, {"secret": secret, "value": stored})
-
-  def get_config(self, name: str) -> tuple[bool, str] | tuple[None, None]:
-    """Return (secret, plaintext_value) or None if not set."""
-    entry = self._store.read(self._k("config", name))
-    if entry is None:
-      return (None, None)
-    secret = entry["secret"]
-    raw = entry["value"]
-    return secret, self._crypto.decrypt(raw) if secret else raw
-
-  def set_bind(self, volume_name: str, host_path: str, readonly: bool = False) -> None:
-    self._store.write(
-      self._k("binds", volume_name), {"host_path": host_path, "readonly": readonly}
-    )
-
-  def list_binds(self) -> dict:
-    return self._data("binds") or {}
-
-  def list_routes(self) -> dict[str, dict[str, Any]]:
-    return self._store.scan(f"routes/{self._app_id}/")
-
-  def clear_routes(self) -> None:
-    self._store.clear(f"routes/{self._app_id}/")
