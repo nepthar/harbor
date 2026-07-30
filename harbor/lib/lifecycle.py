@@ -13,6 +13,7 @@ from harbor.lib.appconfig import config_path
 from harbor.lib.apps import AppID, app_id_from_path, is_pathlike, record_app_action
 from harbor.lib.docker import DockerError, docker_run_command
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.manifest import ConfigError
 from harbor.lib.routes import (
   RouteProviderError,
   get_route_provider,
@@ -391,6 +392,23 @@ def start(
   return result
 
 
+def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
+  """The config environment compose.yml interpolates `${__HARBOR_CONFIG__*}` from.
+
+  Every compose invocation needs it, not just `up`: without it compose warns
+  about each unset variable and renders them blank, so `down` and `logs` would
+  be reasoning about a different project definition than `up` created. Best
+  effort -- a broken or half-removed app must still be stoppable, so a stack
+  that will not parse falls back to no env rather than blocking teardown.
+  """
+  try:
+    stack = app_stack(ctx.app_path(app_id), app_id)
+    return load_run_data(stack, ctx).config_env()
+  except (ValueError, ConfigError) as e:
+    logger.debug("no config env for %s: %s", app_id, e)
+    return {}
+
+
 def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
   """Stream ``docker compose logs`` for a staged app."""
   state = ctx.run_state(app_id)
@@ -401,8 +419,8 @@ def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
     ["compose", "logs", *(extra_args or [])],
     cwd=state.run_path,
     json_output=False,
-    capture=False,
     check=True,
+    env=_compose_env(app_id, ctx),
   )
 
 
@@ -425,6 +443,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
       cwd=state.run_path,
       json_output=False,
       check=True,
+      env=_compose_env(app_id, ctx),
     )
     _record("stop", app_id, ctx)
   except DockerError as e:

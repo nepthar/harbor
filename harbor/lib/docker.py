@@ -71,11 +71,14 @@ def load_harbor_run_unit_status() -> dict[str, tuple[HarborRunUnitStatus, ...]]:
 class DockerError(RuntimeError):
   """A docker invocation exited non-zero."""
 
-  def __init__(self, cmd: list[str], returncode: int, stderr: str) -> None:
+  def __init__(self, cmd: list[str], returncode: int, stderr: str = "") -> None:
     self.cmd = cmd
     self.returncode = returncode
     self.stderr = stderr
-    super().__init__(f"docker {' '.join(cmd)} failed ({returncode}): {stderr.strip()}")
+    # A streamed command already put its own diagnostics on the terminal, so
+    # point at those rather than reporting a bare exit code with no detail.
+    detail = stderr.strip() or "see the docker output above"
+    super().__init__(f"docker {' '.join(cmd)} failed ({returncode}): {detail}")
 
 
 def _parse_json_output(stdout: str) -> list[dict[str, Any]]:
@@ -98,23 +101,27 @@ def docker_run_command(
   json_output: bool = True,
   check: bool = True,
   env: dict[str, str] | None = None,
-  capture: bool = True,
-) -> list[dict[str, Any]] | str:
-  """Run ``docker <cmd>`` and return its output.
+) -> list[dict[str, Any]]:
+  """Run ``docker <cmd>``.
+
+  Output handling follows one rule: **anything harbor is not itself parsing
+  belongs on the operator's terminal.** `docker compose up` can spend minutes
+  pulling an image, and swallowing that is indistinguishable from a hang.
+
+  So ``json_output`` decides both the format *and* who sees it. When True, the
+  command is asked for JSON, its output is captured, and it is parsed into a
+  ``list[dict]``. When False, the child inherits harbor's stdio and writes
+  straight to the terminal; there is nothing to return.
 
   Args:
       cmd: arguments after ``docker`` (e.g. ``["compose", "ps"]``).
       cwd: working directory for the command (e.g. a run path).
-      json_output: when True, append ``--format json`` and parse the result into a
-          ``list[dict]``; when False, return the raw stdout string.
+      json_output: parse the output (True) or stream it to the terminal (False).
       check: raise :class:`DockerError` on a non-zero exit.
       env: extra environment variables merged onto ``os.environ``.
-      capture: when True, capture stdout/stderr; when False, inherit the parent's
-          stdio so output streams straight to the terminal (e.g. ``compose logs -f``)
-          and return an empty string.
 
   Returns:
-      ``list[dict]`` when ``json_output`` is True, else the raw stdout ``str``.
+      Parsed objects when ``json_output`` is True, else an empty list.
   """
   full = [DOCKER, *cmd]
   if json_output:
@@ -122,11 +129,11 @@ def docker_run_command(
 
   run_env = {**os.environ, **env} if env else None
   logger.debug("running: %s (cwd=%s)", " ".join(full), cwd)
-  result = subprocess.run(full, cwd=cwd, capture_output=capture, text=True, env=run_env)
+  result = subprocess.run(
+    full, cwd=cwd, capture_output=json_output, text=True, env=run_env
+  )
 
   if check and result.returncode != 0:
-    raise DockerError(cmd, result.returncode, result.stderr if capture else "")
+    raise DockerError(cmd, result.returncode, result.stderr if json_output else "")
 
-  if not capture:
-    return ""
-  return _parse_json_output(result.stdout) if json_output else result.stdout
+  return _parse_json_output(result.stdout) if json_output else []

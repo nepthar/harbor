@@ -19,7 +19,7 @@ script = { kind = "app", src = "app.py" }
 [run.main]
 image   = "python:3.12"
 cmd = ["python", "/app/app.py"]
-env = { AGH_USER = "${ag_user}", AGH_PASS = "${ag_pass}", AGH_URL = "${ag_host}", PAUSE_MINUTES = "${pause_minutes}", PORT = "8099" }
+env = { AGH_USER = "${ag_user}", AGH_PASS = "${ag_pass}", AGH_URL = "${ag_host}", PAUSE_MINUTES = "${pause_minutes}", PORT = "8099", PYTHONUNBUFFERED = "1" }
 volumes = { script = "/app/app.py" }
 
 [run.main.routes]
