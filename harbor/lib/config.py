@@ -46,6 +46,7 @@ class Config:
     volume_roots: dict[str, Path],
     apps_root: Path,
     run_root: Path,
+    snapshot_root: Path,
     master_key: str,
     master_keyfile: Path,
     domain: str,
@@ -57,6 +58,7 @@ class Config:
     self.volume_roots = volume_roots
     self.apps_root = apps_root
     self.run_root = run_root
+    self.snapshot_root = snapshot_root
     self.master_key = master_key
     self.master_keyfile = master_keyfile
     self.domain = domain
@@ -115,6 +117,7 @@ def load_config_file(config_file: str | Path, author: str) -> Config:
 
   apps_root = ep(data.get("apps_root", "apps"))
   run_root = ep(data.get("run_root", "run"))
+  snapshot_root = ep(data.get("snapshot_root", "snapshots"))
   domain = data.get("domain", "harbor.localhost")
   port_base = data.get("port_base", 41000)
   route_provider = data.get("route_provider", {})
@@ -124,6 +127,7 @@ def load_config_file(config_file: str | Path, author: str) -> Config:
     volume_roots=volume_roots,
     apps_root=apps_root,
     run_root=run_root,
+    snapshot_root=snapshot_root,
     master_key=master_key,
     master_keyfile=master_keyfile,
     domain=domain,

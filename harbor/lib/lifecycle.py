@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from logging import getLogger
@@ -28,6 +29,7 @@ from harbor.lib.run_layout import (
 )
 from harbor.lib.secrets import SecretGenerationError, generate_secret
 from harbor.lib.stack import AppStack, app_stack
+from harbor.lib.util import Conn
 
 logger = getLogger("harbor.lifecycle")
 
@@ -233,6 +235,90 @@ def catalog_entry(ctx: HarborCtx, target: str) -> tuple[AppID, Path | None]:
   entry.symlink_to(source)
   return app, entry
 
+
+def snapshot(
+  app: AppID,
+  ctx: HarborCtx,
+  conn: Conn,
+  label: str = "",
+) -> Path:
+
+  run_path = ctx.run_path(app)
+
+  if not run_path.exists():
+    raise ValueError(f"App {app} is not staged and therefore cannot be snapshotted")
+
+  try:
+    running_count = ctx.run_state(app).running_count
+  except ValueError:
+    running_count = 0
+  if running_count:
+    raise ValueError(
+      f"App {app} has {running_count} running Harbor-labeled container(s); "
+      f"run `harbor stop {app}` first"
+    )
+
+  # Required files for the snapshot. If these don't exist, something is wrong with the app.
+  run_manifest = run_path / "happ" / "manifest.toml"
+  config_logtab = config_path(run_path)
+  compose_yml = run_path / "compose.yml"
+
+  for file in (run_manifest, config_logtab, compose_yml):
+    if not file.is_file():
+      raise ValueError(f"App {app} missing required file: {file}. This app appears to be staged improperly")
+
+  # Create the snapshot directory.
+  folder_name = datetime.now().strftime("%Y-%m-%d_%H-%M")
+  if label:
+    folder_name = f"{folder_name}-{label}"
+
+  snapshot_folder = ctx.config.snapshot_root / app / folder_name
+  if snapshot_folder.exists():
+    raise ValueError(f"Snapshot folder already exists: {snapshot_folder}. Are you taking another snapshot in the same minute?")
+  snapshot_folder.mkdir(parents=True, mode=0o700)
+
+  # Config and compose are harbor-owned; copy2 keeps mode and mtime. Secrets stay
+  # Fernet ciphertext — we never decrypt on this path.
+  shutil.copy2(config_logtab, snapshot_folder / "config.logtab")
+  shutil.copy2(compose_yml, snapshot_folder / "compose.yml")
+  shutil.copytree(run_path / "happ", snapshot_folder / "happ")
+
+  data_vols = run_path / "volumes" / "data"
+  if data_vols.is_dir():
+    data_dest = snapshot_folder / "volumes" / "data"
+    data_dest.mkdir(parents=True, mode=0o700)
+    sources: list[Path] = []
+    for vol_link in sorted(data_vols.iterdir()):
+      # Resolve the run-dir volume *link* only. Contents are copied with cp -a,
+      # which must not dereference symlinks *inside* the volume (silent corruption).
+      source = vol_link.resolve()
+      if not source.exists():
+        raise ValueError(
+          f"App {app} data volume {vol_link.name} points at missing path: {source}"
+        )
+      sources.append(source)
+
+    if sources:
+      # One sudo invocation so the operator sees at most one password prompt.
+      # -a: recursive, keep ownership/mode/times, preserve inner symlinks & hardlinks.
+      conn.out("sudo access is required to copy data volumes into snapshot.")
+      result = subprocess.run(
+        ["sudo", "cp", "-a", "--", *[str(s) for s in sources], str(data_dest)],
+        capture_output=True,
+        text=True,
+      )
+      if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        message = (
+          "Unable to create snapshot — because docker containers often write "
+          "files as root, sudo is required to read volume contents. "
+          "Ensure sudo is available and that you can authenticate when prompted."
+        )
+        if detail:
+          message = f"{message}\n{detail}"
+        raise RuntimeError(message)
+
+  return snapshot_folder
 
 def stage(
   app: AppID,
