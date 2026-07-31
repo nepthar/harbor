@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from harbor.lib.apps import AppID
-from harbor.lib.lifecycle import _web_routes, preflight_app_routes
+from harbor.lib.lifecycle.routes import preflight_app_routes, web_routes
 from harbor.lib.manifest import ConfigError, _validate_routes, parse_manifest_bytes
 from harbor.lib.routes import (
   NginxProxyManagerRouteProvider,
@@ -146,7 +146,7 @@ metrics = { port = "9090", publish = "lan" }
 # ── web-route filtering (lifecycle) ───────────────────────────────────────
 def test_web_routes_filters_out_lan():
   run_data = _run_data(_stack(ROUTES))
-  web = {name for name, _ in _web_routes(run_data)}
+  web = {name for name, _ in web_routes(run_data)}
   assert web == {"main", "api"}
 
 
@@ -496,7 +496,7 @@ def _preflight_with(provider, stack):
     config=SimpleNamespace(domain="home.example"),
     harbor_db=lambda: None,
   )
-  with patch("harbor.lib.lifecycle.get_route_provider", return_value=provider):
+  with patch("harbor.lib.lifecycle.routes.get_route_provider", return_value=provider):
     preflight_app_routes(_run_data(stack), ctx)
 
 

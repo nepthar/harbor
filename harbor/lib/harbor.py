@@ -7,7 +7,6 @@ import logging
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -97,7 +96,7 @@ class HarborCtx:
           "state": state,
           "by": by,
           "pid": os.getpid(),
-          "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+          "at": LogTab.ts(),
         },
         separators=(",", ":"),
       ),

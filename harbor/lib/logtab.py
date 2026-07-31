@@ -1,6 +1,7 @@
 import logging
+import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger("harbor.logtab")
@@ -10,6 +11,9 @@ class LogTab:
   """LogTab is a logging table which stores key-value pairs.
   This is useful for when you wish to have a key-value store which
   along with the entire history of changes in an auditable log.
+
+  Logtab is NOT a performant database or a clever way to optimize for writes.
+  It is a simple key-value store with a history of changes.
 
   The format is:
   <date>\t<operation>\t<key>\t<value>\n
@@ -22,6 +26,10 @@ class LogTab:
 
   "Invalid" lines are skipped with a warning unless the LogTab is
   initialized with strict=True.
+
+  - Records are appended with one O_APPEND write so concurrent writers cannot
+    interleave complete writes on a local POSIX filesystem.
+  - Each `read` loops through the whole file. If you're looking up lots of keys, consider calling `load` instead.
   """
 
   FS = "\t"
@@ -31,7 +39,7 @@ class LogTab:
 
   @staticmethod
   def ts() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
   @staticmethod
   def validate_key(key: str):
@@ -56,9 +64,28 @@ class LogTab:
       self._append_entry(header)
 
   def _append_entry(self, chunk):
-    chunk = chunk + "\n"
-    with open(self.path, "a") as f:
-      f.write(chunk)
+    data = f"{chunk}\n".encode()
+    data_len = len(data)
+    fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
+    one_call = True
+    try:
+      offset = 0
+      while offset < data_len:
+        written = os.write(fd, data[offset:])
+        if written < data_len - offset:
+          one_call = False
+        offset += written
+    finally:
+      os.close(fd)
+
+    if not one_call:
+      # This is pretty unlikely, but possible if the filesystem is under heavy load,
+      # or is full, or over a network or something like that. It is definitly not typical.
+      logger.error(
+        "Adding entry %s to %s did not happen atomically - corruption possible",
+        chunk,
+        self.path,
+      )
 
   def _value_err(self, errmsg: str) -> None:
     if self.strict:
@@ -86,7 +113,8 @@ class LogTab:
           case "del":
             results.pop(key, None)
           case "clr":
-            for k in [k for k in results if k.startswith(key)]:
+            to_delete = [k for k in results if k.startswith(key)]
+            for k in to_delete:
               results.pop(k)
           case _:
             errmsg = f"Skipping malformed logtab record at {self.path}:{line_number}: {line.rstrip('\n')}"
@@ -104,7 +132,7 @@ class LogTab:
     self._append_entry(line)
 
   def read(self, key: str) -> str | None:
-    """Read a single value from the table by exact match"""
+    """Read a single value from the table by exact match. This performs a full file scan."""
     return self.load().get(key)
 
   def clear(self, prefix: str, comment: str = "") -> None:

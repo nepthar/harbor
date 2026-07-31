@@ -6,6 +6,9 @@ persistence across reopens, header handling, key/value validation, and tolerance
 of comment/blank lines.
 """
 
+import logging
+import os
+
 import pytest
 
 from harbor.lib.logtab import LogTab
@@ -16,10 +19,46 @@ def tab(tmp_path):
   return LogTab(tmp_path / "t.logtab")
 
 
+def test_timestamp_uses_utc_z_suffix():
+  assert LogTab.ts().endswith("Z")
+
+
 # ── write / read / overwrite ──────────────────────────────────────────────
 def test_write_then_read(tab):
   tab.write("a", "1")
   assert tab.read("a") == "1"
+
+
+def test_write_uses_atomic_append_and_retries_short_write(
+  tmp_path, monkeypatch, caplog
+):
+  path = tmp_path / "t.logtab"
+  path.touch()
+  tab = LogTab(path)
+  real_open = os.open
+  real_write = os.write
+  opened_with = []
+  requested = []
+
+  def recording_open(path, flags, mode):
+    opened_with.append(flags)
+    return real_open(path, flags, mode)
+
+  def short_first_write(fd, data):
+    requested.append(len(data))
+    size = 4 if len(requested) == 1 else len(data)
+    return real_write(fd, data[:size])
+
+  monkeypatch.setattr("harbor.lib.logtab.os.open", recording_open)
+  monkeypatch.setattr("harbor.lib.logtab.os.write", short_first_write)
+
+  with caplog.at_level(logging.ERROR):
+    tab.write("a", "value")
+
+  assert opened_with[0] & os.O_APPEND
+  assert requested[1] == requested[0] - 4
+  assert tab.read("a") == "value"
+  assert "did not happen atomically" in caplog.text
 
 
 def test_read_missing_key_is_none(tab):

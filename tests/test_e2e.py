@@ -491,12 +491,14 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(harbor_env, monkeypatch):
   provider = _RecordingRouteProvider(
     owners={"photos": "other-routes", "api-photos": "other-routes"}
   )
-  monkeypatch.setattr(lifecycle, "get_route_provider", lambda db, config: provider)
+  monkeypatch.setattr(
+    "harbor.lib.lifecycle.routes.get_route_provider",
+    lambda db, config: provider,
+  )
   monkeypatch.setattr("harbor.lib.harbor.load_harbor_run_unit_status", lambda: {})
   docker_calls = []
   monkeypatch.setattr(
-    lifecycle,
-    "docker_run_command",
+    "harbor.lib.lifecycle.run.docker_run_command",
     lambda args, **kwargs: docker_calls.append(args) or "",
   )
   ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
@@ -513,9 +515,15 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(harbor_env, monkeypatch):
 
 def test_stop_uses_staged_manifest_when_bundle_is_missing(harbor_env, monkeypatch):
   provider = _RecordingRouteProvider()
-  monkeypatch.setattr(lifecycle, "get_route_provider", lambda db, config: provider)
+  monkeypatch.setattr(
+    "harbor.lib.lifecycle.routes.get_route_provider",
+    lambda db, config: provider,
+  )
   monkeypatch.setattr("harbor.lib.harbor.load_harbor_run_unit_status", lambda: {})
-  monkeypatch.setattr(lifecycle, "docker_run_command", lambda args, **kwargs: "")
+  monkeypatch.setattr(
+    "harbor.lib.lifecycle.run.docker_run_command",
+    lambda args, **kwargs: "",
+  )
   stage_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
   app = stage_ctx.resolve_app("routes-demo")
   lifecycle.stage(app, stage_ctx)
