@@ -54,32 +54,20 @@ class HarborCtx:
     self._harbordb: HarborDB | None = None
     self._observations: dict[str, AppObservation] | None = None
     self._lock = FileLock(self.config.harbor_lockfile_path)
-    self._lock_depth = 0
 
   @contextmanager
   def lock(self, by: str) -> Iterator[None]:
     """Hold the harbor lock for the duration of a command.
-
-    Every acquire and release is recorded in the activity log under
-    ``harbor/lock``, so a command that times out waiting can say what it is
-    waiting *for*: a long command reads as a hang against a 5s timeout
-    otherwise. The log outlives the process, so even a crashed run leaves the
-    trail that explains the lock nobody is holding any more.
-
-    Reentrant, so nesting is safe; only the outermost acquire is recorded.
+    Reentrant, so nesting is safe. All lib/ code assume as lock is being held, so
+    basically grab this at context creation.
     """
     try:
       with self._lock.acquire(timeout=LOCK_TIMEOUT):
-        self._lock_depth += 1
-        outermost = self._lock_depth == 1
         try:
-          if outermost:
-            self._record_lock("acquired", by)
+          self._record_lock("acquired", by)
           yield
         finally:
-          if outermost:
-            self._record_lock("released", by)
-          self._lock_depth -= 1
+          self._record_lock("released", by)
     except Timeout:
       raise ValueError(
         f"Another process has locked harbor. Giving up after "

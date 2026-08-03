@@ -177,10 +177,6 @@ def test_config_requires_staging_first(harbor_env):
   set_result = harbor_env.run("config", app_id, "--set", "admin_user=alice")
   assert set_result.returncode == 0, set_result.stderr
 
-  path = harbor_env.root / "apps" / f"{app_id}.happ"
-  path_list = harbor_env.run("config", str(path))
-  assert path_list.returncode == 0, path_list.stderr
-
 
 def test_config_set_secret(harbor_env):
   app_id = "io.p2net.basic-features"
@@ -388,7 +384,9 @@ def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
   ps = harbor_env.run("ps")
   assert app_id not in ps.stdout
 
-  inspected = harbor_env.run("inspect", app_id)
+  # Unstaged apps have no run/ copy; inspect a path instead of the catalog id.
+  happ = harbor_env.root / "apps" / f"{app_id}.happ"
+  inspected = harbor_env.run("inspect", str(happ))
   assert inspected.returncode == 0, inspected.stderr
 
 

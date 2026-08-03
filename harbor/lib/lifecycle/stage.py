@@ -37,13 +37,8 @@ def _has_volume_data(app_id: AppID, ctx: HarborCtx) -> bool:
   return False
 
 
-def _swap_happ(catalog: Path, run_path: Path) -> None:
-  """Copy the catalog entry in, then move it into place.
-
-  `happ/` is never edited in place: a copy that fails half way through would
-  otherwise leave a bundle that is neither the old app nor the new one. Inner
-  symlinks are dereferenced so the run copy is self-contained.
-  """
+def _stage_incoming(catalog: Path, run_path: Path) -> Path:
+  """Copy the catalog happ into ``run/<id>/.happ.incoming`` (not yet live)."""
   incoming = run_path / INCOMING
   outgoing = run_path / OUTGOING
   for scratch in (incoming, outgoing):
@@ -51,12 +46,27 @@ def _swap_happ(catalog: Path, run_path: Path) -> None:
       shutil.rmtree(scratch)
 
   shutil.copytree(catalog, incoming)
+  return incoming
+
+
+def _commit_incoming(run_path: Path, incoming: Path) -> None:
+  """Promote a validated incoming copy to ``happ/``."""
+  outgoing = run_path / OUTGOING
   happ = run_path / "happ"
   if happ.exists():
     os.replace(happ, outgoing)
   os.replace(incoming, happ)
   if outgoing.exists():
     shutil.rmtree(outgoing)
+
+
+def _discard_incoming(run_path: Path) -> None:
+  """Drop a failed incoming copy; remove an empty run dir left behind."""
+  incoming = run_path / INCOMING
+  if incoming.exists():
+    shutil.rmtree(incoming)
+  if run_path.is_dir() and not any(run_path.iterdir()):
+    run_path.rmdir()
 
 
 def _generate_missing_config(stack: AppStack, ctx: HarborCtx) -> None:
@@ -251,8 +261,6 @@ def stage(
       f"run `harbor stop {app}` first"
     )
 
-  stack = app_stack(catalog, app)
-
   # Config gone while the data it belongs to is still here means someone
   # deleted the run dir by hand. Staging would generate fresh `auto` secrets
   # against data expecting the old ones, so refuse instead.
@@ -264,8 +272,16 @@ def stage(
       f"`harbor rm {app}` to delete its config and data together."
     )
 
+  # Copy the catalog happ under run/ first, validate *that* copy, then promote
+  # it to happ/. AppStack always comes from the run tree, never apps/.
   run_path.mkdir(parents=True, exist_ok=True)
-  _swap_happ(catalog, run_path)
+  incoming = _stage_incoming(catalog, run_path)
+  try:
+    stack = app_stack(incoming, app)
+  except Exception:
+    _discard_incoming(run_path)
+    raise
+  _commit_incoming(run_path, incoming)
 
   if sets:
     apply_config_sets(stack, sets, ctx)

@@ -324,8 +324,10 @@ def build_app_stack(manifest: Manifest) -> AppStack:
 def app_stack(app_path: Path, app_id: AppID | None = None) -> AppStack:
   """Parse and validate an app bundle into an AppStack.
 
-  Pass ``app_id`` for harbor's own copy at ``run/<id>/happ``, whose directory
-  name carries neither the id nor the ``.happ`` suffix to derive it from.
+  For an installed app, pass ``run/<id>/happ`` (via ``HarborCtx.app_path``),
+  never the catalog entry under ``apps/``. Pass ``app_id`` when the directory
+  name does not carry the id (the run copy has neither the id nor a ``.happ``
+  suffix).
   """
   app_id = app_id if app_id is not None else app_id_from_path(app_path)
   manifest = app_to_manifest(app_id, app_path)

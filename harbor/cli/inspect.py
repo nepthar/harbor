@@ -28,11 +28,8 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     return
 
   app = ctx.resolve_app(args.app)
-  if ctx.is_staged(app):
-    # Report what is installed, not what the catalog entry says today.
-    stack = app_stack(ctx.app_path(app), app)
-    run_data = load_run_data(stack, ctx)
-  else:
-    stack = app_stack(ctx.bundle_path(app), app)
-    run_data = None
+  # Report what is installed under run/, never the catalog entry under apps/.
+  # Pass a path to a .happ to inspect a bundle that is not staged yet.
+  stack = app_stack(ctx.app_path(app), app)
+  run_data = load_run_data(stack, ctx)
   conn.out(capability_receipt(stack, run_data, ctx, compact=False))

@@ -4,7 +4,7 @@ from tabulate import tabulate
 
 from harbor.cli.kv import parse_kv
 from harbor.lib.appconfig import AppConfigStore
-from harbor.lib.apps import AppID, resolve_app_id
+from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind
 from harbor.lib.stack import AppStack, app_stack
@@ -18,7 +18,7 @@ def register(subparsers) -> None:
   parser.add_argument(
     "app",
     metavar="APP",
-    help="App ID or path to a .happ directory",
+    help="App ID of a staged happ",
   )
   parser.add_argument(
     "--set",
@@ -51,9 +51,9 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  app = resolve_app_id(ctx, args.app)
-  # Config lives in the run directory, so there is nowhere to put it (or read
-  # it from) until the app is staged. `harbor start --set` is the one-shot.
+  app = ctx.resolve_app(args.app)
+  # Schema from the staged run copy; values from the run-dir config store.
+  # `harbor start --set` is the one-shot for first install.
   stack = app_stack(ctx.app_path(app), app)
   store = ctx.app_config(app)
 
