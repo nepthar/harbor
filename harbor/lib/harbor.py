@@ -26,6 +26,17 @@ logger = logging.getLogger("harbor")
 # enough that a stale lockfile does not look like a hang.
 LOCK_TIMEOUT = 5.0
 
+
+def lock_timeout() -> float:
+  """The acquire timeout, overridable via `HARBOR_LOCK_TIMEOUT`.
+
+  Read per call rather than at import: the contention tests are the only thing
+  that ever waits this out in full, and at 5s each they cost more than the rest
+  of the suite combined.
+  """
+  return float(os.environ.get("HARBOR_LOCK_TIMEOUT", LOCK_TIMEOUT))
+
+
 # Where lock activity is recorded. Not an app id, so it cannot collide with the
 # per-app `<app_id>/status` keys the same log carries.
 LOCK_KEY = "harbor/lock"
@@ -86,8 +97,9 @@ class HarborCtx:
     Reentrant, so nesting is safe. All lib/ code assume as lock is being held, so
     basically grab this at context creation.
     """
+    timeout = lock_timeout()
     try:
-      with self._lock.acquire(timeout=LOCK_TIMEOUT):
+      with self._lock.acquire(timeout=timeout):
         try:
           self._record_lock("acquired", by)
           yield
@@ -96,7 +108,7 @@ class HarborCtx:
     except Timeout:
       raise ValueError(
         f"Another process has locked harbor. Giving up after "
-        f"{LOCK_TIMEOUT:g} seconds.\n"
+        f"{timeout:g} seconds.\n"
         f"{self._lock_holder_hint()}"
         f"If no other harbor is running, remove {self.config.harbor_lockfile_path}"
       ) from None

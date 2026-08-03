@@ -36,5 +36,8 @@ this size. Handing over a document produces a document's worth of code.
 - Errors are `ValueError` / `RuntimeError` whose message names the fix.
 - Tests must never reach the real docker daemon — `tests/conftest.py` enforces
   this. Test doubles live in `tests/`, never in `harbor/`.
+- The suite runs in ~15s and commands run in-process; see `docs/testing.md`
+  before adding a test that spawns a subprocess or waits on a timeout. What
+  cannot be tested without a real daemon is a live test, listed in that doc.
 - Run `uv run ruff check harbor tests`, `uv run ruff format --check harbor tests`,
   and `uv run pytest` before reporting done. Don't report unrun tests as passing.

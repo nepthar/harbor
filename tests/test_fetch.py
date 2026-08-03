@@ -119,7 +119,13 @@ class FakeGithub:
 
   def start(self) -> None:
     self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(self))
-    threading.Thread(target=self._server.serve_forever, daemon=True).start()
+    # socketserver's default 0.5s poll is what `shutdown()` waits on, so the
+    # default costs half a second of teardown per test and nothing else.
+    threading.Thread(
+      target=self._server.serve_forever,
+      kwargs={"poll_interval": 0.005},
+      daemon=True,
+    ).start()
 
   def stop(self) -> None:
     if self._server is not None:

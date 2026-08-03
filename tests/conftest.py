@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from harbor.cli.main import run as cli_run
+from harbor.lib.apps import AppID
 from harbor.lib.logtab import LogTab
+from harbor.lib.stack import AppStack, app_stack
 from harbor.lib.store import JsonLogtabStore
+
+# The contention tests wait this out in full; 5s each is more than the rest of
+# the suite costs. Anything that asserts on the wait should read it from here.
+LOCK_TIMEOUT = 0.25
+
+
+def stack_of(tmp_path: Path, manifest: str, app_id: str = "demo") -> AppStack:
+  """Build an `AppStack` from manifest TOML, via the real parse-and-validate path."""
+  happ = tmp_path / f"{app_id}.happ"
+  happ.mkdir()
+  (happ / "manifest.toml").write_text(manifest)
+  return app_stack(happ, AppID(app_id))
+
 
 # `pytester` runs a throwaway pytest inside a test, which is how
 # tests/test_docker.py proves the docker guard actually fails a stray call.
@@ -74,6 +92,15 @@ elif args[:2] == ["ps", "-a"]:
 
 
 @dataclass(frozen=True)
+class Result:
+  """What a harbor command produced. Shaped like `CompletedProcess`."""
+
+  returncode: int
+  stdout: str
+  stderr: str
+
+
+@dataclass(frozen=True)
 class HarborEnv:
   root: Path
   config: Path
@@ -128,29 +155,43 @@ class HarborEnv:
     for key, value in entries.items():
       store.write(key, value)
 
-  def run(
+  def run(self, *args: str, input: str | None = None) -> Result:
+    """Run a harbor command in this process.
+
+    Spawning an interpreter per command cost ~0.12s and bought nothing: the
+    environment is already isolated by `harbor_env`, and `cli_main.run` is the
+    same entry point `main` uses. Both streams are captured, which includes
+    `logging` output -- `run` rebinds the log handler to the current stderr.
+
+    Use `run_subprocess` when a test needs a genuinely separate process.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    stdin = io.StringIO(input or "")
+    original_stdin = sys.stdin
+    sys.stdin = stdin
+    try:
+      with redirect_stdout(out), redirect_stderr(err):
+        code = cli_run(list(args))
+    finally:
+      sys.stdin = original_stdin
+    return Result(code, out.getvalue(), err.getvalue())
+
+  def run_subprocess(
     self,
     *args: str,
     input: str | None = None,
     timeout: float | None = None,
   ) -> subprocess.CompletedProcess[str]:
-    """Run a harbor command.
+    """Run a harbor command as a real child process.
 
+    Only for tests about what happens *between* processes -- lock contention.
     `timeout` raises `subprocess.TimeoutExpired` (killing the child) rather
-    than hanging, which is how a test asserts that a command blocked -- harbor
-    waits on `harbor.lock` indefinitely.
+    than hanging, which is how a test asserts that a command blocked.
     """
-    env = {
-      **os.environ,
-      "HARBOR_CONFIG": str(self.config),
-      "FAKE_DOCKER_STATE": str(self.docker_state),
-      "FAKE_DOCKER_LOG": str(self.docker_log),
-      "PATH": f"{self.root / 'bin'}{os.pathsep}{os.environ['PATH']}",
-    }
     return subprocess.run(
       [sys.executable, "-m", "harbor.cli", *args],
       cwd=self.root,
-      env=env,
+      env={**os.environ},
       capture_output=True,
       text=True,
       input=input,
@@ -262,10 +303,14 @@ def harbor_env(
     docker_log=root / "docker.log",
   )
 
-  # Tests that drive lifecycle/HarborCtx in-process (rather than through
-  # HarborEnv.run) need the working fake, not just the guard `block_real_docker`
-  # installed. Prepending here puts it ahead of that guard on PATH.
+  # Prepending puts the working fake ahead of the `block_real_docker` guard.
   monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
   monkeypatch.setenv("FAKE_DOCKER_STATE", str(env.docker_state))
   monkeypatch.setenv("FAKE_DOCKER_LOG", str(env.docker_log))
+  # Commands run in-process now, so what used to be `subprocess.run` arguments
+  # have to be real process state: the config location and the working
+  # directory harbor resolves relative paths against.
+  monkeypatch.setenv("HARBOR_CONFIG", str(env.config))
+  monkeypatch.setenv("HARBOR_LOCK_TIMEOUT", str(LOCK_TIMEOUT))
+  monkeypatch.chdir(root)
   return env

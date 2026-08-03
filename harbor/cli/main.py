@@ -29,8 +29,6 @@ from harbor.lib.util import Conn
 
 VERSION = "0.1.0"
 
-gc.disable()
-
 
 for level, name in [
   (logging.DEBUG, "debug"),
@@ -40,11 +38,6 @@ for level, name in [
   (logging.CRITICAL, "crit "),
 ]:
   logging.addLevelName(level, name)
-
-logging.basicConfig(
-  level=logging.WARNING,
-  format="%(levelname)s %(name)s: %(message)s",
-)
 
 COMMANDS = [
   catalog,
@@ -92,7 +85,7 @@ def _lock_description(args: argparse.Namespace) -> str:
   return str(args.command)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
   parser = argparse.ArgumentParser(prog="harbor", description="Harbor CLI")
   parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
   parser.add_argument(
@@ -111,9 +104,10 @@ def main() -> None:
   for command in COMMANDS:
     command.register(subparsers)
 
-  args = parser.parse_args()
-  conn = StdConn()
+  return parser
 
+
+def _dispatch(args: argparse.Namespace, conn: Conn) -> None:
   if args.command is None:
     args.func(args, None, conn)
     return
@@ -142,3 +136,37 @@ def main() -> None:
   except (RuntimeError, ValueError) as error:
     conn.err(f"Error: {error}")
     raise SystemExit(1) from error
+
+
+def run(argv: list[str] | None = None, conn: Conn | None = None) -> int:
+  """Execute one harbor command and return its exit code.
+
+  Separate from `main` so the test suite can call it in-process. Every exit
+  path in the CLI is a `SystemExit` (argparse's own, plus the commands that
+  raise it directly), so catching it here is what turns a command into a
+  code rather than a dead interpreter.
+
+  Logging is (re)configured per call against the *current* `sys.stderr`, so a
+  caller that redirects the stream sees warnings as well as `conn` output.
+  """
+  logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s %(name)s: %(message)s",
+    force=True,
+  )
+  parser = build_parser()
+  try:
+    _dispatch(parser.parse_args(argv), conn or StdConn())
+  except SystemExit as exit_:
+    if exit_.code is None:
+      return 0
+    return exit_.code if isinstance(exit_.code, int) else 1
+  return 0
+
+
+def main() -> None:
+  # Harbor commands are short-lived and allocate little that cycles; skipping
+  # collection is worth ~10ms of a 120ms invocation. Deliberately not at import
+  # time -- `run` is called in-process by the tests, which do need a collector.
+  gc.disable()
+  raise SystemExit(run())

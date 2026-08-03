@@ -49,24 +49,23 @@ class LogTab:
   @staticmethod
   def validate_value(val: str):
     if len(val) > LogTab.VAL_LEN or "\n" in val:
-      raise ValueError(f"Invalid logtab value: {val}")
+      raise ValueError(f"Invalid logtab value or comment: {val}")
 
-  def __init__(self, path: Path, title: str = "", strict: bool = False):
-    self.strict = strict
-    self.path = path
-    if not path.is_file():
-      header = []
-      if title:
-        header.append(f"# {title}")
-      header.append(f"# {path.name}, created {LogTab.ts()}")
-      header.append("# Format: <date>\\t<set|del|clr>\\t<key>\\t<value>\\n")
-      header = "\n".join(header)
-      self._append_entry(header)
+  @staticmethod
+  def validate_operation(operation: str):
+    if operation not in ("set", "del", "clr"):
+      raise ValueError(f"Invalid logtab operation: {operation}")
 
-  def _append_entry(self, chunk):
-    data = f"{chunk}\n".encode()
+  @staticmethod
+  def write_entry(path: Path, key: str, operation: str, value: str = "") -> None:
+    LogTab.validate_key(key)
+    LogTab.validate_operation(operation)
+    LogTab.validate_value(value)
+    line = LogTab.FS.join((LogTab.ts(), operation, key, value))
+
+    data = (line + "\n").encode()
     data_len = len(data)
-    fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
     one_call = True
     try:
       offset = 0
@@ -83,9 +82,22 @@ class LogTab:
       # or is full, or over a network or something like that. It is definitly not typical.
       logger.error(
         "Adding entry %s to %s did not happen atomically - corruption possible",
-        chunk,
-        self.path,
+        line,
+        path,
       )
+
+  def __init__(self, path: Path, title: str = "", strict: bool = False):
+    self.strict = strict
+    self.path = path
+    if not path.is_file():
+      header = []
+      if title:
+        header.append(f"# {title}")
+      header.append(f"# {path.name}, created {LogTab.ts()}")
+      header.append("# Format: <date>\\t<set|del|clr>\\t<key>\\t<value>\\n")
+      header = "\n".join(header)
+      with open(path, "w") as f:
+        f.write(header + "\n")
 
   def _value_err(self, errmsg: str) -> None:
     if self.strict:
@@ -125,11 +137,7 @@ class LogTab:
 
   def write(self, key: str, value: str):
     """Write a single value to the table"""
-    LogTab.validate_key(key)
-    LogTab.validate_value(value)
-
-    line = LogTab.FS.join((LogTab.ts(), "set", key, value))
-    self._append_entry(line)
+    LogTab.write_entry(self.path, key, "set", value)
 
   def read(self, key: str) -> str | None:
     """Read a single value from the table by exact match. This performs a full file scan."""
@@ -139,17 +147,15 @@ class LogTab:
     """Clear all values matching the given prefix.
     The optional comment is stored on the line, but never used by the table.
     """
-    LogTab.validate_key(prefix)
-    self._append_entry(LogTab.FS.join((LogTab.ts(), "clr", prefix, comment)))
+    LogTab.write_entry(self.path, prefix, "clr", comment)
 
   def delete(self, key: str, comment: str = "") -> None:
     """Delete a single key by exact match.
     The optional comment is stored on the line, but never used by the table.
     """
-    LogTab.validate_key(key)
     if self.strict and key not in self.load():
       raise ValueError(f"Key {key} not found in logtab {self.path} for deletion")
-    self._append_entry(LogTab.FS.join((LogTab.ts(), "del", key, comment)))
+    LogTab.write_entry(self.path, key, "del", comment)
 
   def scan(self, prefix: str = "", suffix: str = "") -> dict[str, str]:
     """Scan the table for values matching the given prefix and suffix

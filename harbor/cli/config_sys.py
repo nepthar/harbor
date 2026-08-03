@@ -72,5 +72,5 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 def run_gen_masterkey(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   mkey_file = ctx.config.master_keyfile
-  LogTab(mkey_file).write("master_key", secrets.token_hex(128))
+  LogTab.write_entry(mkey_file, "master_key", "set", secrets.token_hex(128))
   conn.out(f"New master key appended to: {mkey_file}")
