@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from harbor.lib.appconfig import AppConfigStore
 from harbor.lib.apps import AppID
 from harbor.lib.crypto import FernetCryptoEngine, NoopCryptoEngine
 from harbor.lib.manifest import ConfigEntry, parse_manifest_bytes
 from harbor.lib.stack import HARBOR_CONFIG_ENV_PREFIX, AppConfig, build_app_stack
+from harbor.lib.store import AppStore
 
 FIXTURES = Path(__file__).parent / "fixtures" / "apps"
 
@@ -112,7 +112,7 @@ def test_fixtures_parse_with_config_section():
 # ── config.logtab round-trip (secret bool persistence) ────────────────────
 def test_store_secret_round_trip_encrypts(tmp_path):
   path = tmp_path / "config.logtab"
-  store = AppConfigStore(path, FernetCryptoEngine("master-key"))
+  store = AppStore.from_path(path, FernetCryptoEngine("master-key"))
   store.set_config("admin_pass", secret=True, value="hunter2")
 
   secret, value = store.get_config("admin_pass")
@@ -125,7 +125,7 @@ def test_store_secret_round_trip_encrypts(tmp_path):
 
 
 def test_store_plain_round_trip_is_plaintext(tmp_path):
-  store = AppConfigStore(tmp_path / "config.logtab", NoopCryptoEngine())
+  store = AppStore.from_path(tmp_path / "config.logtab", NoopCryptoEngine())
   store.set_config("admin_user", secret=False, value="alice")
 
   secret, value = store.get_config("admin_user")
@@ -138,7 +138,7 @@ def test_store_plain_round_trip_is_plaintext(tmp_path):
 
 
 def test_store_keeps_binds_and_meta(tmp_path):
-  store = AppConfigStore(tmp_path / "config.logtab", NoopCryptoEngine())
+  store = AppStore.from_path(tmp_path / "config.logtab", NoopCryptoEngine())
   store.set_bind("media", "/mnt/nas/media", readonly=True)
   store.set_meta("origin", "/harbor/apps/io.test.example.happ")
 

@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from harbor.lib.logtab import LogTab
-from harbor.lib.store import JsonConfigStore
+from harbor.lib.store import JsonLogtabStore
 
 # `pytester` runs a throwaway pytest inside a test, which is how
 # tests/test_docker.py proves the docker guard actually fails a stray call.
@@ -105,7 +105,7 @@ class HarborEnv:
     ``db["system"]["secrets"][name]``.
     """
     db: dict[str, Any] = {}
-    for key, value in JsonConfigStore(self.db_path).scan("").items():
+    for key, value in JsonLogtabStore(self.db_path).scan("").items():
       parts = key.split("/")
       if parts[0] == "apps":
         app_id, section, rest = parts[1], parts[2], "/".join(parts[3:])
@@ -124,7 +124,7 @@ class HarborEnv:
 
   def seed_db(self, entries: dict[str, Any]) -> None:
     """Write raw flat ``key -> value`` entries directly into the DB logtab."""
-    store = JsonConfigStore(self.db_path)
+    store = JsonLogtabStore(self.db_path)
     for key, value in entries.items():
       store.write(key, value)
 

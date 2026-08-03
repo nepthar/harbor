@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from logging import getLogger
 from pathlib import Path
 
-from harbor.lib.appconfig import config_path
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.manifest import parse_manifest
@@ -49,9 +48,9 @@ def snapshot(
   ctx: HarborCtx,
   label: str = "",
 ) -> Path:
-  run_path = ctx.run_path(app)
+  paths = ctx.staged_app_paths(app)
 
-  if not run_path.exists():
+  if not paths.run_path.exists():
     raise ValueError(f"App {app} is not staged and therefore cannot be snapshotted")
 
   try:
@@ -66,11 +65,7 @@ def snapshot(
 
   # Required files for the snapshot. If these don't exist, something is wrong
   # with the app.
-  run_manifest = run_path / "happ" / "manifest.toml"
-  config_logtab = config_path(run_path)
-  compose_yml = run_path / "compose.yml"
-
-  for file in (run_manifest, config_logtab, compose_yml):
+  for file in (paths.manifest_path, paths.config_path, paths.compose_path):
     if not file.is_file():
       raise ValueError(
         f"App {app} missing required file: {file}. "
@@ -99,8 +94,8 @@ def snapshot(
   staging.mkdir(parents=True, mode=0o700)
 
   try:
-    included, excluded = _volume_names(run_path / "volumes")
-    app_version = parse_manifest(run_manifest).app.version
+    included, excluded = _volume_names(paths.run_path / "volumes")
+    app_version = parse_manifest(paths.manifest_path).app.version
     (staging / "snapshot.toml").write_text(
       "\n".join(
         [
@@ -117,11 +112,11 @@ def snapshot(
 
     # Config and compose are harbor-owned; copy2 keeps mode and mtime. Secrets stay
     # Fernet ciphertext — we never decrypt on this path.
-    shutil.copy2(config_logtab, staging / "config.logtab")
-    shutil.copy2(compose_yml, staging / "compose.yml")
-    shutil.copytree(run_path / "happ", staging / "happ")
+    shutil.copy2(paths.config_path, staging / "config.logtab")
+    shutil.copy2(paths.compose_path, staging / "compose.yml")
+    shutil.copytree(paths.happ_path, staging / "happ")
 
-    data_vols = run_path / "volumes" / "data"
+    data_vols = paths.run_path / "volumes" / "data"
     if data_vols.is_dir():
       data_dest = staging / "volumes" / "data"
       data_dest.mkdir(parents=True, mode=0o700)

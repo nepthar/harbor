@@ -4,7 +4,6 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from harbor.lib.appconfig import config_path
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle._common import (
@@ -33,9 +32,10 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
     raise ValueError(container_recovery_message(app_id, ctx))
 
   ext_paths: tuple[Path, ...] = ()
-  if config_path(state.run_path).is_file():
+  paths = ctx.staged_app_paths(app_id)
+  if paths.config_path.is_file():
     ext_paths = tuple(
-      Path(entry["host_path"]) for entry in ctx.app_config(app_id).list_binds().values()
+      Path(entry["host_path"]) for entry in ctx.app_store(app_id).list_binds().values()
     )
 
   return RemovalPlan(

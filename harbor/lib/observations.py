@@ -78,13 +78,13 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
   observations: dict[str, AppObservation] = {}
   for raw_id in app_ids:
     app_id = AppID(raw_id)
-    run_path = ctx.config.app_run_path(app_id)
+    paths = ctx.staged_app_paths(app_id)
     last_action = actions.get(raw_id)
     observations[app_id] = AppObservation(
       app_id=app_id,
       bundle_path=bundles.get(raw_id),
-      run_dir_exists=run_path.is_dir(),
-      compose_exists=(run_path / "compose.yml").is_file(),
+      run_dir_exists=paths.run_path.is_dir(),
+      compose_exists=paths.compose_path.is_file(),
       containers=docker.get(raw_id, ()),
       db_present=raw_id in db_ids,
       last_action=last_action,

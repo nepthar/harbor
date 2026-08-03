@@ -7,18 +7,18 @@ import logging
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from harbor.lib.appconfig import AppConfigStore, config_path
 from harbor.lib.apps import AppID
 from harbor.lib.config import Config
 from harbor.lib.crypto import CryptoEngine
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
 from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
-from harbor.lib.store import HarborDB
+from harbor.lib.store import AppStore, HarborStore
 
 logger = logging.getLogger("harbor")
 
@@ -47,11 +47,36 @@ def _resolve_app_query(candidates: list[AppID], query: str) -> list[AppID]:
   return [app for app in candidates if app.stem == query]
 
 
+@dataclass(frozen=True)
+class StagedAppPaths:
+  app_id: AppID
+  run_path: Path
+
+  def exists(self) -> bool:
+    return self.manifest_path.is_file()
+
+  @property
+  def config_path(self) -> Path:
+    return self.run_path / "config.logtab"
+
+  @property
+  def compose_path(self) -> Path:
+    return self.run_path / "compose.yml"
+
+  @property
+  def happ_path(self) -> Path:
+    return self.run_path / "happ"
+
+  @property
+  def manifest_path(self) -> Path:
+    return self.happ_path / "manifest.toml"
+
+
 class HarborCtx:
   def __init__(self, config: Config):
     self.config = config
     self._docker_status: dict[str, tuple[HarborRunUnitStatus, ...]] | None = None
-    self._harbordb: HarborDB | None = None
+    self._harbordb: HarborStore | None = None
     self._observations: dict[str, AppObservation] | None = None
     self._lock = FileLock(self.config.harbor_lockfile_path)
 
@@ -105,14 +130,18 @@ class HarborCtx:
       f"(pid {record.get('pid', '?')}, since {record.get('at', '?')}).\n"
     )
 
-  def harbor_db(self) -> HarborDB:
+  def harbor_db(self) -> HarborStore:
     if self._harbordb is None:
-      self._harbordb = HarborDB.from_config(self.config)
+      self._harbordb = HarborStore.from_config(self.config)
     return self._harbordb
 
   def run_path(self, app: AppID | str) -> Path:
     app_id = str(app)
     return self.config.run_root / app_id
+
+  def staged_app_paths(self, app: AppID | str) -> StagedAppPaths:
+    app_id = AppID(app)
+    return StagedAppPaths(app_id, self.config.app_run_path(app_id))
 
   def app_path(self, app: AppID | str) -> Path:
     """The happ harbor is actually running: its own copy at ``run/<id>/happ``.
@@ -121,10 +150,10 @@ class HarborCtx:
     longer depends on the catalog entry still existing, or still containing
     what it did at stage time.
     """
-    happ = self.run_path(app) / "happ"
-    if not (happ / "manifest.toml").is_file():
+    paths = self.staged_app_paths(app)
+    if not paths.exists():
       raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
-    return happ
+    return paths.happ_path
 
   def bundle_path(self, app: AppID | str) -> Path:
     """The catalog entry ``apps/<id>.happ`` -- the only thing `stage` copies from."""
@@ -134,19 +163,18 @@ class HarborCtx:
     return known
 
   def is_staged(self, app: AppID | str) -> bool:
-    return (self.run_path(app) / "happ" / "manifest.toml").is_file()
+    return self.staged_app_paths(app).exists()
 
-  def app_config(self, app: AppID | str) -> AppConfigStore:
+  def app_store(self, app: AppID | str) -> AppStore:
     """The app's own config store under its run directory.
 
     Config lives with the app, so an app must be staged before it can be
     configured. `harbor start --set` covers the one-shot case.
     """
-    app_id = str(app)
-    run_path = self.run_path(app_id)
-    if not run_path.is_dir():
-      raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
-    return AppConfigStore(config_path(run_path), CryptoEngine.from_config(self.config))
+    paths = self.staged_app_paths(app)
+    if not paths.run_path.is_dir():
+      raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
+    return AppStore.from_path(paths.config_path, CryptoEngine.from_config(self.config))
 
   def known_bundles(self) -> dict[str, Path]:
     """Map app_id -> catalog entry under apps/.
@@ -168,11 +196,15 @@ class HarborCtx:
     run_root = self.config.run_root
     if not run_root.is_dir():
       return set()
-    return {
-      entry.name
-      for entry in run_root.iterdir()
-      if (entry / "happ" / "manifest.toml").is_file()
-    }
+    found: set[str] = set()
+    for entry in run_root.iterdir():
+      try:
+        paths = StagedAppPaths(AppID(entry.name), entry)
+      except ValueError:
+        continue
+      if paths.exists():
+        found.add(entry.name)
+    return found
 
   def known_apps(self) -> list[AppID]:
     # Staged apps stay resolvable by id even with no catalog entry, so an app
@@ -229,12 +261,12 @@ class HarborCtx:
   def run_state(self, app_id: AppID | str) -> RunState:
     """ "Light" run-state of an app"""
     resolved = AppID(self._resolve_state_id(str(app_id)))
-    run_path = self.config.app_run_path(resolved)
+    paths = self.staged_app_paths(resolved)
     return RunState(
       app_id=resolved,
-      run_path=run_path,
-      run_dir_exists=run_path.is_dir(),
-      compose_exists=(run_path / "compose.yml").is_file(),
+      run_path=paths.run_path,
+      run_dir_exists=paths.run_path.is_dir(),
+      compose_exists=paths.compose_path.is_file(),
       containers=self.docker_container_statuses().get(resolved, ()),
     )
 

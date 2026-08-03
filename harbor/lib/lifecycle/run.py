@@ -53,8 +53,8 @@ def start(
   if run_data.start_blockers:
     raise ValueError("\n".join(recovery_lines(app, run_data.start_blockers)))
 
-  run_path = ctx.run_path(app)
-  if not (run_path / "compose.yml").is_file():
+  paths = ctx.staged_app_paths(app)
+  if not paths.compose_path.is_file():
     raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
 
   try:
@@ -66,7 +66,7 @@ def start(
   try:
     docker_run_command(
       ["compose", "up", "-d"],
-      cwd=run_path,
+      cwd=paths.run_path,
       json_output=False,
       check=True,
       env=run_data.config_env(),

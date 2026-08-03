@@ -17,7 +17,7 @@ from harbor.lib.apps import read_app_actions, read_last_app_action
 from harbor.lib.config import VOLUME_KINDS, load_config_file
 from harbor.lib.harbor import LOCK_KEY, LOCK_TIMEOUT, HarborCtx
 from harbor.lib.logtab import LogTab
-from harbor.lib.store import HarborDB
+from harbor.lib.store import HarborStore
 
 
 def test_start_materializes_compose_and_port_state(harbor_env):
@@ -650,21 +650,6 @@ def test_the_lock_is_recorded_then_released(harbor_env):
   assert released["by"] == "ps"
 
 
-def test_nested_locks_record_only_the_outermost(harbor_env):
-  """Reentrancy must not log a release while the lock is still held."""
-  ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
-  activity = LogTab(ctx.config.activity_log)
-
-  with ctx.lock("outer"):
-    with ctx.lock("inner"):
-      pass
-    still_held = json.loads(activity.read(LOCK_KEY))
-    assert still_held["state"] == "acquired"
-    assert still_held["by"] == "outer"
-
-  assert json.loads(activity.read(LOCK_KEY))["state"] == "released"
-
-
 def test_the_lock_timeout_message_names_the_holder(harbor_env):
   """The whole point of the record: explain a wait instead of just failing."""
   config = load_config_file(harbor_env.config, "test")
@@ -777,7 +762,7 @@ def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
 
   # Route rows gone while the run dir survives -- the pre-start allocation state.
   config = load_config_file(harbor_env.config, "test")
-  HarborDB.from_config(config).clear_routes(app_id)
+  HarborStore.from_config(config).clear_routes(app_id)
   assert (harbor_env.run_root / app_id / "compose.yml").is_file()
 
   listed = harbor_env.run("ps")

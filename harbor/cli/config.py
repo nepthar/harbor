@@ -3,11 +3,11 @@ import argparse
 from tabulate import tabulate
 
 from harbor.cli.kv import parse_kv
-from harbor.lib.appconfig import AppConfigStore
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind
 from harbor.lib.stack import AppStack, app_stack
+from harbor.lib.store import AppStore
 
 
 def register(subparsers) -> None:
@@ -55,7 +55,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   # Schema from the staged run copy; values from the run-dir config store.
   # `harbor start --set` is the one-shot for first install.
   stack = app_stack(ctx.app_path(app), app)
-  store = ctx.app_config(app)
+  store = ctx.app_store(app)
 
   if args.get_name is not None:
     if args.sets or args.binds:
@@ -75,7 +75,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 def _get(
   stack: AppStack,
-  store: AppConfigStore,
+  store: AppStore,
   name: str,
   conn,
   *,
@@ -125,7 +125,7 @@ def _apply(
     )
 
 
-def _list(app: AppID, stack: AppStack, store: AppConfigStore, conn) -> None:
+def _list(app: AppID, stack: AppStack, store: AppStore, conn) -> None:
   rows = []
   for name, entry in stack.config.items():
     secret, value = store.get_config(name)

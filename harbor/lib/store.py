@@ -39,7 +39,7 @@ class ConfigStore(Protocol):
   def delete(self, key: str) -> None: ...
 
 
-class JsonConfigStore(ConfigStore):
+class JsonLogtabStore(ConfigStore):
   def __init__(self, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     self._table = LogTab(path)
@@ -64,10 +64,12 @@ class JsonConfigStore(ConfigStore):
     self._table.delete(key)
 
 
-class HarborDB:
+class HarborStore:
+  """Store and manipulate harbor-wide state"""
+
   @classmethod
-  def from_config(cls, config: Config) -> "HarborDB":
-    json_store = JsonConfigStore(config.harbordb_path)
+  def from_config(cls, config: Config) -> "HarborStore":
+    json_store = JsonLogtabStore(config.harbordb_path)
     crypto = CryptoEngine.from_config(config)
     return cls(json_store, crypto, config.port_base)
 
@@ -152,3 +154,51 @@ class HarborDB:
     had = bool(self._store.scan(f"routes/{app_id}/"))
     self.clear_routes(app_id)
     return had
+
+
+class AppStore:
+  """Store and manipulate per-app state"""
+
+  @classmethod
+  def from_path(cls, path: Path, crypto: CryptoEngine) -> "AppStore":
+    json_store = JsonLogtabStore(path)
+    return cls(json_store, crypto)
+
+  def __init__(self, store: ConfigStore, crypto: CryptoEngine) -> None:
+    self._store = store
+    self._crypto = crypto
+
+  def set_config(self, name: str, secret: bool, value: str) -> None:
+    if len(name) > MAX_NAME_LEN:
+      raise ValueError(f"Name too long for config {name!r}")
+    if len(value) > MAX_VALUE_LEN:
+      raise ValueError(f"Value too long for config {name!r}")
+    stored = self._crypto.encrypt(value) if secret else value
+    self._store.write(f"config/{name}", {"secret": secret, "value": stored})
+
+  def get_config(self, name: str) -> tuple[bool, str] | tuple[None, None]:
+    """Return (secret, plaintext_value), or (None, None) if not set."""
+    entry = self._store.read(f"config/{name}")
+    if entry is None:
+      return (None, None)
+    secret = entry["secret"]
+    raw = entry["value"]
+    return secret, self._crypto.decrypt(raw) if secret else raw
+
+  def has_config(self, name: str) -> bool:
+    """Whether a value is stored, without decrypting it."""
+    return self._store.read(f"config/{name}") is not None
+
+  def set_bind(self, volume_name: str, host_path: str, readonly: bool = False) -> None:
+    self._store.write(
+      f"binds/{volume_name}", {"host_path": host_path, "readonly": readonly}
+    )
+
+  def list_binds(self) -> dict[str, Any]:
+    return self._store.scan("binds/")
+
+  def set_meta(self, name: str, value: str) -> None:
+    self._store.write(f"meta/{name}", value)
+
+  def get_meta(self, name: str) -> str | None:
+    return self._store.read(f"meta/{name}")

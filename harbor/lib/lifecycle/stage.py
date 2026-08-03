@@ -7,9 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from harbor.lib.appconfig import config_path
 from harbor.lib.apps import AppID, app_id_from_path, is_pathlike, record_app_action
-from harbor.lib.harbor import HarborCtx
+from harbor.lib.harbor import HarborCtx, StagedAppPaths
 from harbor.lib.lifecycle._common import logger, managed_volume_dirs
 from harbor.lib.logtab import LogTab
 from harbor.lib.run_layout import (
@@ -49,10 +48,10 @@ def _stage_incoming(catalog: Path, run_path: Path) -> Path:
   return incoming
 
 
-def _commit_incoming(run_path: Path, incoming: Path) -> None:
+def _commit_incoming(paths: StagedAppPaths, incoming: Path) -> None:
   """Promote a validated incoming copy to ``happ/``."""
-  outgoing = run_path / OUTGOING
-  happ = run_path / "happ"
+  outgoing = paths.run_path / OUTGOING
+  happ = paths.happ_path
   if happ.exists():
     os.replace(happ, outgoing)
   os.replace(incoming, happ)
@@ -76,7 +75,7 @@ def _generate_missing_config(stack: AppStack, ctx: HarborCtx) -> None:
   app's existing data already depends on, which fails as an authentication
   error that nothing in the app explains (docs/run-layout.md §5 step 5).
   """
-  store = ctx.app_config(stack.app)
+  store = ctx.app_store(stack.app)
   for config_name, config in stack.config.items():
     if config.default is None or store.has_config(config_name):
       continue
@@ -205,7 +204,7 @@ def catalog_entry(ctx: HarborCtx, target: str) -> tuple[AppID, Path | None]:
 def apply_config_sets(
   stack: AppStack, sets: list[tuple[str, str]], ctx: HarborCtx
 ) -> None:
-  store = ctx.app_config(stack.app)
+  store = ctx.app_store(stack.app)
   for name, value in sets:
     config = stack.config.get(name)
     if not config:
@@ -232,7 +231,7 @@ def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> N
   if not host_path.exists():
     raise ValueError(f"App {app} - Path does not exist: {host_path_str}")
 
-  ctx.app_config(app).set_bind(volname, str(host_path), readonly=vol.readonly)
+  ctx.app_store(app).set_bind(volname, str(host_path), readonly=vol.readonly)
 
 
 def stage(
@@ -248,7 +247,7 @@ def stage(
   from the manifest every time. Config values and volume *contents* are not:
   they belong to the installation, not the bundle (docs/run-layout.md §5).
   """
-  run_path = ctx.run_path(app)
+  paths = ctx.staged_app_paths(app)
   catalog = ctx.bundle_path(app)
 
   try:
@@ -264,9 +263,9 @@ def stage(
   # Config gone while the data it belongs to is still here means someone
   # deleted the run dir by hand. Staging would generate fresh `auto` secrets
   # against data expecting the old ones, so refuse instead.
-  if not config_path(run_path).is_file() and _has_volume_data(app, ctx):
+  if not paths.config_path.is_file() and _has_volume_data(app, ctx):
     raise ValueError(
-      f"App {app} has volume data but no config at {config_path(run_path)}. "
+      f"App {app} has volume data but no config at {paths.config_path}. "
       f"Staging would generate new secrets that its existing data does not "
       f"expect. Restore the run directory from a backup, or run "
       f"`harbor rm {app}` to delete its config and data together."
@@ -274,6 +273,7 @@ def stage(
 
   # Copy the catalog happ under run/ first, validate *that* copy, then promote
   # it to happ/. AppStack always comes from the run tree, never apps/.
+  run_path = paths.run_path
   run_path.mkdir(parents=True, exist_ok=True)
   incoming = _stage_incoming(catalog, run_path)
   try:
@@ -281,12 +281,16 @@ def stage(
   except Exception:
     _discard_incoming(run_path)
     raise
-  _commit_incoming(run_path, incoming)
+  _commit_incoming(paths, incoming)
 
+  # Apply configuration sets if we're given them
   if sets:
     apply_config_sets(stack, sets, ctx)
-  for volname, host_path in binds or []:
-    bind(stack, volname, host_path, ctx)
+
+  # Apply binds, if we're given them
+  if binds:
+    for volname, host_path in binds:
+      bind(stack, volname, host_path, ctx)
 
   _generate_missing_config(stack, ctx)
   _clear_and_reallocate_ports(stack, ctx)
@@ -297,13 +301,13 @@ def stage(
 
   try:
     dropped = _rebuild_volume_links(stack, run_data)
-    with open(run_path / "compose.yml", "w") as f:
+    with open(paths.compose_path, "w") as f:
       yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
   except Exception:
     record_app_action("stage-failed", app, ctx.config)
     raise
 
-  store = ctx.app_config(app)
+  store = ctx.app_store(app)
   store.set_meta("origin", str(catalog))
   store.set_meta("staged_at", LogTab.ts())
   record_app_action("staged", app, ctx.config)

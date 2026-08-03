@@ -138,7 +138,7 @@ class AppRunData:
 def _load_config_values(
   stack: AppStack, issues: list[ConfigIssue], ctx: HarborCtx
 ) -> dict[str, ConfigValue]:
-  store = ctx.app_config(stack.app)
+  store = ctx.app_store(stack.app)
   result = dict()
   for config_name, config in stack.config.items():
     is_secret, value = store.get_config(config_name)
@@ -175,7 +175,7 @@ def _load_volume_links(
 
   found_binds = {
     name: Path(entry["host_path"])
-    for name, entry in ctx.app_config(app_id).list_binds().items()
+    for name, entry in ctx.app_store(app_id).list_binds().items()
   }
 
   volume_links = {}
@@ -348,7 +348,7 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
 
 def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
   issues: list[ConfigIssue] = []
-  run_path = ctx.run_path(stack.app)
+  run_path = ctx.staged_app_paths(stack.app).run_path
   config_values = _load_config_values(stack, issues, ctx)
   routes = _load_routes(stack, issues, ctx)
   vol_links = _load_volume_links(stack, issues, ctx)

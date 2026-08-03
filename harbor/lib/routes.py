@@ -6,7 +6,7 @@ import requests
 
 from harbor.lib.apps import AppID
 from harbor.lib.config import Config
-from harbor.lib.store import HarborDB
+from harbor.lib.store import HarborStore
 
 logger = logging.getLogger("harbor.routes")
 
@@ -77,7 +77,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     password: str,
     harbor_domain: str,
     forward_host: str,
-    harbor_db: HarborDB | None = None,
+    harbor_db: HarborStore | None = None,
     token: str | None = None,
     token_expire: float | None = None,
     timeout: float = 30.0,
@@ -334,7 +334,7 @@ class PangolinRouteProvider(RouteProvider):
   pass
 
 
-def get_route_provider(harbor_db: HarborDB, config: Config) -> RouteProvider:
+def get_route_provider(harbor_db: HarborStore, config: Config) -> RouteProvider:
   """Build the configured route provider, or a no-op provider when unconfigured.
 
   Reads ``[route_provider.<kind>]`` from the Harbor config.
