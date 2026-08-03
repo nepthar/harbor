@@ -65,7 +65,7 @@ def snapshot(
 
   # Required files for the snapshot. If these don't exist, something is wrong
   # with the app.
-  for file in (paths.manifest_path, paths.config_path, paths.compose_path):
+  for file in (paths.manifest_path, paths.config_path):
     if not file.is_file():
       raise ValueError(
         f"App {app} missing required file: {file}. "
@@ -110,10 +110,12 @@ def snapshot(
       encoding="utf-8",
     )
 
-    # Config and compose are harbor-owned; copy2 keeps mode and mtime. Secrets stay
-    # Fernet ciphertext — we never decrypt on this path.
+    # Config is harbor-owned; copy2 keeps mode and mtime. Secrets stay Fernet
+    # ciphertext — we never decrypt on this path.
+    #
+    # compose.yml is not captured: its host ports are a photograph of harbordb,
+    # which moves on. `restore` regenerates it from the happ below.
     shutil.copy2(paths.config_path, staging / "config.logtab")
-    shutil.copy2(paths.compose_path, staging / "compose.yml")
     shutil.copytree(paths.happ_path, staging / "happ")
 
     data_vols = paths.run_path / "volumes" / "data"

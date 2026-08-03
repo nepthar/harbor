@@ -173,6 +173,26 @@ class StageSuccess:
   dropped_volumes: tuple[str, ...] = ()
 
 
+def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str, ...]]:
+  """Rebuild everything derived from the happ now sitting in the run dir.
+
+  Routes, volume links and compose.yml are all functions of the manifest plus
+  live harbordb state, so they are generated, never copied. `restore` shares
+  this: it puts a happ back from a snapshot and then needs exactly this pass.
+  """
+  _clear_and_reallocate_ports(stack, ctx)
+
+  run_data = load_run_data(stack, ctx)
+  if run_data.stage_blockers:
+    raise ValueError("\n".join(i.problem for i in run_data.stage_blockers))
+
+  dropped = _rebuild_volume_links(stack, run_data)
+  with open(ctx.staged_app_paths(stack.app).compose_path, "w") as f:
+    yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
+
+  return run_data, dropped
+
+
 def catalog_entry(ctx: HarborCtx, target: str) -> tuple[AppID, Path | None]:
   """Resolve a stage/start target to an app id backed by an `apps/` entry.
 
@@ -293,16 +313,9 @@ def stage(
       bind(stack, volname, host_path, ctx)
 
   _generate_missing_config(stack, ctx)
-  _clear_and_reallocate_ports(stack, ctx)
-
-  run_data = load_run_data(stack, ctx)
-  if run_data.stage_blockers:
-    raise ValueError("\n".join(i.problem for i in run_data.stage_blockers))
 
   try:
-    dropped = _rebuild_volume_links(stack, run_data)
-    with open(paths.compose_path, "w") as f:
-      yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
+    run_data, dropped = materialize(stack, ctx)
   except Exception:
     record_app_action("stage-failed", app, ctx.config)
     raise

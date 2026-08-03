@@ -1,7 +1,9 @@
-"""Harbor-wide state: route allocations, system secrets, and tokens.
+"""Keyed state, on top of logtab.
 
-Per-app config, secrets, and binds live in the app's run directory instead --
-see :mod:`harbor.lib.appconfig`.
+:class:`HarborStore` holds harbor-wide state -- route allocations, system
+secrets, tokens. :class:`AppStore` holds one app's config, secrets, binds and
+metadata, in a logtab under its own run directory. Both are the only supported
+way to read or write those tables: nothing else should open the logtab itself.
 """
 
 import json
@@ -23,6 +25,9 @@ logger = logging.getLogger("harbor.store")
 MAX_NAME_LEN = 256
 MAX_VALUE_LEN = 512
 PORT_RANGE_SIZE = 1000
+
+# meta/ key recording the snapshot an app's current state was restored from.
+RESTORED_FROM = "snapshot_restored"
 
 
 class ConfigStore(Protocol):
@@ -197,8 +202,20 @@ class AppStore:
   def list_binds(self) -> dict[str, Any]:
     return self._store.scan("binds/")
 
-  def set_meta(self, name: str, value: str) -> None:
+  def set_meta(self, name: str, value: Any) -> None:
     self._store.write(f"meta/{name}", value)
 
-  def get_meta(self, name: str) -> str | None:
+  def get_meta(self, name: str) -> Any:
     return self._store.read(f"meta/{name}")
+
+  def set_restored_from(self, snapshot_path: Path | str) -> None:
+    """Note where the app's current state was restored from.
+
+    Not a rollback pointer -- restore rolls forward and there is nothing to go
+    back to -- just a record of the state's origin. It is written into the
+    config the snapshot itself put back, so the next snapshot carries it too.
+    """
+    self.set_meta(RESTORED_FROM, {"at": LogTab.ts(), "from": str(snapshot_path)})
+
+  def get_restored_from(self) -> dict[str, str] | None:
+    return self.get_meta(RESTORED_FROM)
