@@ -147,19 +147,3 @@ def test_store_keeps_binds_and_meta(tmp_path):
   }
   assert store.get_meta("origin") == "/harbor/apps/io.test.example.happ"
   assert store.get_meta("staged_at") is None
-
-
-def test_store_records_where_a_restore_came_from(tmp_path):
-  store = AppStore.from_path(tmp_path / "config.logtab", NoopCryptoEngine())
-  assert store.get_restored_from() is None
-
-  store.set_restored_from(Path("/harbor/snapshots/io.test.example/2026-01-02_03-04Z"))
-  note = store.get_restored_from()
-  assert note is not None
-  assert note["from"] == "/harbor/snapshots/io.test.example/2026-01-02_03-04Z"
-  assert note["at"].endswith("Z")
-
-  # Roll-forward: a second restore replaces the note rather than stacking up a
-  # history behind it.
-  store.set_restored_from("/harbor/snapshots/io.test.example/2026-02-02_03-04Z")
-  assert store.get_restored_from()["from"].endswith("2026-02-02_03-04Z")

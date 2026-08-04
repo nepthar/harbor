@@ -500,7 +500,7 @@ def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
   assert harbor_env.run("stop", app_id).returncode == 0
 
   # Route rows gone while the run dir survives -- the pre-start allocation state.
-  config = load_config_file(harbor_env.config, "test")
+  config = load_config_file(harbor_env.config)
   HarborStore.from_config(config).clear_routes(app_id)
   assert (harbor_env.run_root / app_id / "compose.yml").is_file()
 
@@ -653,12 +653,12 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(
     "harbor.lib.lifecycle.run.docker_run_command",
     lambda args, **kwargs: docker_calls.append(args) or "",
   )
-  ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  ctx = HarborCtx(load_config_file(harbor_env.config))
 
   app = ctx.resolve_app("routes-demo")
   lifecycle.stage(app, ctx)
 
-  start_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  start_ctx = HarborCtx(load_config_file(harbor_env.config))
   with pytest.raises(ValueError, match="already owned"):
     lifecycle.start(app, start_ctx)
   assert provider.registered == []
@@ -673,14 +673,14 @@ def test_stop_uses_staged_manifest_when_bundle_is_missing(
     "harbor.lib.lifecycle.run.docker_run_command",
     lambda args, **kwargs: "",
   )
-  stage_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  stage_ctx = HarborCtx(load_config_file(harbor_env.config))
   app = stage_ctx.resolve_app("routes-demo")
   lifecycle.stage(app, stage_ctx)
-  start_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  start_ctx = HarborCtx(load_config_file(harbor_env.config))
   lifecycle.start(app, start_ctx)
   shutil.rmtree(harbor_env.root / "apps" / "routes-demo.happ")
 
-  fresh_ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  fresh_ctx = HarborCtx(load_config_file(harbor_env.config))
   lifecycle.stop("routes-demo", fresh_ctx)
   assert provider.unregistered == [
     ("photos", "harbor.localhost"),
@@ -735,7 +735,7 @@ def test_every_shipped_happ_stages(harbor_env):
 
   for source in shipped:
     shutil.copytree(source, harbor_env.root / "apps" / source.name, dirs_exist_ok=True)
-    fresh = HarborCtx(load_config_file(harbor_env.config, "test"))
+    fresh = HarborCtx(load_config_file(harbor_env.config))
     app = fresh.resolve_app(source.stem)
     lifecycle.stage(app, fresh)
     assert (harbor_env.run_root / source.stem / "compose.yml").is_file(), source.name
@@ -770,7 +770,7 @@ def test_last_action_is_read_in_one_pass(harbor_env):
   assert harbor_env.run("start", "ports-demo").returncode == 0
   assert harbor_env.run("start", "routes-demo").returncode == 0
 
-  config = load_config_file(harbor_env.config, "test")
+  config = load_config_file(harbor_env.config)
   assert read_app_actions(config) == {"ports-demo": "start", "routes-demo": "start"}
 
   listed = harbor_env.run("ps")
@@ -783,7 +783,7 @@ def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
 
-  config = load_config_file(harbor_env.config, "test")
+  config = load_config_file(harbor_env.config)
   assert read_last_app_action(app_id, config) == "start"
 
   assert harbor_env.run("rm", app_id, "-y").returncode == 0

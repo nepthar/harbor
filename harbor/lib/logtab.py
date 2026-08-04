@@ -78,7 +78,7 @@ class LogTab:
       os.close(fd)
 
     if not one_call:
-      # This is pretty unlikely, but possible if the filesystem is under heavy load,
+      # This unlikely, but possible if the filesystem is under heavy load,
       # or is full, or over a network or something like that. It is definitly not typical.
       logger.error(
         "Adding entry %s to %s did not happen atomically - corruption possible",
@@ -157,7 +157,9 @@ class LogTab:
       raise ValueError(f"Key {key} not found in logtab {self.path} for deletion")
     LogTab.write_entry(self.path, key, "del", comment)
 
-  def scan(self, prefix: str = "", suffix: str = "") -> dict[str, str]:
+  def scan(
+    self, prefix: str = "", suffix: str = "", contains: str = ""
+  ) -> dict[str, str]:
     """Scan the table for values matching the given prefix and suffix
     If no prefix or suffix is given, this is the same as load()
     """
@@ -165,8 +167,12 @@ class LogTab:
       LogTab.validate_key(prefix)
     if suffix:
       LogTab.validate_key(suffix)
+    if contains:
+      LogTab.validate_key(contains)
 
     data = self.load()
     return {
-      k: v for k, v in data.items() if k.startswith(prefix) and k.endswith(suffix)
+      k: v
+      for k, v in data.items()
+      if k.startswith(prefix) and k.endswith(suffix) and contains in k
     }

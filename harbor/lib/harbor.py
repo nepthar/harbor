@@ -14,7 +14,7 @@ from filelock import FileLock, Timeout
 
 from harbor.lib.apps import AppID
 from harbor.lib.config import Config
-from harbor.lib.crypto import CryptoEngine
+from harbor.lib.crypto import crypto_from_config
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
 from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
@@ -186,7 +186,7 @@ class HarborCtx:
     paths = self.staged_app_paths(app)
     if not paths.run_path.is_dir():
       raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
-    return AppStore.from_path(paths.config_path, CryptoEngine.from_config(self.config))
+    return AppStore.from_path(paths.config_path, crypto_from_config(self.config))
 
   def known_bundles(self) -> dict[str, Path]:
     """Map app_id -> catalog entry under apps/.

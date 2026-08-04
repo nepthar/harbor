@@ -117,7 +117,6 @@ def _dispatch(args: argparse.Namespace, conn: Conn) -> None:
       args.func(args, None, conn)
     else:
       cfg = load_config(
-        "cli",
         config_path=getattr(args, "config", None),
         root=getattr(args, "root", None),
       )

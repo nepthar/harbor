@@ -44,7 +44,7 @@ def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn) -> bool:
   # No snapshot is taken yet (docs/run-layout.md §8), so say plainly that there
   # is nothing to roll back to rather than implying a safety net that is not
   # there.
-  conn.out("This cannot be undone: harbor does not take snapshots yet.")
+  conn.out("If you want to restore this app and your data, take a snapshot first.")
   try:
     answer = conn.read(f"Remove {plan.app_id}? [y/N] ")
   except EOFError:

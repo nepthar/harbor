@@ -68,7 +68,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   )
   master_key_path.chmod(0o600)
 
-  load_config_file(config_path, "cli")
+  load_config_file(config_path)
 
   conn.out(f"Initialized harbor root at {root}")
   conn.out(f"  apps:        {root / 'apps'}")

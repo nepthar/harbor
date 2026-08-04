@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 from harbor.lib.config import Config
 
-from .crypto import CryptoEngine
+from .crypto import CryptoEngine, crypto_from_config
 from .logtab import LogTab
 
 logger = logging.getLogger("harbor.store")
@@ -25,9 +25,6 @@ logger = logging.getLogger("harbor.store")
 MAX_NAME_LEN = 256
 MAX_VALUE_LEN = 512
 PORT_RANGE_SIZE = 1000
-
-# meta/ key recording the snapshot an app's current state was restored from.
-RESTORED_FROM = "snapshot_restored"
 
 
 class ConfigStore(Protocol):
@@ -75,7 +72,7 @@ class HarborStore:
   @classmethod
   def from_config(cls, config: Config) -> "HarborStore":
     json_store = JsonLogtabStore(config.harbordb_path)
-    crypto = CryptoEngine.from_config(config)
+    crypto = crypto_from_config(config)
     return cls(json_store, crypto, config.port_base)
 
   def __init__(self, store: ConfigStore, crypto: CryptoEngine, port_base: int):
@@ -83,7 +80,7 @@ class HarborStore:
     self._crypto = crypto
     self._port_base = port_base
 
-  # Routes - the only per-app state left here. Everything else about an app
+  # Routes - the only per-app state in this DB. Everything else about an app
   # lives in its run directory; routes stay central because allocating a host
   # port is contention between apps, not state belonging to one.
   def list_routes(self, app_id: str) -> dict[str, dict[str, Any]]:
@@ -207,15 +204,3 @@ class AppStore:
 
   def get_meta(self, name: str) -> Any:
     return self._store.read(f"meta/{name}")
-
-  def set_restored_from(self, snapshot_path: Path | str) -> None:
-    """Note where the app's current state was restored from.
-
-    Not a rollback pointer -- restore rolls forward and there is nothing to go
-    back to -- just a record of the state's origin. It is written into the
-    config the snapshot itself put back, so the next snapshot carries it too.
-    """
-    self.set_meta(RESTORED_FROM, {"at": LogTab.ts(), "from": str(snapshot_path)})
-
-  def get_restored_from(self) -> dict[str, str] | None:
-    return self.get_meta(RESTORED_FROM)

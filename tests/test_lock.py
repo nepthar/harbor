@@ -25,7 +25,7 @@ from tests.conftest import LOCK_TIMEOUT
 
 def test_the_lock_is_recorded_then_released(harbor_env):
   """A held lock and a released one are both visible in the activity log."""
-  ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
+  ctx = HarborCtx(load_config_file(harbor_env.config))
   activity = LogTab(ctx.config.activity_log)
 
   with ctx.lock("ps"):
@@ -41,7 +41,7 @@ def test_the_lock_is_recorded_then_released(harbor_env):
 
 def test_the_lock_timeout_message_names_the_holder(harbor_env):
   """The whole point of the record: explain a wait instead of just failing."""
-  config = load_config_file(harbor_env.config, "test")
+  config = load_config_file(harbor_env.config)
   LogTab(config.activity_log).write(
     LOCK_KEY,
     json.dumps(
@@ -68,7 +68,7 @@ def test_the_recorded_holder_is_the_command_not_the_argv(harbor_env):
   assert harbor_env.run("stage", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--set", "admin_pass=hunter2").returncode == 0
 
-  config = load_config_file(harbor_env.config, "test")
+  config = load_config_file(harbor_env.config)
   recorded = LogTab(config.activity_log).read(LOCK_KEY)
 
   assert "hunter2" not in recorded

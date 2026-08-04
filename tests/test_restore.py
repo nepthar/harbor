@@ -2,8 +2,8 @@
 
 That restriction is the point: copying data volumes needs `sudo cp -a`, because
 containers write as root. Everything up to that copy -- refusals, the config
-round trip, compose regeneration, the restored-from note -- is reachable
-without it. The copy itself is in docs/testing.md as a live test.
+round trip, compose regeneration -- is reachable without it. The copy itself
+is in docs/testing.md as a live test.
 """
 
 from __future__ import annotations
@@ -43,15 +43,8 @@ def test_restore_rebuilds_a_removed_app_from_its_snapshot(harbor_env):
   assert compose["services"]["main"]["ports"] == ["41000:8080", "9000:80"]
   assert harbor_env.read_db()["routes"][app_id]["web"]["host_port"] == 41000
 
-  ctx = HarborCtx(load_config_file(harbor_env.config, "test"))
-  assert read_last_app_action(app_id, ctx.config) == "restored"
-
-  # Where the current state came from, recorded in the config the snapshot put
-  # back -- so the next snapshot of this app carries the note along.
-  note = ctx.app_store(app_id).get_restored_from()
-  assert note is not None
-  assert note["from"] == str(harbor_env.root / "snapshots" / app_id / name)
-  assert note["at"].endswith("Z")
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+  assert read_last_app_action(app_id, ctx.config) == f"restored - {name}"
 
   assert harbor_env.run("start", app_id).returncode == 0
 

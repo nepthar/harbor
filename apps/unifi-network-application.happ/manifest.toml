@@ -9,9 +9,10 @@ source       = "github:nepthar/harbor/main/apps/unifi-network-application.happ"
 mongo_pass = { desc = "MongoDB Password", secret = true, default = "auto" }
 
 [volumes]
-db_data     = { kind = "data" }
-app_config  = { kind = "data" }
-init_script = { kind = "app", src = "init-mongo.sh"}
+db_data     = { kind = "data", desc = "MongoDB data" }
+app_data    = { kind = "data", desc = "Unifi Network Application data" }
+app_logs    = { kind = "logs", desc = "Unifi Network Application logs" }
+init_script = { kind = "app", src = "init-mongo.sh", desc = "First run initialization script for mongodb" }
 
 [run.unifi-db]
 image = "docker.io/mongo:8.0.11"
@@ -25,7 +26,7 @@ MONGO_AUTHSOURCE = "admin"
 
 [run.main]
 image = "lscr.io/linuxserver/unifi-network-application:10.0.162"
-volumes = { app_config = "/config" }
+volumes = { app_data = "/config/data", app_logs = "/config/logs" }
 
 [run.main.routes]
 admin        = { port = "8443:8443", publish = "web", scheme = "https" }

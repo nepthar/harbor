@@ -38,7 +38,6 @@ class Config:
   domain: str
   port_base: int
   route_provider: dict
-  author: str
 
   def __init__(
     self,
@@ -50,7 +49,6 @@ class Config:
     master_key: str,
     master_keyfile: Path,
     domain: str,
-    author: str,
     port_base: int = 41000,
     route_provider: dict | None = None,
   ) -> None:
@@ -62,7 +60,6 @@ class Config:
     self.master_key = master_key
     self.master_keyfile = master_keyfile
     self.domain = domain
-    self.author = author
     self.port_base = port_base
     self.route_provider = route_provider or {}
 
@@ -82,7 +79,7 @@ class Config:
     return self.run_root / app_id
 
 
-def load_config_file(config_file: str | Path, author: str) -> Config:
+def load_config_file(config_file: str | Path) -> Config:
   config_path = Path(config_file).resolve()
   config_dir = config_path.parent
   harbor_root = config_dir
@@ -131,7 +128,6 @@ def load_config_file(config_file: str | Path, author: str) -> Config:
     master_key=master_key,
     master_keyfile=master_keyfile,
     domain=domain,
-    author=author,
     port_base=port_base,
     route_provider=route_provider,
   )
@@ -144,7 +140,6 @@ CONFIG_LOCATIONS = [
 
 
 def load_config(
-  author: str,
   *,
   config_path: str | Path | None = None,
   root: str | Path | None = None,
@@ -162,14 +157,14 @@ def load_config(
     if not path.is_file():
       raise RuntimeError(f"No config file exists at {path}")
     logger.debug(f"Loading from {path}")
-    return load_config_file(path, author)
+    return load_config_file(path)
 
   if root is not None:
     path = (Path(root).expanduser() / "config.toml").resolve()
     if not path.is_file():
       raise RuntimeError(f"No config file exists at {path}")
     logger.debug(f"Loading from {path}")
-    return load_config_file(path, author)
+    return load_config_file(path)
 
   if os.environ.get("HARBOR_CONFIG"):
     path = Path(os.environ["HARBOR_CONFIG"]).expanduser().resolve()
@@ -178,20 +173,20 @@ def load_config(
         f"HARBOR_CONFIG is set to {path}, but no config file exists there"
       )
     logger.debug(f"Loading from {path}")
-    return load_config_file(path, author)
+    return load_config_file(path)
 
   if os.environ.get("HARBOR_ROOT"):
     path = (Path(os.environ["HARBOR_ROOT"]).expanduser() / "config.toml").resolve()
     if not path.is_file():
       raise RuntimeError(f"HARBOR_ROOT is set, but no config file exists at {path}")
     logger.debug(f"Loading from {path}")
-    return load_config_file(path, author)
+    return load_config_file(path)
 
   for candidate in CONFIG_LOCATIONS:
     path = candidate.expanduser().resolve()
     if path.is_file():
       logger.debug(f"Loading from {path}")
-      return load_config_file(path, author)
+      return load_config_file(path)
 
   searched = ", ".join(str(c.expanduser().resolve()) for c in CONFIG_LOCATIONS)
   logger.warning(f"No harbor config found. Searched: {searched}")

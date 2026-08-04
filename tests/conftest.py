@@ -132,7 +132,7 @@ class HarborEnv:
     ``db["system"]["secrets"][name]``.
     """
     db: dict[str, Any] = {}
-    for key, value in JsonLogtabStore(self.db_path).scan("").items():
+    for key, value in JsonLogtabStore(self.db_path).scan().items():
       parts = key.split("/")
       if parts[0] == "apps":
         app_id, section, rest = parts[1], parts[2], "/".join(parts[3:])

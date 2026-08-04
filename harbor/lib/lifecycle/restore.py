@@ -245,7 +245,6 @@ def restore(plan: RestorePlan, ctx: HarborCtx) -> AppRunData:
       f"`harbor stage {app}`.\n{e}"
     ) from e
 
-  ctx.app_store(app).set_restored_from(plan.snapshot_path)
-  record_app_action("restored", app, ctx.config)
+  record_app_action(f"restored - {plan.snapshot_path.name}", app, ctx.config)
   logger.info("restored %s from %s", app, plan.snapshot_path)
   return run_data

@@ -208,7 +208,7 @@ def github(monkeypatch):
 
 @pytest.fixture
 def ctx(harbor_env) -> HarborCtx:
-  return HarborCtx(load_config_file(harbor_env.config, "test"))
+  return HarborCtx(load_config_file(harbor_env.config))
 
 
 class FakeConn:
