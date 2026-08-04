@@ -1,10 +1,13 @@
-#!/bin/bash
+#!/bin/sh
+# Alpine has no bash, so stay POSIX sh. Harbor tells every container where its
+# volumes are mounted via HAPP_VOLUMES ("name:/guest/path,name:/guest/path").
 
 date
 
-echo "Hello, here are the volumes I was passed"
+echo "Hello, here are the volumes I was passed (from \$HAPP_VOLUMES)"
 
-for arg in "$@"; do
-  echo "Contents of volume at $arg"
-  ls -al "$arg"
+echo "$HAPP_VOLUMES" | tr ',' '\n' | while IFS=':' read -r name path; do
+  echo
+  echo "Volume '$name' mounted at $path:"
+  ls -al "$path"
 done

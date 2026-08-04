@@ -5,8 +5,11 @@ subdomain    = "unifi"
 source       = "github:nepthar/harbor/main/apps/unifi-network-application.happ"
 
 [config]
-# This secret is automagically generated upon first install
-mongo_pass = { desc = "MongoDB Password", secret = true, default = "auto" }
+# These secrets are automagically generated upon first install. The root
+# password exists for init-mongo.sh, which authenticates as root on first run
+# to create the unifi user.
+mongo_pass      = { desc = "MongoDB Password", secret = true, default = "auto" }
+mongo_root_pass = { desc = "MongoDB root password", secret = true, default = "auto" }
 
 [volumes]
 db_data     = { kind = "data", desc = "MongoDB data" }
@@ -19,6 +22,10 @@ image = "docker.io/mongo:8.0.11"
 volumes = { db_data = "/data/db", init_script = "/docker-entrypoint-initdb.d/init-mongo.sh" }
 
 [run.unifi-db.env]
+# The INITDB vars are consumed by the mongo image itself: they create the root
+# user and turn on auth. init-mongo.sh then auths as root to create MONGO_USER.
+MONGO_INITDB_ROOT_USERNAME = "root"
+MONGO_INITDB_ROOT_PASSWORD = "${mongo_root_pass}"
 MONGO_USER = "unifi"
 MONGO_PASS = "${mongo_pass}"
 MONGO_DBNAME = "unifi"
