@@ -1,5 +1,4 @@
 #!/bin/sh
-# Alpine has no bash, so stay POSIX sh. Harbor tells every container where its
 # volumes are mounted via HAPP_VOLUMES ("name:/guest/path,name:/guest/path").
 
 date

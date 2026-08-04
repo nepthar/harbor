@@ -59,7 +59,7 @@ def summary():
     ticks = read_ticks()
     return {
         "label": LABEL,
-        "last_tick": ticks[-1] if ticks else None,
+        "last_ticks": ticks[-10:],
         "first_tick": ticks[0] if ticks else None,
         "tick_count": len(ticks),
         "state_file": str(TICKS),
@@ -78,15 +78,17 @@ def ticker():
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         data = summary()
-        last = data["last_tick"] or "(nothing recorded yet)"
 
         if self.path.rstrip("/") == "/state":
             body = json.dumps(data, indent=2) + "\n"
             content_type = "application/json"
         else:
+            recent = "\n".join(f"  {stamp}" for stamp in reversed(data["last_ticks"]))
             body = (
-                f"Your config param was: {LABEL}, "
-                f"the last recorded timestamp was {last}\n"
+                f"Your config param was: {LABEL}\n"
+                f"\n"
+                f"last {len(data['last_ticks'])} tick(s), newest first:\n"
+                f"{recent or '  (nothing recorded yet)'}\n"
                 f"\n"
                 f"ticks recorded: {data['tick_count']}\n"
                 f"first tick:     {data['first_tick'] or '(none)'}\n"
