@@ -18,6 +18,10 @@ from harbor.lib.util import validate_identifier
 
 logger = getLogger("harbor.lifecycle.restore")
 
+# Label of the automatic safety snapshot taken before a restore overwrites the
+# live state. Snapshot folders are named <timestamp>_<label>.
+PRE_RESTORE_LABEL = "pre-restore"
+
 
 @dataclass(frozen=True)
 class RestorePlan:
@@ -29,6 +33,10 @@ class RestorePlan:
   run_path: Path
   # (path inside the snapshot, path it is copied back over)
   data_volumes: tuple[tuple[Path, Path], ...]
+  # True when the target is the app's newest pre-restore snapshot, i.e. this
+  # restore is undoing the last one. No new pre-restore snapshot is taken then,
+  # or every undo would mint another snapshot and chase its own tail.
+  is_latest_pre_restore: bool = False
 
 
 def snapshot_names(app: AppID, ctx: HarborCtx) -> list[str]:
@@ -130,12 +138,17 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
       f"run `harbor stop {app}` first"
     )
 
+  pre_restores = [
+    name for name in snapshot_names(app, ctx) if name.endswith(f"_{PRE_RESTORE_LABEL}")
+  ]
+
   return RestorePlan(
     app_id=app,
     snapshot_path=snapshot_path,
     app_version=str(meta.get("app_version", "")),
     run_path=ctx.staged_app_paths(app).run_path,
     data_volumes=tuple(data_volumes),
+    is_latest_pre_restore=bool(pre_restores) and snapshot_name == pre_restores[-1],
   )
 
 
@@ -195,6 +208,8 @@ def restore(
 
   When ``snapshot_first`` is true and a live run dir exists, a snapshot labeled
   ``pre-restore`` is taken first. If that fails, restore does not start.
+  Restoring the newest pre-restore snapshot skips this — that restore is an
+  undo, and snapshotting there would mint a new pre-restore on every undo.
 
   There is no scratch-and-swap: the pre-restore snapshot is the undo, so a
   failure partway leaves a broken run dir that another restore repairs.
@@ -205,9 +220,14 @@ def restore(
   # fails here with the current state intact.
   stack = app_stack(plan.snapshot_path / "happ", app)
 
-  if snapshot_first and plan.run_path.exists():
+  take_snapshot = snapshot_first and plan.run_path.exists()
+  if take_snapshot and plan.is_latest_pre_restore:
+    logger.info("target is the newest %s snapshot; not taking another", PRE_RESTORE_LABEL)
+    take_snapshot = False
+
+  if take_snapshot:
     try:
-      pre = snapshot(app, ctx, label="pre-restore")
+      pre = snapshot(app, ctx, label=PRE_RESTORE_LABEL)
     except Exception as e:
       raise ValueError(
         f"Pre-restore snapshot of {app} failed; restore was not started. "

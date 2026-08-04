@@ -91,6 +91,24 @@ def test_restore_no_snapshot_skips_pre_restore(harbor_env):
   assert after == before
 
 
+def test_restoring_latest_pre_restore_skips_new_snapshot(harbor_env):
+  """Undoing the last restore must not mint yet another pre-restore snapshot."""
+  app_id = "ports-demo"
+  assert harbor_env.run("start", app_id).returncode == 0
+  name = _snapshot(harbor_env, app_id, "kept")
+
+  restored = harbor_env.run("restore", app_id, name, "-y")
+  assert restored.returncode == 0, restored.stderr
+  snapshots = harbor_env.root / "snapshots" / app_id
+  pre = sorted(p.name for p in snapshots.iterdir() if p.name.endswith("_pre-restore"))
+  assert len(pre) == 1
+
+  undo = harbor_env.run("restore", app_id, pre[-1], "-y")
+  assert undo.returncode == 0, undo.stderr
+  after = {p.name for p in snapshots.iterdir() if p.name.endswith("_pre-restore")}
+  assert after == set(pre)
+
+
 def test_restore_refuses_while_containers_are_running(harbor_env):
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0

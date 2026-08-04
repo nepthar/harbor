@@ -57,11 +57,16 @@ def _confirmed(plan: RestorePlan, snapshot_first: bool, conn: Conn) -> bool:
       f"Whatever {plan.app_id} holds right now is destroyed, not set aside "
       f"(--no-snapshot)."
     )
-  if snapshot_first and plan.run_path.exists():
+  if snapshot_first and plan.run_path.exists() and not plan.is_latest_pre_restore:
     prompt = (
       f"Snapshot {plan.app_id} first, then restore to {plan.snapshot_path.name}? [y/N] "
     )
   else:
+    if snapshot_first and plan.run_path.exists():
+      conn.out(
+        "This is the newest pre-restore snapshot; no new pre-restore "
+        "snapshot will be taken."
+      )
     prompt = f"Restore {plan.app_id} to {plan.snapshot_path.name}? [y/N] "
   try:
     answer = conn.read(prompt)
