@@ -70,6 +70,26 @@ def test_restore_clobbers_whatever_is_there_now(harbor_env):
   assert shown.stdout.strip() == "photos"
   assert not scratch.exists()
 
+  pre = [
+    p.name
+    for p in (harbor_env.root / "snapshots" / app_id).iterdir()
+    if p.name.endswith("_pre-restore")
+  ]
+  assert pre, "restore over a live run dir should take a pre-restore snapshot"
+
+
+def test_restore_no_snapshot_skips_pre_restore(harbor_env):
+  app_id = "ports-demo"
+  assert harbor_env.run("start", app_id).returncode == 0
+  name = _snapshot(harbor_env, app_id, "kept")
+  before = {p.name for p in (harbor_env.root / "snapshots" / app_id).iterdir()}
+
+  restored = harbor_env.run("restore", app_id, name, "-y", "--no-snapshot")
+  assert restored.returncode == 0, restored.stderr
+
+  after = {p.name for p in (harbor_env.root / "snapshots" / app_id).iterdir()}
+  assert after == before
+
 
 def test_restore_refuses_while_containers_are_running(harbor_env):
   app_id = "ports-demo"

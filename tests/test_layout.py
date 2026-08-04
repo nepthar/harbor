@@ -326,7 +326,7 @@ def test_rm_needs_confirmation_and_says_it_cannot_be_undone(harbor_env):
 
   declined = harbor_env.run("rm", app_id, input="n\n")
   assert declined.returncode == 0, declined.stderr
-  assert "cannot be undone" in declined.stdout
+  assert "take a snapshot first" in declined.stdout
   assert "Nothing removed" in declined.stdout
   assert (harbor_env.run_root / app_id).is_dir()
 

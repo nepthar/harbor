@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shlex
 import shutil
 import subprocess
@@ -11,18 +10,13 @@ from pathlib import Path
 
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.lifecycle.snapshot import snapshot
 from harbor.lib.lifecycle.stage import materialize
 from harbor.lib.run_layout import AppRunData
 from harbor.lib.stack import app_stack
 from harbor.lib.util import validate_identifier
 
 logger = getLogger("harbor.lifecycle.restore")
-
-# Scratch names used while swapping in the run dir from a snapshot. Siblings of
-# the run dir so the swap is a rename on one filesystem rather than a second
-# copy -- same reason `stage` keeps its scratch under run/ (see stage.py).
-INCOMING = ".restore.incoming"
-OUTGOING = ".restore.outgoing"
 
 
 @dataclass(frozen=True)
@@ -145,37 +139,18 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
   )
 
 
-def _scratch_paths(plan: RestorePlan, ctx: HarborCtx) -> tuple[Path, Path]:
-  run_root = ctx.config.run_root
-  return run_root / f".{plan.app_id}{INCOMING}", run_root / f".{plan.app_id}{OUTGOING}"
-
-
-def _stage_incoming(plan: RestorePlan, ctx: HarborCtx) -> Path:
-  """Copy the snapshot's run-dir half into scratch space (not yet live).
+def _rebuild_run_dir(plan: RestorePlan) -> None:
+  """Drop the live run dir and rebuild it from the snapshot.
 
   This is the whole of it: a snapshot holds the happ and the config, and
   `materialize` generates the rest. Snapshots taken before compose.yml was
   dropped from the format still carry one; it is ignored.
   """
-  incoming, outgoing = _scratch_paths(plan, ctx)
-  for scratch in (incoming, outgoing):
-    if scratch.exists():
-      shutil.rmtree(scratch)
-
-  incoming.mkdir(parents=True, mode=0o700)
-  shutil.copytree(plan.snapshot_path / "happ", incoming / "happ")
-  shutil.copy2(plan.snapshot_path / "config.logtab", incoming / "config.logtab")
-  return incoming
-
-
-def _commit_incoming(plan: RestorePlan, ctx: HarborCtx) -> None:
-  """Swap the validated copy in, whatever was there before."""
-  incoming, outgoing = _scratch_paths(plan, ctx)
   if plan.run_path.exists():
-    os.replace(plan.run_path, outgoing)
-  os.replace(incoming, plan.run_path)
-  if outgoing.exists():
-    shutil.rmtree(outgoing)
+    shutil.rmtree(plan.run_path)
+  plan.run_path.mkdir(parents=True, mode=0o700)
+  shutil.copytree(plan.snapshot_path / "happ", plan.run_path / "happ")
+  shutil.copy2(plan.snapshot_path / "config.logtab", plan.run_path / "config.logtab")
 
 
 def _restore_data_volumes(plan: RestorePlan, ctx: HarborCtx) -> None:
@@ -213,25 +188,38 @@ def _restore_data_volumes(plan: RestorePlan, ctx: HarborCtx) -> None:
     raise RuntimeError(f"{message}\n{detail}" if detail else message)
 
 
-def restore(plan: RestorePlan, ctx: HarborCtx) -> AppRunData:
+def restore(
+  plan: RestorePlan, ctx: HarborCtx, *, snapshot_first: bool = True
+) -> AppRunData:
   """Replace an app's run dir and data volumes with a snapshot's.
 
-  Roll-forward only: the restored state becomes the current state. Nothing
-  records where it came from and nothing can be rolled back to.
+  When ``snapshot_first`` is true and a live run dir exists, a snapshot labeled
+  ``pre-restore`` is taken first. If that fails, restore does not start.
+
+  There is no scratch-and-swap: the pre-restore snapshot is the undo, so a
+  failure partway leaves a broken run dir that another restore repairs.
   """
   app = plan.app_id
-  incoming = _stage_incoming(plan, ctx)
 
-  try:
-    stack = app_stack(incoming / "happ", app)
-    # Data first. It is the step that can be refused at a password prompt, and
-    # failing here leaves the run dir exactly as it was.
-    _restore_data_volumes(plan, ctx)
-  except Exception:
-    shutil.rmtree(incoming)
-    raise
+  # Parse the snapshot's happ before touching anything; a corrupt snapshot
+  # fails here with the current state intact.
+  stack = app_stack(plan.snapshot_path / "happ", app)
 
-  _commit_incoming(plan, ctx)
+  if snapshot_first and plan.run_path.exists():
+    try:
+      pre = snapshot(app, ctx, label="pre-restore")
+    except Exception as e:
+      raise ValueError(
+        f"Pre-restore snapshot of {app} failed; restore was not started. "
+        f"Fix the problem below, or pass --no-snapshot to skip.\n{e}"
+      ) from e
+    logger.info("pre-restore snapshot written to %s", pre)
+
+  # Volumes before the run dir: this is the step that can be refused at a sudo
+  # password prompt, and refusal leaves the run dir untouched.
+  _restore_data_volumes(plan, ctx)
+
+  _rebuild_run_dir(plan)
 
   try:
     run_data, _ = materialize(stack, ctx)
