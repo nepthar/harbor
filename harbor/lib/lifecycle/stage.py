@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from harbor.lib.apps import AppID, app_id_from_path, is_pathlike, record_app_action
+from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx, StagedAppPaths
 from harbor.lib.lifecycle._common import logger, managed_volume_dirs
 from harbor.lib.logtab import LogTab
@@ -37,14 +38,20 @@ def _has_volume_data(app_id: AppID, ctx: HarborCtx) -> bool:
 
 
 def _stage_incoming(catalog: Path, run_path: Path) -> Path:
-  """Copy the catalog happ into ``run/<id>/.happ.incoming`` (not yet live)."""
+  """Extract the catalog happ into ``run/<id>/.happ.incoming`` (not yet live).
+
+  `load_happ` handles both bundle flavors, so a `.happ` directory is copied
+  and a `.happ.md` file is expanded into the files it embeds; the run tree is
+  always a plain directory either way.
+  """
+  happ = load_happ(catalog)
   incoming = run_path / INCOMING
   outgoing = run_path / OUTGOING
   for scratch in (incoming, outgoing):
     if scratch.exists():
       shutil.rmtree(scratch)
 
-  shutil.copytree(catalog, incoming)
+  happ.extract_to(incoming)
   return incoming
 
 
@@ -206,7 +213,18 @@ def catalog_entry(ctx: HarborCtx, target: str) -> tuple[AppID, Path | None]:
 
   source = Path(target).expanduser().resolve()
   app = app_id_from_path(source)
-  entry = ctx.config.apps_root / f"{app}.happ"
+  # The id comes from the bundle's own name, so the entry keeps the source's
+  # flavor suffix (`.happ` directory or `.happ.md` file).
+  entry = ctx.config.apps_root / source.name
+
+  # One id, one entry: refuse when the id is already backed by a different
+  # path, even if that entry is the other bundle flavor.
+  existing = ctx.known_bundles().get(str(app))
+  if existing is not None and existing.resolve() != source:
+    raise ValueError(
+      f"App {app} is already in the catalog as {existing} -> {existing.resolve()}. "
+      f"Remove that entry to stage from {source} instead."
+    )
 
   if entry.is_symlink() or entry.exists():
     if entry.resolve() != source:
@@ -295,8 +313,8 @@ def stage(
   # it to happ/. AppStack always comes from the run tree, never apps/.
   run_path = paths.run_path
   run_path.mkdir(parents=True, exist_ok=True)
-  incoming = _stage_incoming(catalog, run_path)
   try:
+    incoming = _stage_incoming(catalog, run_path)
     stack = app_stack(incoming, app)
   except Exception:
     _discard_incoming(run_path)

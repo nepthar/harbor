@@ -87,17 +87,19 @@ class RouteEntry(BaseModel):
 
 # Compose service keys harbor generates itself; [run.<unit>.compose] may not
 # shadow them -- those settings go through the dedicated manifest fields.
-_COMPOSE_MANAGED_KEYS = frozenset({
-  "image",
-  "hostname",
-  "command",
-  "environment",
-  "volumes",
-  "ports",
-  "labels",
-  "restart",
-  "network_mode",
-})
+_COMPOSE_MANAGED_KEYS = frozenset(
+  {
+    "image",
+    "hostname",
+    "command",
+    "environment",
+    "volumes",
+    "ports",
+    "labels",
+    "restart",
+    "network_mode",
+  }
+)
 
 
 class RunEntry(BaseModel):

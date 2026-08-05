@@ -222,7 +222,9 @@ def restore(
 
   take_snapshot = snapshot_first and plan.run_path.exists()
   if take_snapshot and plan.is_latest_pre_restore:
-    logger.info("target is the newest %s snapshot; not taking another", PRE_RESTORE_LABEL)
+    logger.info(
+      "target is the newest %s snapshot; not taking another", PRE_RESTORE_LABEL
+    )
     take_snapshot = False
 
   if take_snapshot:

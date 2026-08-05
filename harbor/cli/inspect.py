@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from harbor.lib.apps import is_pathlike
+from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.receipt import capability_receipt
 from harbor.lib.run_layout import load_run_data
@@ -16,7 +17,7 @@ def register(subparsers) -> None:
   parser.add_argument(
     "app",
     metavar="APP",
-    help="App ID or path to a .happ directory",
+    help="App ID or path to a .happ directory or .happ.md file",
   )
   parser.set_defaults(func=run)
 
@@ -24,7 +25,8 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   if is_pathlike(args.app):
     source = Path(args.app).expanduser().resolve()
-    conn.out(capability_receipt(app_stack(source), None, ctx, compact=False))
+    stack = load_happ(source).app_stack()
+    conn.out(capability_receipt(stack, None, ctx, compact=False))
     return
 
   app = ctx.resolve_app(args.app)

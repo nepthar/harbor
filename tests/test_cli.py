@@ -730,15 +730,22 @@ def test_every_shipped_happ_stages(harbor_env):
   This previously pointed at an `examples/` directory that does not exist, so
   it globbed nothing and passed unconditionally.
   """
-  shipped = sorted((Path(__file__).parents[1] / "apps").glob("*.happ"))
+  apps_dir = Path(__file__).parents[1] / "apps"
+  shipped = sorted([*apps_dir.glob("*.happ"), *apps_dir.glob("*.happ.md")])
   assert shipped, "no happs found in apps/"
 
   for source in shipped:
-    shutil.copytree(source, harbor_env.root / "apps" / source.name, dirs_exist_ok=True)
+    if source.is_dir():
+      shutil.copytree(
+        source, harbor_env.root / "apps" / source.name, dirs_exist_ok=True
+      )
+    else:
+      shutil.copy2(source, harbor_env.root / "apps" / source.name)
+    app_id = source.name.removesuffix(".happ.md").removesuffix(".happ")
     fresh = HarborCtx(load_config_file(harbor_env.config))
-    app = fresh.resolve_app(source.stem)
+    app = fresh.resolve_app(app_id)
     lifecycle.stage(app, fresh)
-    assert (harbor_env.run_root / source.stem / "compose.yml").is_file(), source.name
+    assert (harbor_env.run_root / app_id / "compose.yml").is_file(), source.name
 
 
 def test_readme_quickstart_from_repo_apps(harbor_env):

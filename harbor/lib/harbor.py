@@ -190,18 +190,23 @@ class HarborCtx:
 
   def known_bundles(self) -> dict[str, Path]:
     """Map app_id -> catalog entry under apps/.
-    A directory is a "Harbor App Bundle" iff:
-     - It ends in .happ
-     - It has a manifest.toml file
+    A catalog entry is either:
+     - a directory ending in .happ with a manifest.toml file, or
+     - a single-file bundle ending in .happ.md
 
-    Entries may be real directories or symlinks; harbor does not distinguish.
-    This does not attempt to parse or validate the manifest contents.
+    Entries may be real directories/files or symlinks; harbor does not
+    distinguish. This does not attempt to parse or validate the contents;
+    when an id has both flavors, the .happ directory wins.
     """
-    return {
+    found = {
       entry.stem: entry
       for entry in self.config.apps_root.glob("*.happ")
       if entry.is_dir() and (entry / "manifest.toml").is_file()
     }
+    for entry in self.config.apps_root.glob("*.happ.md"):
+      if entry.is_file():
+        found.setdefault(entry.name.removesuffix(".happ.md"), entry)
+    return found
 
   def staged_app_ids(self) -> set[str]:
     """Every app id with a happ copy under run/."""

@@ -34,6 +34,11 @@ class AppID(str):
 
 
 def app_id_from_path(path: Path) -> AppID:
+  """The app id a bundle path carries: `<id>.happ` dir or `<id>.happ.md` file."""
+  if path.name.endswith(".happ.md"):
+    if not path.is_file():
+      raise ValueError(f"{path} is not a file")
+    return AppID(path.name.removesuffix(".happ.md"))
   if not path.is_dir():
     raise ValueError(f"{path} is not a directory")
   if path.suffix != ".happ":
@@ -46,10 +51,12 @@ def app_id_from_path(path: Path) -> AppID:
 def is_pathlike(raw: str) -> bool:
   """Decide whether an APP argument names a filesystem path vs an app id.
 
-  A valid happ path ends in `.happ`, so a bare non-`.happ` name can never be
-  a path.
+  A valid happ path ends in `.happ` (or `.happ.md`), so a bare name without
+  either suffix can never be a path.
   """
-  return os.sep in raw or raw.startswith(("~", ".")) or raw.endswith(".happ")
+  return (
+    os.sep in raw or raw.startswith(("~", ".")) or raw.endswith((".happ", ".happ.md"))
+  )
 
 
 def resolve_app_id(ctx: HarborCtx, raw: str) -> AppID:

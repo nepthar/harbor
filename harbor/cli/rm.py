@@ -35,7 +35,8 @@ def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn) -> bool:
     conn.out(f"  {path}")
   conn.out("  its route and host-port allocations")
 
-  kept = [str(ctx.config.apps_root / f"{plan.app_id}.happ")]
+  catalog = ctx.known_bundles().get(str(plan.app_id))
+  kept = [str(catalog)] if catalog else []
   kept += [f"{path} (external bind)" for path in plan.ext_paths]
   conn.out("Left alone:")
   for path in kept:
