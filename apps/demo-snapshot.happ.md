@@ -1,3 +1,42 @@
+# Snapshot Demo
+
+For exercising `harbor snapshot` and `harbor restore`. The app appends a
+timestamp to a data volume every 30s and serves the log back. Restore, and
+the tick log visibly jumps back to what the snapshot held.
+
+```toml happ_path="manifest.toml"
+[app]
+version      = "0.1.0"
+display_name = "Snapshot Demo"
+description  = "Appends a timestamp to a data volume every 30s and serves it back"
+
+[config]
+label = { desc = "Anything you like. Echoed back by the endpoint, and captured in snapshots along with the rest of the config." }
+
+[volumes]
+script = { kind = "app", src = "app.py" }
+state  = { kind = "data", desc = "The tick log. This is the volume snapshots capture and restore." }
+
+[run.main]
+image   = "python:3.12"
+cmd     = ["python", "/app/app.py"]
+volumes = { script = "/app/app.py", state = "/state" }
+
+# lan, not web: a host port is all this needs, so there is no reverse proxy to
+# configure before you can curl it.
+routes  = { main = { port = "8080", publish = "lan" } }
+
+[run.main.env]
+LABEL            = "${label}"
+STATE_DIR        = "/state"
+PORT             = "8080"
+TICK_SECONDS     = "30"
+PYTHONUNBUFFERED = "1"
+```
+
+The server: `GET /` for a text summary, `GET /state` for JSON.
+
+```python happ_path="app.py"
 #!/usr/bin/env python3
 """
 snapshot-demo — state that visibly moves, so you can watch a restore undo it.
@@ -129,3 +168,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```

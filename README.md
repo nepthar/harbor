@@ -68,7 +68,7 @@ Preqrequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 1. `$ uv tool install "git+https://github.com/nepthar/harbor"`
 2. `$ harbor init`
 3. Configure harbor as requested by init (or just leave all defaults)
-4. `$ harbor fetch github:nepthar/harbor/main/apps/hello-world.happ`
+4. `$ harbor fetch github:nepthar/harbor/main/apps/hello-world.happ.md`
 5. `$ harbor start hello-world`
 6. `$ harbor logs hello-world`
 7. Examine your `apps/` folder to look at how the hello-world example is constructed.

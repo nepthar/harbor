@@ -756,8 +756,8 @@ def test_readme_quickstart_from_repo_apps(harbor_env):
   break if the shipped happs do. `demo-routes` because its `lan_only` route
   keeps the LAN receipt line under test.
   """
-  happ = Path(__file__).parents[1] / "apps" / "demo-routes.happ"
-  assert happ.is_dir(), happ
+  happ = Path(__file__).parents[1] / "apps" / "demo-routes.happ.md"
+  assert happ.is_file(), happ
 
   started = harbor_env.run("start", str(happ))
   assert started.returncode == 0, started.stderr
