@@ -3,7 +3,7 @@ import string
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from harbor.lib.apps import AppID, app_id_from_path
 from harbor.lib.manifest import (
@@ -128,6 +128,7 @@ class AppRunUnit:
   routes: Mapping[str, ExposedRoute]
   labels: Mapping[str, str]
   restart: str
+  compose_extra: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -253,6 +254,7 @@ def _resolve_run_units(
       routes=unit_routes,
       labels=labels,
       restart=run_entry.restart,
+      compose_extra=run_entry.compose,
     )
 
   return run_units

@@ -42,9 +42,9 @@ def test_start_materializes_compose_and_port_state(harbor_env):
   web = db["routes"]["ports-demo"]["web"]
   admin = db["routes"]["ports-demo"]["admin"]
   assert web["host_port"] == 41000
-  assert web["publish"] == "lan"
+  assert web["publish"] == "none"
   assert admin["host_port"] == 9000
-  assert admin["publish"] == "lan"
+  assert admin["publish"] == "none"
 
 
 def test_start_ps_stop_tracks_docker_reality(harbor_env):

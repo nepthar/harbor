@@ -338,6 +338,10 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
 
     service["environment"] = environment
 
+    # Manifest [run.<unit>.compose] passthrough; the manifest validator
+    # guarantees it never shadows a harbor-managed key.
+    service.update(run_unit.compose_extra)
+
     services[str(run_name)] = service
 
   return {

@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from harbor.lib.manifest import ConfigError, parse_manifest_bytes
 from harbor.lib.run_layout import (
   AppRunData,
   AssignedRoute,
@@ -190,6 +193,50 @@ cmd = ["/bin/sh", "-c", "exec sleep 1"]
 
   assert service["command"] == ["/bin/sh", "-c", "exec sleep 1"]
   assert service["environment"]["HAPP_CMD"] == "/bin/sh -c exec sleep 1"
+
+
+def test_compose_passthrough_lands_verbatim_in_the_service(tmp_path):
+  """[run.<unit>.compose] is the escape hatch for anything harbor doesn't model."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "redis:7"
+
+[run.main.compose.healthcheck]
+test = "redis-cli ping || exit 1"
+interval = "10s"
+
+[run.side]
+image = "alpine"
+compose = { healthcheck = { disable = true } }
+""",
+  )
+
+  services = make_compose_dict(stack, run_data(stack))["services"]
+
+  assert services["main"]["healthcheck"] == {
+    "test": "redis-cli ping || exit 1",
+    "interval": "10s",
+  }
+  assert services["side"]["healthcheck"] == {"disable": True}
+
+
+def test_compose_passthrough_may_not_shadow_harbor_managed_keys():
+  manifest = b"""
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+compose = { image = "other", healthcheck = { disable = true } }
+"""
+
+  with pytest.raises(ConfigError, match="harbor manages these service keys"):
+    parse_manifest_bytes(manifest, Path("manifest.toml"))
 
 
 def test_the_app_domain_reaches_both_env_and_labels(tmp_path):

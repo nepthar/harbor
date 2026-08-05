@@ -1,0 +1,38 @@
+## Compose passthrough demo
+## There are lots of options that can be passed through to containers in compose.yml
+## Rather than model the entire space, harbor allows you to just pass through any
+## options that you may want to set. This will create a compose service that looks like:
+##
+## services:
+##   main:
+##     image: redis:7-alpine
+##     ...
+##     mem_limit: 256m
+##     healthcheck:
+##       test: redis-cli ping || exit 1
+##       interval: 10s
+##       timeout: 3s
+##       retries: 3
+##       start_period: 5s
+
+[app]
+version      = "0.1.0"
+display_name = "Compose Passthrough Demo"
+description  = "Uses [run.<unit>.compose] to set compose options harbor doesn't model"
+
+[run.main]
+image   = "redis:7-alpine"
+
+# Everything under [run.<unit>.compose] is copied verbatim into this service's
+# section of the generated compose.yml. Use it for compose options harbor has
+# no dedicated manifest field for; keys harbor manages (image, ports, ...) are
+# rejected at parse time.
+[run.main.compose]
+mem_limit = "256m"
+
+[run.main.compose.healthcheck]
+test         = "redis-cli ping || exit 1"
+interval     = "10s"
+timeout      = "3s"
+retries      = 3 # This remains an integer all the way to compose.yml.
+start_period = "5s"

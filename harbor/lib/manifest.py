@@ -81,8 +81,23 @@ class RouteEntry(BaseModel):
 
   model_config = ConfigDict(extra="forbid")
   port: str
-  publish: Literal["web", "lan"] = "lan"
+  publish: Literal["web", "lan", "none"] = "none"
   scheme: Literal["http", "https"] = "http"
+
+
+# Compose service keys harbor generates itself; [run.<unit>.compose] may not
+# shadow them -- those settings go through the dedicated manifest fields.
+_COMPOSE_MANAGED_KEYS = frozenset({
+  "image",
+  "hostname",
+  "command",
+  "environment",
+  "volumes",
+  "ports",
+  "labels",
+  "restart",
+  "network_mode",
+})
 
 
 class RunEntry(BaseModel):
@@ -94,6 +109,19 @@ class RunEntry(BaseModel):
   env: dict[Identifier, str] = Field(default_factory=dict)
   routes: dict[Identifier, RouteEntry] = Field(default_factory=dict)
   restart: Literal["no", "always", "on-failure", "unless-stopped"] = "unless-stopped"
+  # Escape hatch: copied verbatim into this unit's compose service for
+  # anything harbor doesn't model (healthcheck, ulimits, ...).
+  compose: dict[str, Any] = Field(default_factory=dict)
+
+  @model_validator(mode="after")
+  def check_compose_keys(self) -> Self:
+    clashes = _COMPOSE_MANAGED_KEYS & self.compose.keys()
+    if clashes:
+      raise ValueError(
+        "compose: harbor manages these service keys, set them via the "
+        f"manifest fields instead: {', '.join(sorted(clashes))}"
+      )
+    return self
 
 
 class CommandEntry(BaseModel):

@@ -93,8 +93,6 @@ Harbor is currently in a **pre-beta** stage. I do not yet consider it feature co
 
 ### Harbor CLI:
 * **[in progress] Commands**: `harbor cmd <app> <cmd_name> [... args]` which will run the command <cmd_name> as defined in the manifest. This is nearly complete.
-* **[in progress] Snapshot**: `harbor snapshot <app>` - will stop the app (if running), take a snapshot of all of the app's (data) volumes, configured parameters and secrets, etc, and store it in `$harbor/snapshots/<app_id>`, and then restart the app (if was previously running)
-* **[in progress] Rollback**: Roll back to a previously created snapshot, likely with some kind of "stash a current snapshot pre-rollback" as well.
 * **FQDN fetch & publish**: Allow fetching by reverse-fqdn app_id. ie: `harbor fetch com.my-company.my-app` will look for a well known index at `https://my-app.mycompany.com/.well-known/happ_versions.txt`, parse it, and fetch a bundle hosted there, using the domain's SSL cert as verification. Optionally, it will pop open the `manifest.toml` of the app you're considering to install so you can verify that you want to download it.
 * **Other Route Providers**: Integrate with things like Pangolin, traefik, etc to "publish" routes to. Also, allow for other route publishing domains. ("lan", "vpn", etc). Right now, we only support Nginx Proxy Manager
 * **Cron Jobs**: Add the ability to define and execute commands and cron jobs from within the manifest.toml. Think regular admin tasks, database cleanup, password reset, etc.
