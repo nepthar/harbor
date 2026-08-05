@@ -16,7 +16,7 @@ from harbor.lib.apps import AppID
 from harbor.lib.config import Config
 from harbor.lib.crypto import crypto_from_config
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
-from harbor.lib.happ import HAPP_MD_SUFFIX, HAPP_SUFFIX
+from harbor.lib.happ import scan_happs
 from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
 from harbor.lib.store import AppStore, HarborStore
@@ -191,22 +191,16 @@ class HarborCtx:
 
   def known_bundles(self) -> dict[str, Path]:
     """Map app_id -> catalog entry under apps/.
-    A catalog entry is either:
-     - a directory ending in .happ with a manifest.toml file, or
-     - a single-file bundle ending in .happ.md
 
-    Entries may be real directories/files or symlinks; harbor does not
-    distinguish. This does not attempt to parse or validate the contents;
-    when an id has both flavors, the .happ directory wins.
+    What counts as an entry is `happ.could_be_happ`'s call (via `scan_happs`);
+    entries may be real directories/files or symlinks, and contents are not
+    parsed or validated here. When an id has both flavors, the .happ
+    directory wins (`scan_happs` yields it first).
     """
-    found = {
-      entry.stem: entry
-      for entry in self.config.apps_root.glob(f"*{HAPP_SUFFIX}")
-      if entry.is_dir() and (entry / "manifest.toml").is_file()
-    }
-    for entry in self.config.apps_root.glob(f"*{HAPP_MD_SUFFIX}"):
-      if entry.is_file():
-        found.setdefault(entry.name.removesuffix(HAPP_MD_SUFFIX), entry)
+    apps_root = self.config.apps_root
+    found: dict[str, Path] = {}
+    for app_id, rel_path in scan_happs(apps_root):
+      found.setdefault(app_id, apps_root / rel_path)
     return found
 
   def staged_app_ids(self) -> set[str]:

@@ -25,11 +25,11 @@ from harbor.lib.fetch import (
   MAX_FILES,
   MAX_TOTAL_BYTES,
   GithubTarget,
-  destination_for,
+  download_happ,
+  ensure_destination_for,
   list_tree,
   parse_target,
   resolve_ref,
-  stage_happ,
 )
 from harbor.lib.harbor import HarborCtx
 
@@ -444,24 +444,24 @@ def test_a_forbidden_request_is_not_reported_as_a_rate_limit(github):
     list_tree(a_target(), SHA)
 
 
-# --- staging ---------------------------------------------------------------
+# --- downloading -----------------------------------------------------------
 
 
-def test_staging_writes_the_happ_and_keeps_the_executable_bit(github, harbor_env):
+def test_download_writes_the_happ_and_keeps_the_executable_bit(github, harbor_env):
   github.hello_world()
   github.add("app/go.sh", b"#!/bin/sh\necho hi\n", mode="100755")
 
-  staged = stage_happ(a_target(), harbor_env.root / "apps")
+  fetched = download_happ(a_target(), harbor_env.root / "apps")
 
-  assert staged.path.name == "hello-world.happ"
-  assert (staged.path / "manifest.toml").read_bytes() == MANIFEST
-  assert (staged.path / "app" / "go.sh").stat().st_mode & 0o111
-  assert not (staged.path / "manifest.toml").stat().st_mode & 0o111
-  assert staged.sha == SHA
-  assert staged.files == 2
+  assert fetched.path.name == "hello-world.happ"
+  assert (fetched.path / "manifest.toml").read_bytes() == MANIFEST
+  assert (fetched.path / "app" / "go.sh").stat().st_mode & 0o111
+  assert not (fetched.path / "manifest.toml").stat().st_mode & 0o111
+  assert fetched.sha == SHA
+  assert fetched.files == 2
 
 
-def test_staging_is_cleaned_up_when_a_download_fails(github, harbor_env):
+def test_scratch_dir_is_cleaned_up_when_a_download_fails(github, harbor_env):
   github.hello_world()
   # Listed by the tree but absent from the blob store: a 404 mid-download.
   github.extra_entries.append(
@@ -470,7 +470,7 @@ def test_staging_is_cleaned_up_when_a_download_fails(github, harbor_env):
   apps_root = harbor_env.root / "apps"
 
   with pytest.raises(ValueError, match="Not found"):
-    stage_happ(a_target(), apps_root)
+    download_happ(a_target(), apps_root)
 
   assert list(apps_root.glob(".fetch-*")) == []
 
@@ -483,7 +483,7 @@ def test_a_blob_larger_than_its_listing_is_cut_off(github, harbor_env):
   apps_root = harbor_env.root / "apps"
 
   with pytest.raises(ValueError, match="more than the .* limit"):
-    stage_happ(a_target(), apps_root)
+    download_happ(a_target(), apps_root)
 
   assert list(apps_root.glob(".fetch-*")) == []
 
@@ -492,7 +492,7 @@ def test_an_installed_app_is_never_overwritten(harbor_env):
   apps_root = harbor_env.root / "apps"
 
   with pytest.raises(ValueError, match="already installed"):
-    destination_for("ports-demo", apps_root)
+    ensure_destination_for("ports-demo", apps_root)
 
 
 # --- the command ------------------------------------------------------------
@@ -532,7 +532,7 @@ def test_fetch_asks_before_installing(github, ctx, harbor_env):
   assert (harbor_env.root / "apps" / "hello-world.happ").is_dir()
 
 
-def test_declining_installs_nothing_and_leaves_no_staging(github, ctx, harbor_env):
+def test_declining_installs_nothing_and_leaves_no_scratch_dir(github, ctx, harbor_env):
   github.hello_world()
   conn = FakeConn(answer="n")
 
@@ -632,11 +632,11 @@ def test_parse_target_reads_md_coordinates():
 def test_md_fetch_skips_the_tree_listing(github, harbor_env):
   github.repo_files[MD_REPO_PATH] = MD_HAPP
 
-  staged = stage_happ(a_target(MD_REPO_PATH), harbor_env.root / "apps")
+  fetched = download_happ(a_target(MD_REPO_PATH), harbor_env.root / "apps")
 
-  assert staged.path.name == "hello-md.happ.md"
-  assert staged.path.read_bytes() == MD_HAPP
-  assert staged.files == 1
+  assert fetched.path.name == "hello-md.happ.md"
+  assert fetched.path.read_bytes() == MD_HAPP
+  assert fetched.files == 1
   # One call resolves the ref; the single blob comes off the raw host.
   assert len(github.api_calls) == 1
   assert not any("/git/trees/" in path for path in github.api_calls)
@@ -668,7 +668,7 @@ def test_an_oversized_md_happ_is_cut_off(github, harbor_env):
   apps_root = harbor_env.root / "apps"
 
   with pytest.raises(ValueError, match="more than the .* limit"):
-    stage_happ(a_target(MD_REPO_PATH), apps_root)
+    download_happ(a_target(MD_REPO_PATH), apps_root)
 
   assert list(apps_root.glob(".fetch-*")) == []
 
@@ -701,7 +701,7 @@ def test_a_folder_target_colliding_with_an_md_happ_is_refused(harbor_env):
   (apps_root / "solo.happ.md").write_bytes(MD_HAPP)
 
   with pytest.raises(ValueError, match="already installed"):
-    destination_for("solo", apps_root)
+    ensure_destination_for("solo", apps_root)
 
 
 # --- cli wiring -------------------------------------------------------------

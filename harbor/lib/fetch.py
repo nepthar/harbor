@@ -79,7 +79,7 @@ class GithubTarget:
   `app_id` is determined at parse time from the last path segment, same rule
   as a local happ (see `happ.app_id_from_path`): the bundle name minus its
   flavor suffix. The manifest's `[app].app_id`, if it declares one, is
-  cross-checked later when the staged bundle is parsed.
+  cross-checked later when the downloaded bundle is parsed.
   """
 
   user: str
@@ -123,9 +123,9 @@ class FetchedHapp:
   """A downloaded happ waiting to be committed into `apps/`.
 
   `root` is a throwaway parent directory; `path` is the `<app_id>.happ` folder
-  (or `<app_id>.happ.md` file) inside it. The nesting is what lets the staged
-  bundle be loaded by the ordinary `load_happ()` path, which takes an app's id
-  from its name.
+  (or `<app_id>.happ.md` file) inside it. The nesting is what lets the
+  downloaded bundle be loaded by the ordinary `load_happ()` path, which takes
+  an app's id from its name.
   """
 
   root: Path
@@ -357,10 +357,12 @@ def _download(url: str, dest: Path, limit: int) -> int:
   return written
 
 
-# --- staging and install ---------------------------------------------------
+# --- download and install --------------------------------------------------
 
 
-def destination_for(app_id: AppID, apps_root: Path, suffix: str = HAPP_SUFFIX) -> Path:
+def ensure_destination_for(
+  app_id: AppID, apps_root: Path, suffix: str = HAPP_SUFFIX
+) -> Path:
   """Where `app_id` will install, refusing to disturb anything already there.
 
   Both bundle flavors are checked: one id maps to one catalog entry, whatever
@@ -377,12 +379,12 @@ def destination_for(app_id: AppID, apps_root: Path, suffix: str = HAPP_SUFFIX) -
   return apps_root / f"{app_id}{suffix}"
 
 
-def _staging_root(app_id: AppID, apps_root: Path) -> Path:
+def _download_root(app_id: AppID, apps_root: Path) -> Path:
   """A fresh dotted scratch dir beside the destination.
 
   Dotted so a partially written bundle is never picked up by `known_bundles()`
-  (which globs `*.happ` / `*.happ.md`), and a sibling so the final move is a
-  rename within one filesystem rather than a copy.
+  (whose `scan_happs` only matches flavor-suffixed names), and a sibling so
+  the final move is a rename within one filesystem rather than a copy.
   """
   apps_root.mkdir(parents=True, exist_ok=True)
   root = apps_root / f".fetch-{app_id}-{os.getpid()}"
@@ -403,8 +405,8 @@ def _raw_url(target: GithubTarget, sha: str, *extra: str) -> str:
   )
 
 
-def stage_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
-  """Download a single-file `.happ.md` into a staging directory.
+def _download_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
+  """Download a single-file `.happ.md` into a scratch directory.
 
   One blob, so there is no tree listing to vet: the stream cap enforces the
   markdown size limit, and the caller's parse (`load_happ`) is the content
@@ -412,7 +414,7 @@ def stage_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
   """
   sha = resolve_ref(target)
   app_id = target.app_id
-  root = _staging_root(app_id, apps_root)
+  root = _download_root(app_id, apps_root)
   bundle = root / f"{app_id}{HAPP_MD_SUFFIX}"
   bundle.parent.mkdir(parents=True)
 
@@ -433,16 +435,20 @@ def stage_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
   )
 
 
-def stage_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
-  """Download the happ into a staging directory beside its final home."""
+def download_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
+  """Download the happ into a scratch directory beside its final home.
+
+  Not harbor "staging" -- nothing touches `run/` here. The bundle only lands
+  in the catalog when `commit_happ` moves it into `apps/`.
+  """
   if target.is_single_file:
-    return stage_md_happ(target, apps_root)
+    return _download_md_happ(target, apps_root)
 
   sha = resolve_ref(target)
   entries = list_tree(target, sha)
 
   app_id = target.app_id
-  root = _staging_root(app_id, apps_root)
+  root = _download_root(app_id, apps_root)
   bundle = root / f"{app_id}{HAPP_SUFFIX}"
   bundle.mkdir(parents=True)
 
@@ -470,17 +476,17 @@ def stage_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
   )
 
 
-def commit_happ(staged: FetchedHapp, apps_root: Path) -> Path:
-  """Move a staged happ into `apps/` as a single rename."""
-  dest = destination_for(staged.app_id, apps_root, staged.suffix)
+def commit_happ(fetched: FetchedHapp, apps_root: Path) -> Path:
+  """Move a downloaded happ into `apps/` as a single rename."""
+  dest = ensure_destination_for(fetched.app_id, apps_root, fetched.suffix)
   try:
-    os.replace(staged.path, dest)
+    os.replace(fetched.path, dest)
   except OSError as e:
-    raise ValueError(f"Could not install {staged.app_id} at {dest}: {e}") from e
+    raise ValueError(f"Could not install {fetched.app_id} at {dest}: {e}") from e
   finally:
-    shutil.rmtree(staged.root, ignore_errors=True)
+    shutil.rmtree(fetched.root, ignore_errors=True)
   return dest
 
 
-def discard(staged: FetchedHapp) -> None:
-  shutil.rmtree(staged.root, ignore_errors=True)
+def discard(fetched: FetchedHapp) -> None:
+  shutil.rmtree(fetched.root, ignore_errors=True)

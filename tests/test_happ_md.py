@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from harbor.lib.happ import HappFolder, HappMdFile, load_happ
+from harbor.lib.happ import HappFolder, HappMdFile, load_happ, scan_happs
 
 MD_APP = """\
 # A tiny happ, as one auditable file.
@@ -100,6 +100,33 @@ def test_load_happ_md_rejects_bad_documents(tmp_path: Path, body: str, problem: 
   path = write_md_happ(tmp_path, body=body)
   with pytest.raises(ValueError, match=problem):
     load_happ(path)
+
+
+def test_scan_happs_finds_both_flavors_and_skips_the_rest(tmp_path: Path):
+  write_md_happ(tmp_path)
+  folder = tmp_path / "plain.happ"
+  folder.mkdir()
+  (folder / "manifest.toml").write_text("[app]\nversion = '0.1.0'\n")
+  (tmp_path / "no-manifest.happ").mkdir()
+  (tmp_path / "README.md").write_text("not a happ\n")
+
+  found = dict(scan_happs(tmp_path))
+
+  assert found == {"md-demo": Path("md-demo.happ.md"), "plain": Path("plain.happ")}
+  assert dict(scan_happs(tmp_path / "does-not-exist")) == {}
+
+
+def test_scan_happs_prefers_the_folder_flavor(tmp_path: Path):
+  write_md_happ(tmp_path, app_id="both")
+  folder = tmp_path / "both.happ"
+  folder.mkdir()
+  (folder / "manifest.toml").write_text("[app]\nversion = '0.1.0'\n")
+
+  first = {}
+  for app_id, rel_path in scan_happs(tmp_path):
+    first.setdefault(app_id, rel_path)
+
+  assert first == {"both": Path("both.happ")}
 
 
 def test_stage_md_happ_from_catalog(harbor_env):

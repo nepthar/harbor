@@ -13,7 +13,7 @@ def register(subparsers) -> None:
   parser.add_argument(
     "app",
     metavar="APP",
-    help="App ID (e.g. io.example.myapp or myapp) or path to a .happ directory or .happ.md file",
+    help="App ID (e.g. io.example.myapp or myapp) or path to an app",
   )
   parser.set_defaults(func=run)
 

@@ -15,6 +15,7 @@ import pytest
 
 from harbor.cli.main import run as cli_run
 from harbor.lib.apps import AppID
+from harbor.lib.happ import scan_happs
 from harbor.lib.logtab import LogTab
 from harbor.lib.stack import AppStack, app_stack
 from harbor.lib.store import JsonLogtabStore
@@ -283,8 +284,12 @@ def harbor_env(
   (root / "run").mkdir()
   (root / "volumes").mkdir()
 
-  for happ in FIXTURES.glob("*.happ"):
-    shutil.copytree(happ, apps / happ.name)
+  for _, rel_path in scan_happs(FIXTURES):
+    source = FIXTURES / rel_path
+    if source.is_dir():
+      shutil.copytree(source, apps / source.name)
+    else:
+      shutil.copy2(source, apps / source.name)
 
   LogTab(root / "master.key").write("master_key", "0" * 64)
   config = root / "config.toml"

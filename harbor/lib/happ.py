@@ -148,6 +148,27 @@ def could_be_happ(path: Path) -> bool:
   return False
 
 
+def scan_happs(path: Path) -> Iterator[tuple[str, Path]]:
+  """Every bundle directly under `path`: (app id, path relative to `path`).
+
+  Only entries that pass `could_be_happ` are yielded, in name order -- so a
+  `<id>.happ` folder sorts before a `<id>.happ.md` file, and a caller keeping
+  the first entry per id prefers the folder flavor.
+  """
+  if not path.is_dir():
+    return
+  for entry in sorted(path.iterdir()):
+    if not could_be_happ(entry):
+      continue
+    name = entry.name
+    # Longest suffix first: ".happ" would never match the others anyway, but
+    # the order makes that not worth thinking about.
+    for suffix in (HAPP_TAR_SUFFIX, HAPP_MD_SUFFIX, HAPP_SUFFIX):
+      if name.endswith(suffix):
+        yield name.removesuffix(suffix), entry.relative_to(path)
+        break
+
+
 def load_happ(path: Path) -> HarborApp:
   if not could_be_happ(path):
     raise ValueError(f"{path.name} does not seem to be a valid harbor app.")

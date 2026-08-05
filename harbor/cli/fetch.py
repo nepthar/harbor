@@ -3,10 +3,10 @@ import argparse
 from harbor.lib.fetch import (
   USAGE,
   commit_happ,
-  destination_for,
   discard,
+  download_happ,
+  ensure_destination_for,
   parse_target,
-  stage_happ,
 )
 from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
@@ -38,34 +38,34 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   apps_root = ctx.config.apps_root
 
   # Fail on a name collision before spending any rate limit.
-  destination_for(target.app_id, apps_root, target.suffix)
+  ensure_destination_for(target.app_id, apps_root, target.suffix)
 
-  staged = stage_happ(target, apps_root)
+  fetched = download_happ(target, apps_root)
   committed = False
   try:
     # `load_happ` handles both flavors, and for a .happ.md this parse is also
     # the content validation the folder flow gets from its tree listing.
-    stack = load_happ(staged.path).app_stack()
+    stack = load_happ(fetched.path).app_stack()
     conn.out(capability_receipt(stack, None, ctx, compact=False))
     conn.out(
-      f"\nfrom {target.describe(staged.sha)}"
-      f" ({staged.files} files, {fmt_size(staged.total_bytes)})"
+      f"\nfrom {target.describe(fetched.sha)}"
+      f" ({fetched.files} files, {fmt_size(fetched.total_bytes)})"
     )
 
     if not args.yes and not _confirmed(conn):
       conn.out("Not installed.")
       return
 
-    dest = commit_happ(staged, apps_root)
+    dest = commit_happ(fetched, apps_root)
     committed = True
   finally:
     # Covers every exit that is not a successful install: a declined prompt,
     # an invalid manifest, or a failure part-way through committing.
     if not committed:
-      discard(staged)
+      discard(fetched)
 
-  conn.out(f"Installed {staged.app_id} at {dest}")
-  conn.out(f"Start it with: harbor start {staged.app_id}")
+  conn.out(f"Installed {fetched.app_id} at {dest}")
+  conn.out(f"Start it with: harbor start {fetched.app_id}")
 
 
 def _confirmed(conn) -> bool:

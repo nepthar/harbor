@@ -18,6 +18,7 @@ import yaml
 from harbor.lib import lifecycle
 from harbor.lib.apps import read_app_actions, read_last_app_action
 from harbor.lib.config import VOLUME_KINDS, load_config_file
+from harbor.lib.happ import scan_happs
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.logtab import LogTab
 from harbor.lib.store import HarborStore
@@ -731,17 +732,16 @@ def test_every_shipped_happ_stages(harbor_env):
   it globbed nothing and passed unconditionally.
   """
   apps_dir = Path(__file__).parents[1] / "apps"
-  shipped = sorted([*apps_dir.glob("*.happ"), *apps_dir.glob("*.happ.md")])
+  shipped = list(scan_happs(apps_dir))
   assert shipped, "no happs found in apps/"
 
-  for source in shipped:
+  for app_id, rel_path in shipped:
+    source = apps_dir / rel_path
+    dest = harbor_env.root / "apps" / source.name
     if source.is_dir():
-      shutil.copytree(
-        source, harbor_env.root / "apps" / source.name, dirs_exist_ok=True
-      )
+      shutil.copytree(source, dest, dirs_exist_ok=True)
     else:
-      shutil.copy2(source, harbor_env.root / "apps" / source.name)
-    app_id = source.name.removesuffix(".happ.md").removesuffix(".happ")
+      shutil.copy2(source, dest)
     fresh = HarborCtx(load_config_file(harbor_env.config))
     app = fresh.resolve_app(app_id)
     lifecycle.stage(app, fresh)
