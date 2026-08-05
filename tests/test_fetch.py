@@ -20,6 +20,7 @@ from harbor.cli import fetch as fetch_cli
 from harbor.lib import fetch as fetch_lib
 from harbor.lib.config import load_config_file
 from harbor.lib.fetch import (
+  HAPP_MD_CUTOFF_KB,
   MAX_FILE_BYTES,
   MAX_FILES,
   MAX_TOTAL_BYTES,
@@ -73,6 +74,7 @@ class FakeGithub:
   def __init__(self) -> None:
     self.sha = SHA
     self.blobs: dict[str, bytes] = {}  # keyed by path within the happ dir
+    self.repo_files: dict[str, bytes] = {}  # whole files, keyed by repo path
     self.modes: dict[str, str] = {}
     self.extra_entries: list[dict] = []  # non-blob rows injected into a listing
     self.truncated = False
@@ -181,6 +183,9 @@ def _handler_for(fake: FakeGithub):
     def _raw(self, parts: list[str]) -> None:
       # <user>/<repo>/<sha>/<repo path...>/<entry path...>
       rest = "/".join(parts[3:])
+      whole = fake.repo_files.get(rest)
+      if whole is not None:
+        return self._send(200, whole, "application/octet-stream")
       prefix = f"{REPO_PATH}/"
       if not rest.startswith(prefix):
         return self._error(404)
@@ -286,13 +291,14 @@ def test_a_target_must_name_user_repo_ref_and_path(raw):
 
 
 def test_the_last_segment_must_be_a_happ_directory():
-  with pytest.raises(ValueError, match="does not name a happ directory"):
+  with pytest.raises(ValueError, match="does not name a happ"):
     parse_target("github:nepthar/harbor/main/examples/hello-world")
 
 
-def test_a_bare_suffix_is_not_a_name():
-  with pytest.raises(ValueError, match="does not name a happ directory"):
-    parse_target("github:nepthar/harbor/main/examples/.happ")
+@pytest.mark.parametrize("suffix", [".happ", ".happ.md"])
+def test_a_bare_suffix_is_not_a_name(suffix):
+  with pytest.raises(ValueError, match="does not name a happ"):
+    parse_target(f"github:nepthar/harbor/main/examples/{suffix}")
 
 
 @pytest.mark.parametrize("segment", ["..", ".", ""])
@@ -476,7 +482,7 @@ def test_a_blob_larger_than_its_listing_is_cut_off(github, harbor_env):
   github.sizes["big.bin"] = 1  # the listing lies
   apps_root = harbor_env.root / "apps"
 
-  with pytest.raises(ValueError, match="more than the .* its listing declared"):
+  with pytest.raises(ValueError, match="more than the .* limit"):
     stage_happ(a_target(), apps_root)
 
   assert list(apps_root.glob(".fetch-*")) == []
@@ -591,6 +597,111 @@ def test_a_fetched_happ_is_an_ordinary_happ(github, ctx, harbor_env):
   started = harbor_env.run("start", "hello-world")
   assert started.returncode == 0, started.stderr
   assert (harbor_env.run_root / "hello-world" / "compose.yml").is_file()
+
+
+# --- single-file .happ.md targets -------------------------------------------
+
+MD_REPO_PATH = "examples/hello-md.happ.md"
+MD_TARGET = f"github:nepthar/harbor/main/{MD_REPO_PATH}"
+
+MD_HAPP = b"""\
+# Hello from markdown
+
+```toml happ_path="manifest.toml"
+[app]
+version      = "0.1.0"
+display_name = "Hello md"
+description  = "A single-file happ"
+
+[run.main]
+image   = "alpine:latest"
+cmd     = ["/bin/sh", "-c", "echo hello"]
+restart = "no"
+```
+"""
+
+
+def test_parse_target_reads_md_coordinates():
+  target = parse_target(MD_TARGET)
+  assert target.path == ("examples", "hello-md.happ.md")
+  assert target.is_single_file
+  assert target.suffix == ".happ.md"
+  assert target.app_id == "hello-md"
+
+
+def test_md_fetch_skips_the_tree_listing(github, harbor_env):
+  github.repo_files[MD_REPO_PATH] = MD_HAPP
+
+  staged = stage_happ(a_target(MD_REPO_PATH), harbor_env.root / "apps")
+
+  assert staged.path.name == "hello-md.happ.md"
+  assert staged.path.read_bytes() == MD_HAPP
+  assert staged.files == 1
+  # One call resolves the ref; the single blob comes off the raw host.
+  assert len(github.api_calls) == 1
+  assert not any("/git/trees/" in path for path in github.api_calls)
+
+
+def test_fetch_installs_an_md_happ(github, ctx, harbor_env):
+  github.repo_files[MD_REPO_PATH] = MD_HAPP
+  conn = FakeConn()
+
+  fetch(ctx, conn, MD_TARGET)
+
+  installed = harbor_env.root / "apps" / "hello-md.happ.md"
+  assert installed.read_bytes() == MD_HAPP
+  assert "alpine:latest" in conn.text
+  assert "Installed hello-md" in conn.text
+
+
+def test_a_fetched_md_happ_is_an_ordinary_happ(github, ctx, harbor_env):
+  github.repo_files[MD_REPO_PATH] = MD_HAPP
+  fetch(ctx, FakeConn(), MD_TARGET)
+
+  started = harbor_env.run("start", "hello-md")
+  assert started.returncode == 0, started.stderr
+  assert (harbor_env.run_root / "hello-md" / "compose.yml").is_file()
+
+
+def test_an_oversized_md_happ_is_cut_off(github, harbor_env):
+  github.repo_files[MD_REPO_PATH] = b"x" * (HAPP_MD_CUTOFF_KB * 1024 + 1)
+  apps_root = harbor_env.root / "apps"
+
+  with pytest.raises(ValueError, match="more than the .* limit"):
+    stage_happ(a_target(MD_REPO_PATH), apps_root)
+
+  assert list(apps_root.glob(".fetch-*")) == []
+
+
+def test_an_invalid_md_happ_leaves_nothing_behind(github, ctx, harbor_env):
+  github.repo_files[MD_REPO_PATH] = b"just prose, no file blocks\n"
+  conn = FakeConn()
+
+  with pytest.raises(ValueError, match="does not contain any files"):
+    fetch(ctx, conn, MD_TARGET)
+
+  apps_root = harbor_env.root / "apps"
+  assert not (apps_root / "hello-md.happ.md").exists()
+  assert list(apps_root.glob(".fetch-*")) == []
+
+
+def test_an_md_target_colliding_with_a_folder_happ_is_refused(github, ctx):
+  """One id, one catalog entry -- whatever flavor already owns it."""
+  conn = FakeConn()
+  target = "github:nepthar/harbor/main/examples/ports-demo.happ.md"
+
+  with pytest.raises(ValueError, match="already installed"):
+    fetch(ctx, conn, target)
+
+  assert github.requests == []
+
+
+def test_a_folder_target_colliding_with_an_md_happ_is_refused(harbor_env):
+  apps_root = harbor_env.root / "apps"
+  (apps_root / "solo.happ.md").write_bytes(MD_HAPP)
+
+  with pytest.raises(ValueError, match="already installed"):
+    destination_for("solo", apps_root)
 
 
 # --- cli wiring -------------------------------------------------------------

@@ -8,9 +8,9 @@ from harbor.lib.fetch import (
   parse_target,
   stage_happ,
 )
+from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.receipt import capability_receipt
-from harbor.lib.stack import app_stack
 from harbor.lib.util import fmt_size
 
 
@@ -38,12 +38,14 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   apps_root = ctx.config.apps_root
 
   # Fail on a name collision before spending any rate limit.
-  destination_for(target.app_id, apps_root)
+  destination_for(target.app_id, apps_root, target.suffix)
 
   staged = stage_happ(target, apps_root)
   committed = False
   try:
-    stack = app_stack(staged.path)
+    # `load_happ` handles both flavors, and for a .happ.md this parse is also
+    # the content validation the folder flow gets from its tree listing.
+    stack = load_happ(staged.path).app_stack()
     conn.out(capability_receipt(stack, None, ctx, compact=False))
     conn.out(
       f"\nfrom {target.describe(staged.sha)}"
