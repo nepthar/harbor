@@ -16,6 +16,7 @@ from harbor.lib.apps import AppID
 from harbor.lib.config import Config
 from harbor.lib.crypto import crypto_from_config
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
+from harbor.lib.happ import HAPP_MD_SUFFIX, HAPP_SUFFIX
 from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
 from harbor.lib.store import AppStore, HarborStore
@@ -200,12 +201,12 @@ class HarborCtx:
     """
     found = {
       entry.stem: entry
-      for entry in self.config.apps_root.glob("*.happ")
+      for entry in self.config.apps_root.glob(f"*{HAPP_SUFFIX}")
       if entry.is_dir() and (entry / "manifest.toml").is_file()
     }
-    for entry in self.config.apps_root.glob("*.happ.md"):
+    for entry in self.config.apps_root.glob(f"*{HAPP_MD_SUFFIX}"):
       if entry.is_file():
-        found.setdefault(entry.name.removesuffix(".happ.md"), entry)
+        found.setdefault(entry.name.removesuffix(HAPP_MD_SUFFIX), entry)
     return found
 
   def staged_app_ids(self) -> set[str]:

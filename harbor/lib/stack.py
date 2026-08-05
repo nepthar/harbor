@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self
 
-from harbor.lib.apps import AppID, app_id_from_path
+from harbor.lib.apps import AppID
 from harbor.lib.manifest import (
   Manifest,
   ManifestParseFailure,
@@ -323,15 +323,14 @@ def build_app_stack(manifest: Manifest) -> AppStack:
   )
 
 
-def app_stack(app_path: Path, app_id: AppID | None = None) -> AppStack:
-  """Parse and validate an app bundle into an AppStack.
+def app_stack(app_path: Path, app_id: AppID) -> AppStack:
+  """Parse and validate an extracted app directory into an AppStack.
 
   For an installed app, pass ``run/<id>/happ`` (via ``HarborCtx.app_path``),
-  never the catalog entry under ``apps/``. Pass ``app_id`` when the directory
-  name does not carry the id (the run copy has neither the id nor a ``.happ``
-  suffix).
+  never the catalog entry under ``apps/``. The id is explicit because the
+  directory name does not always carry it (the run copy has neither the id
+  nor a flavor suffix); ``happ.load_happ`` derives it for catalog bundles.
   """
-  app_id = app_id if app_id is not None else app_id_from_path(app_path)
   manifest = app_to_manifest(app_id, app_path)
   match manifest:
     case Manifest():

@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import tempfile
@@ -7,6 +8,12 @@ from pathlib import Path
 
 from harbor.lib.apps import AppID
 from harbor.lib.stack import AppStack, app_stack
+
+# The bundle flavors harbor knows, by filename suffix. These are the one
+# source of truth; everything that names a catalog entry derives from them.
+HAPP_SUFFIX = ".happ"
+HAPP_MD_SUFFIX = ".happ.md"
+HAPP_TAR_SUFFIX = ".happ.tar.gz"
 
 # The point of markdown files is to be frictonless to audit and understand
 # Bigger happs are absolutely supported, but larger than this is an anti-pattern.
@@ -33,7 +40,7 @@ class HarborApp:
 
 
 class HappFolder(HarborApp):
-  SUFFIX = ".happ"
+  SUFFIX = HAPP_SUFFIX
 
   def __init__(self, path: Path, app_id: AppID):
     self.path = path
@@ -57,7 +64,7 @@ class MdFile:
 
 
 class HappMdFile(HarborApp):
-  SUFFIX = ".happ.md"
+  SUFFIX = HAPP_MD_SUFFIX
 
   def __init__(self, path: Path, app_id: AppID, files: dict[str, MdFile]):
     self.path = path
@@ -86,7 +93,7 @@ class HappMdFile(HarborApp):
 
 
 class HappTarFile(HarborApp):
-  SUFFIX = ".happ.tar.gz"
+  SUFFIX = HAPP_TAR_SUFFIX
 
   ## TDOO: Support tar.gz harbor apps.
   def __init__(self, path: Path, app_id: AppID):
@@ -101,6 +108,34 @@ class HappTarFile(HarborApp):
 
   def extract_to(self, target: Path):
     raise NotImplementedError("tar.gz harbor apps are not supported yet")
+
+
+def app_id_from_path(path: Path) -> AppID:
+  """The app id a bundle path carries: `<id>.happ` dir or `<id>.happ.md` file."""
+  if path.name.endswith(HAPP_MD_SUFFIX):
+    if not path.is_file():
+      raise ValueError(f"{path} is not a file")
+    return AppID(path.name.removesuffix(HAPP_MD_SUFFIX))
+  if not path.is_dir():
+    raise ValueError(f"{path} is not a directory")
+  if path.suffix != HAPP_SUFFIX:
+    raise ValueError(f"{path} is not a happ bundle: directory name must end in .happ")
+  if not (path / "manifest.toml").is_file():
+    raise ValueError(f"{path} is not a happ bundle: missing manifest.toml")
+  return AppID(path.stem)
+
+
+def is_pathlike(raw: str) -> bool:
+  """Decide whether an APP argument names a filesystem path vs an app id.
+
+  A valid happ path ends in a flavor suffix, so a bare name without one can
+  never be a path.
+  """
+  return (
+    os.sep in raw
+    or raw.startswith(("~", "."))
+    or raw.endswith((HAPP_SUFFIX, HAPP_MD_SUFFIX))
+  )
 
 
 def could_be_happ(path: Path) -> bool:

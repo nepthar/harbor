@@ -34,7 +34,7 @@ from urllib.parse import quote
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.happ import HAPP_MD_CUTOFF_KB
+from harbor.lib.happ import HAPP_MD_CUTOFF_KB, HAPP_MD_SUFFIX, HAPP_SUFFIX
 from harbor.lib.util import fmt_size, validate_github_segment
 
 KB = 1024
@@ -45,8 +45,6 @@ RAW_ROOT = "https://raw.githubusercontent.com"
 API_VERSION = "2022-11-28"
 
 GITHUB_PREFIX = "github:"
-HAPP_SUFFIX = ".happ"
-HAPP_MD_SUFFIX = ".happ.md"
 
 MAX_FILES = 64
 MAX_FILE_BYTES = 2 * MB
@@ -76,13 +74,20 @@ USAGE = (
 
 @dataclass(frozen=True)
 class GithubTarget:
-  """A happ inside a GitHub repository: a `.happ` directory or `.happ.md` file."""
+  """A happ inside a GitHub repository: a `.happ` directory or `.happ.md` file.
+
+  `app_id` is determined at parse time from the last path segment, same rule
+  as a local happ (see `happ.app_id_from_path`): the bundle name minus its
+  flavor suffix. The manifest's `[app].app_id`, if it declares one, is
+  cross-checked later when the staged bundle is parsed.
+  """
 
   user: str
   repo: str
   ref: str
   path: tuple[str, ...]  # segments from the repo root to the happ
   display: str  # what the user typed, for messages
+  app_id: AppID
 
   @property
   def suffix(self) -> str:
@@ -91,16 +96,6 @@ class GithubTarget:
   @property
   def is_single_file(self) -> bool:
     return self.suffix == HAPP_MD_SUFFIX
-
-  @property
-  def app_id(self) -> AppID:
-    """The id this happ will install as, taken from the last segment's name.
-
-    Same rule as a local happ, where the id is the bundle name minus its
-    flavor suffix (see `app_id_from_path`). The manifest's `[app].app_id`, if
-    it declares one, is cross-checked later when the staged bundle is parsed.
-    """
-    return AppID(self.path[-1][: -len(self.suffix)])
 
   @property
   def repo_path(self) -> str:
@@ -128,8 +123,9 @@ class FetchedHapp:
   """A downloaded happ waiting to be committed into `apps/`.
 
   `root` is a throwaway parent directory; `path` is the `<app_id>.happ` folder
-  inside it. The nesting is what lets the staged tree be loaded by the ordinary
-  `app_stack()` path, which takes an app's id from its directory name.
+  (or `<app_id>.happ.md` file) inside it. The nesting is what lets the staged
+  bundle be loaded by the ordinary `load_happ()` path, which takes an app's id
+  from its name.
   """
 
   root: Path
@@ -165,15 +161,25 @@ def parse_target(raw: str) -> GithubTarget:
     _check_segment(segment, raw)
 
   last = path[-1]
-  bare = last in (HAPP_SUFFIX, HAPP_MD_SUFFIX)
-  if not last.endswith((HAPP_SUFFIX, HAPP_MD_SUFFIX)) or bare:
+  if last.endswith(HAPP_MD_SUFFIX):
+    name = last.removesuffix(HAPP_MD_SUFFIX)
+  else:
+    name = last.removesuffix(HAPP_SUFFIX)
+  if not name or name == last:
     raise ValueError(
       f"{raw} does not name a happ: the last path segment must be "
       f"<name>{HAPP_SUFFIX} or <name>{HAPP_MD_SUFFIX}, and harbor takes the "
       f"app id from it."
     )
 
-  return GithubTarget(user=user, repo=repo, ref=ref, path=tuple(path), display=raw)
+  try:
+    app_id = AppID(name)
+  except ValueError as e:
+    raise ValueError(f"{raw} does not name a valid app id: {e}") from e
+
+  return GithubTarget(
+    user=user, repo=repo, ref=ref, path=tuple(path), display=raw, app_id=app_id
+  )
 
 
 def _check_segment(segment: str, context: str) -> None:

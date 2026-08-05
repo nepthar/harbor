@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from harbor.lib.apps import AppID, app_id_from_path, is_pathlike, record_app_action
-from harbor.lib.happ import load_happ
+from harbor.lib.apps import AppID, record_app_action
+from harbor.lib.happ import app_id_from_path, is_pathlike, load_happ
 from harbor.lib.harbor import HarborCtx, StagedAppPaths
 from harbor.lib.lifecycle._common import logger, managed_volume_dirs
 from harbor.lib.logtab import LogTab
