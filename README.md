@@ -3,7 +3,7 @@
 Harbor is an opinionated runtime and management layer that makes container stacks (ie. docker compose) easy to distribute, inspect, and manage. It was designed for folks who want to spend their time *using* their selfhosted apps instead of *sys-administering* them.
 
 ## How does it work? 
-Harbor runs and manages "happs", that 1) define a `manifest.toml` which fully describe the container stack and 2) optionally contain any helper scripts or files. Here's a simplified example:
+Harbor runs and manages "happs", that 1) define a `manifest.toml` which fully describe the container stack and 2) optionally contain any helper scripts or files. A happ is either a `<app_id>.happ` folder or, for small apps, a single `<app_id>.happ.md` markdown file with the same files embedded in code blocks (see [demo-markdown](apps/demo-markdown.happ.md)). Here's a simplified example:
 
 unifi-network-application.happ/manifest.toml:
 ```toml
@@ -74,7 +74,7 @@ Preqrequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 7. Examine your `apps/` folder to look at how the hello-world example is constructed.
 
 ## Creating your own apps
-You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Harbor will then recognize it under `<your_app_id>`. The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
+You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Small apps can instead be a single `$harbor/apps/<your_app_id>.happ.md` markdown file, which keeps the whole app auditable at a glance. Harbor will then recognize it under `<your_app_id>`. The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
 
 
 ## Audience
