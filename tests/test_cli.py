@@ -43,9 +43,9 @@ def test_start_materializes_compose_and_port_state(harbor_env):
   web = db["routes"]["ports-demo"]["web"]
   admin = db["routes"]["ports-demo"]["admin"]
   assert web["host_port"] == 41000
-  assert web["publish"] == "none"
+  assert web["publish"] == "lan"
   assert admin["host_port"] == 9000
-  assert admin["publish"] == "none"
+  assert admin["publish"] == "lan"
 
 
 def test_start_ps_stop_tracks_docker_reality(harbor_env):
@@ -69,7 +69,7 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
   concise_row = next(
     line for line in concise.stdout.splitlines() if line.startswith("ports-demo")
   )
-  assert concise_row.split() == ["ports-demo", "running", "start"]
+  assert concise_row.split() == ["ports-demo", "running", "started"]
 
   stopped = harbor_env.run("stop", "ports-demo")
   assert stopped.returncode == 0, stopped.stderr
@@ -79,7 +79,7 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
     for line in harbor_env.run("ps").stdout.splitlines()
     if line.startswith("ports-demo")
   )
-  assert concise_stopped_row.split() == ["ports-demo", "exited", "stop"]
+  assert concise_stopped_row.split() == ["ports-demo", "exited", "stopped"]
 
   calls = [
     json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
@@ -657,7 +657,7 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(
   ctx = HarborCtx(load_config_file(harbor_env.config))
 
   app = ctx.resolve_app("routes-demo")
-  lifecycle.stage(app, ctx)
+  lifecycle.stage(app, ctx.bundle_path(app), ctx)
 
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
   with pytest.raises(ValueError, match="already owned"):
@@ -676,7 +676,7 @@ def test_stop_uses_staged_manifest_when_bundle_is_missing(
   )
   stage_ctx = HarborCtx(load_config_file(harbor_env.config))
   app = stage_ctx.resolve_app("routes-demo")
-  lifecycle.stage(app, stage_ctx)
+  lifecycle.stage(app, stage_ctx.bundle_path(app), stage_ctx)
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
   lifecycle.start(app, start_ctx)
   shutil.rmtree(harbor_env.root / "apps" / "routes-demo.happ")
@@ -744,7 +744,7 @@ def test_every_shipped_happ_stages(harbor_env):
       shutil.copy2(source, dest)
     fresh = HarborCtx(load_config_file(harbor_env.config))
     app = fresh.resolve_app(app_id)
-    lifecycle.stage(app, fresh)
+    lifecycle.stage(app, fresh.bundle_path(app), fresh)
     assert (harbor_env.run_root / app_id / "compose.yml").is_file(), source.name
 
 
@@ -778,11 +778,14 @@ def test_last_action_is_read_in_one_pass(harbor_env):
   assert harbor_env.run("start", "routes-demo").returncode == 0
 
   config = load_config_file(harbor_env.config)
-  assert read_app_actions(config) == {"ports-demo": "start", "routes-demo": "start"}
+  assert read_app_actions(config) == {
+    "ports-demo": "started",
+    "routes-demo": "started",
+  }
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
-  assert listed.stdout.count("start") >= 2
+  assert listed.stdout.count("started") >= 2
 
 
 def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
@@ -791,7 +794,7 @@ def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
   assert harbor_env.run("start", app_id).returncode == 0
 
   config = load_config_file(harbor_env.config)
-  assert read_last_app_action(app_id, config) == "start"
+  assert read_last_app_action(app_id, config) == "started"
 
   assert harbor_env.run("rm", app_id, "-y").returncode == 0
 

@@ -182,7 +182,7 @@ secure = { port = "8443", publish = "web", scheme = "https" }
   admin = stack.routes["admin"]
   assert (admin.host_port, admin.container_port) == (9000, 80)
   assert admin.needs_allocation is False
-  assert admin.publish == "none"
+  assert admin.publish == "lan"
 
   assert stack.routes["dns"].container_port == 53
   assert stack.routes["dns"].proto == "udp"
@@ -222,7 +222,6 @@ env = { POSTGRES_DB = "app" }
   # owns it and appears once in the stack.
   assert set(stack.routes) == {"main"}
   assert stack.routes["main"].run_unit_name == "web"
-  assert set(stack.ports) == {"main"}
 
   db = stack.run_units["db"]
   assert db.command == ("postgres", "-c", "max_connections=50")

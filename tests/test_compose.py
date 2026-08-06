@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from harbor.lib.manifest import ConfigError, parse_manifest_bytes
+from harbor.lib.apps import AppID
+from harbor.lib.manifest import ConfigError, parse_manifest
 from harbor.lib.run_layout import (
   AppRunData,
   AssignedRoute,
@@ -236,7 +237,7 @@ compose = { image = "other", healthcheck = { disable = true } }
 """
 
   with pytest.raises(ConfigError, match="harbor manages these service keys"):
-    parse_manifest_bytes(manifest, Path("manifest.toml"))
+    parse_manifest(manifest, AppID("demo"), Path("manifest.toml"))
 
 
 def test_the_app_domain_reaches_both_env_and_labels(tmp_path):

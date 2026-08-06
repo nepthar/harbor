@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.docker import DockerError, docker_run_command
 from harbor.lib.harbor import HarborCtx
@@ -10,10 +12,9 @@ from harbor.lib.lifecycle.routes import (
   unregister_app_routes,
 )
 from harbor.lib.lifecycle.stage import StageSuccess, stage
-from harbor.lib.manifest import ConfigError
 from harbor.lib.routes import RouteProviderError
 from harbor.lib.run_layout import ConfigIssue, load_run_data
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack
 
 
 def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
@@ -37,16 +38,20 @@ def start(
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
+  bundle: Path | None = None,
 ) -> StageSuccess:
   """Stage if needed, then bring the app up and publish its web routes.
 
   `--set` and `--bind` re-stage, because config and binds are inputs to the
-  volume links and compose file that staging generates.
+  volume links and compose file that staging generates. `bundle` names what
+  to stage; without one the id has to resolve to exactly one bundle, and only
+  if there is anything to stage at all -- an app already installed runs its
+  own copy, whatever became of the bundle it came from.
   """
   if sets or binds or not ctx.is_staged(app):
-    result = stage(app, ctx, sets=sets, binds=binds)
+    result = stage(app, bundle or ctx.bundle_path(app), ctx, sets=sets, binds=binds)
   else:
-    stack = app_stack(ctx.app_path(app), app)
+    stack = AppStack.from_file(ctx.manifest_path(app), app)
     result = StageSuccess(stack, load_run_data(stack, ctx))
 
   stack, run_data = result.stack, result.run_data
@@ -83,7 +88,7 @@ def start(
       f"{e}. Containers may still be running; run `harbor stop {app}` to stop them."
     ) from e
 
-  record_app_action("start", app, ctx.config)
+  record_app_action("started", app, ctx.config)
   return result
 
 
@@ -97,9 +102,9 @@ def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
   that will not parse falls back to no env rather than blocking teardown.
   """
   try:
-    stack = app_stack(ctx.app_path(app_id), app_id)
+    stack = AppStack.from_file(ctx.manifest_path(app_id), app_id)
     return load_run_data(stack, ctx).config_env()
-  except (ValueError, ConfigError) as e:
+  except ValueError as e:
     logger.debug("no config env for %s: %s", app_id, e)
     return {}
 
@@ -140,7 +145,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
       check=True,
       env=_compose_env(app_id, ctx),
     )
-    record_app_action("stop", app_id, ctx.config)
+    record_app_action("stopped", app_id, ctx.config)
   except DockerError as e:
     record_app_action("stop-failed", app_id, ctx.config)
     raise ValueError(str(e)) from e

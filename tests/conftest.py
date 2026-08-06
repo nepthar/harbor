@@ -17,7 +17,7 @@ from harbor.cli.main import run as cli_run
 from harbor.lib.apps import AppID
 from harbor.lib.happ import scan_happs
 from harbor.lib.logtab import LogTab
-from harbor.lib.stack import AppStack, app_stack
+from harbor.lib.stack import AppStack
 from harbor.lib.store import JsonLogtabStore
 
 # The contention tests wait this out in full; 5s each is more than the rest of
@@ -30,7 +30,7 @@ def stack_of(tmp_path: Path, manifest: str, app_id: str = "demo") -> AppStack:
   happ = tmp_path / f"{app_id}.happ"
   happ.mkdir()
   (happ / "manifest.toml").write_text(manifest)
-  return app_stack(happ, AppID(app_id))
+  return AppStack.from_file(happ / "manifest.toml", AppID(app_id))
 
 
 # `pytester` runs a throwaway pytest inside a test, which is how

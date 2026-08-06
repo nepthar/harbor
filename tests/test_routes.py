@@ -2,6 +2,7 @@
 route-name -> subdomain mapping (reserved "main" = the bare app subdomain).
 """
 
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -10,7 +11,7 @@ import pytest
 
 from harbor.lib.apps import AppID
 from harbor.lib.lifecycle.routes import preflight_app_routes, web_routes
-from harbor.lib.manifest import ConfigError, _validate_routes, parse_manifest_bytes
+from harbor.lib.manifest import ConfigError, Manifest, _validate_routes
 from harbor.lib.routes import (
   NginxProxyManagerRouteProvider,
   NoopRouteProvider,
@@ -18,17 +19,16 @@ from harbor.lib.routes import (
   get_route_provider,
 )
 from harbor.lib.run_layout import AppRunData, AssignedRoute
-from harbor.lib.stack import build_app_stack
+from harbor.lib.stack import AppStack
 
 
-def _manifest(body: str, app_id: str = "io.test.example"):
-  manifest = parse_manifest_bytes(body.encode(), Path("manifest.toml"))
-  manifest._app_handle = AppID(app_id)
-  return manifest
+def _model(body: str) -> Manifest:
+  """Schema-parsed only: what the `_validate_*` checks take as input."""
+  return Manifest.model_validate(tomllib.loads(body))
 
 
-def _stack(body: str):
-  return build_app_stack(_manifest(body))
+def _stack(body: str, app_id: str = "io.test.example"):
+  return AppStack.from_bytes(body.encode(), AppID(app_id), Path("manifest.toml"))
 
 
 ROUTES = """
@@ -49,9 +49,9 @@ metrics = { port = "9090:9091/udp", publish = "lan" }
 
 
 # ── resolution ────────────────────────────────────────────────────────────
-def test_publish_defaults_to_none():
+def test_publish_defaults_to_lan():
   stack = _stack(ROUTES)
-  assert stack.routes["default"].publish == "none"
+  assert stack.routes["default"].publish == "lan"
 
 
 def test_scheme_defaults_to_http():
@@ -127,6 +127,7 @@ def test_routes_across_multiple_run_units():
 [app]
 version = "0.1.0"
 subdomain = "photos"
+main = "web"
 
 [run.web]
 image = "alpine:latest"
@@ -153,7 +154,7 @@ def test_web_routes_filters_out_lan():
 # ── validation ────────────────────────────────────────────────────────────
 def test_web_route_requires_app_subdomain():
   errors = _validate_routes(
-    _manifest(
+    _model(
       """
 [app]
 version = "0.1.0"
@@ -170,7 +171,7 @@ main = { port = "8080", publish = "web" }
 
 def test_lan_route_does_not_require_subdomain():
   errors = _validate_routes(
-    _manifest(
+    _model(
       """
 [app]
 version = "0.1.0"
@@ -187,7 +188,7 @@ admin = { port = "8082", publish = "lan" }
 
 def test_duplicate_route_name_across_units_is_rejected():
   errors = _validate_routes(
-    _manifest(
+    _model(
       """
 [app]
 version = "0.1.0"
@@ -210,7 +211,7 @@ dash = { port = "8081", publish = "lan" }
 
 def test_host_network_mode_forbids_routes():
   errors = _validate_routes(
-    _manifest(
+    _model(
       """
 [app]
 version = "0.1.0"
@@ -228,7 +229,7 @@ admin = { port = "8082", publish = "lan" }
 
 # ── schema ────────────────────────────────────────────────────────────────
 def test_invalid_port_spec_rejected():
-  with pytest.raises(ValueError, match="Invalid port specification"):
+  with pytest.raises(ConfigError, match="is not a port number"):
     _stack(
       """
 [app]
@@ -244,7 +245,7 @@ bad = { port = "not-a-port", publish = "lan" }
 
 def test_unknown_publish_value_rejected():
   with pytest.raises(ConfigError):
-    _manifest(
+    _stack(
       """
 [app]
 version = "0.1.0"
@@ -259,7 +260,7 @@ bad = { port = "8080", publish = "internet" }
 
 def test_unknown_scheme_value_rejected():
   with pytest.raises(ConfigError):
-    _manifest(
+    _stack(
       """
 [app]
 version = "0.1.0"
@@ -275,7 +276,7 @@ bad = { port = "8080", publish = "web", scheme = "ftp" }
 def test_removed_top_level_routes_section_rejected():
   # [routes] is gone; it must no longer be accepted at the top level.
   with pytest.raises(ConfigError):
-    _manifest(
+    _stack(
       """
 [app]
 version = "0.1.0"
@@ -474,9 +475,8 @@ def _run_data(stack, host_ports: dict[str, int] | None = None) -> AppRunData:
 
 
 def _web_stack(app_id: str, subdomain: str):
-  return build_app_stack(
-    _manifest(
-      f"""
+  return _stack(
+    f"""
 [app]
 version = "0.1.0"
 subdomain = "{subdomain}"
@@ -486,8 +486,7 @@ image = "alpine:latest"
 [run.main.routes]
 main = {{ port = "8080", publish = "web" }}
 """,
-      app_id,
-    )
+    app_id,
   )
 
 

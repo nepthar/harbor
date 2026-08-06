@@ -4,7 +4,7 @@ from harbor.lib.apps import read_last_app_action
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.receipt import status_receipt
 from harbor.lib.run_layout import load_run_data
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack
 
 
 def register(subparsers) -> None:
@@ -18,7 +18,7 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app_id)
   source = ctx.app_path(app)
-  stack = app_stack(source, app)
+  stack = AppStack.from_file(ctx.manifest_path(app), app)
   run_data = load_run_data(stack, ctx)
   state = ctx.run_state(app)
   total = len(state.containers)

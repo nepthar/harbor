@@ -5,7 +5,7 @@ from tabulate import tabulate
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.observations import AppObservation
 from harbor.lib.run_layout import load_run_data
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack
 
 
 def register(subparsers) -> None:
@@ -51,7 +51,9 @@ def _status(observation: AppObservation, ctx: HarborCtx) -> str:
     return "broken" if observation.run_dir_exists else "orphaned"
 
   try:
-    stack = app_stack(ctx.app_path(observation.app_id), observation.app_id)
+    stack = AppStack.from_file(
+      ctx.manifest_path(observation.app_id), observation.app_id
+    )
   except ValueError:
     # A missing or unparseable staged manifest -- the app could not be loaded
     # at all, which is not the same as it needing configuration.

@@ -37,8 +37,17 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   target = parse_target(args.target)
   apps_root = ctx.config.apps_root
 
-  # Fail on a name collision before spending any rate limit.
+  # Fail on a name collision before spending any rate limit. Other app
+  # sources count: installing into apps/ over an id one of them already
+  # carries would leave that id resolving to two places.
   ensure_destination_for(target.app_id, apps_root, target.suffix)
+  elsewhere = ctx.app_catalog().get(str(target.app_id), ())
+  if elsewhere:
+    raise ValueError(
+      f"{target.app_id} is already in the {elsewhere[0].source} app source at "
+      f"{elsewhere[0].path}.\nRemove it first if you mean to replace it; "
+      f"harbor fetch never overwrites an installed happ."
+    )
 
   fetched = download_happ(target, apps_root)
   committed = False
