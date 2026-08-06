@@ -18,7 +18,7 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app_id)
   source = ctx.app_path(app)
-  stack = AppStack.from_path(source, app)
+  stack = AppStack.from_file(ctx.manifest_path(app), app)
   run_data = load_run_data(stack, ctx)
   state = ctx.run_state(app)
   total = len(state.containers)

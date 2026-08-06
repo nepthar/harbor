@@ -51,7 +51,7 @@ def start(
   if sets or binds or not ctx.is_staged(app):
     result = stage(app, bundle or ctx.bundle_path(app), ctx, sets=sets, binds=binds)
   else:
-    stack = AppStack.from_path(ctx.app_path(app), app)
+    stack = AppStack.from_file(ctx.manifest_path(app), app)
     result = StageSuccess(stack, load_run_data(stack, ctx))
 
   stack, run_data = result.stack, result.run_data
@@ -102,7 +102,7 @@ def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
   that will not parse falls back to no env rather than blocking teardown.
   """
   try:
-    stack = AppStack.from_path(ctx.app_path(app_id), app_id)
+    stack = AppStack.from_file(ctx.manifest_path(app_id), app_id)
     return load_run_data(stack, ctx).config_env()
   except ValueError as e:
     logger.debug("no config env for %s: %s", app_id, e)

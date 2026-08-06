@@ -51,7 +51,9 @@ def _status(observation: AppObservation, ctx: HarborCtx) -> str:
     return "broken" if observation.run_dir_exists else "orphaned"
 
   try:
-    stack = AppStack.from_path(ctx.app_path(observation.app_id), observation.app_id)
+    stack = AppStack.from_file(
+      ctx.manifest_path(observation.app_id), observation.app_id
+    )
   except ValueError:
     # A missing or unparseable staged manifest -- the app could not be loaded
     # at all, which is not the same as it needing configuration.

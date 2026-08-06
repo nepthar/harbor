@@ -337,7 +337,7 @@ def stage(
   run_path.mkdir(parents=True, exist_ok=True)
   try:
     incoming = _stage_incoming(bundle, run_path)
-    stack = AppStack.from_path(incoming, app)
+    stack = AppStack.from_file(incoming / "manifest.toml", app)
   except Exception:
     _discard_incoming(run_path)
     raise

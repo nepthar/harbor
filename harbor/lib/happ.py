@@ -49,7 +49,7 @@ class HappFolder(HarborApp):
     return self.path.rglob("*")
 
   def app_stack(self) -> AppStack:
-    return AppStack.from_path(self.path, self.app_id)
+    return AppStack.from_file(self.path / "manifest.toml", self.app_id)
 
   def extract_to(self, target: Path):
     target.mkdir(parents=True, exist_ok=True)
@@ -65,6 +65,8 @@ class MdFile:
 
 @dataclass(frozen=True)
 class MdFileList:
+  """What `extract_md_files` saw -- the files plus how the scan ended."""
+
   files: list[MdFile]
   unclosed_block: bool
 
@@ -72,23 +74,23 @@ class MdFileList:
 class HappMdFile(HarborApp):
   SUFFIX = HAPP_MD_SUFFIX
 
-  def __init__(self, path: Path, app_id: AppID, files: MdFileList):
+  def __init__(self, path: Path, app_id: AppID, files: list[MdFile]):
     self.path = path
     self.app_id = app_id
     self._files = files
 
   def files(self) -> Iterator[Path]:
-    return (Path(file.path) for file in self._files.files)
+    return (Path(file.path) for file in self._files)
 
   def app_stack(self) -> AppStack:
-    for md_file in self._files.files:
+    for md_file in self._files:
       if md_file.path == "manifest.toml":
         return AppStack.from_bytes(md_file.content.encode(), self.app_id, self.path)
     raise ValueError(f"{self.path.name} is missing a manifest.toml file")
 
   def extract_to(self, target: Path):
     target.mkdir(parents=True, exist_ok=True)
-    for md_file in self._files.files:
+    for md_file in self._files:
       dest = target / md_file.path
       dest.parent.mkdir(parents=True, exist_ok=True)
       dest.write_text(md_file.content + "\n")
@@ -275,7 +277,7 @@ def load_happ_md(path: Path, app_id: AppID) -> HappMdFile:
   if problems:
     raise ValueError(f"{path.name} invalid happ.md file: {', '.join(problems)}")
 
-  return HappMdFile(path, app_id, files)
+  return HappMdFile(path, app_id, files.files)
 
 
 def load_happ_tar_gz(path: Path, app_id: AppID) -> HappTarFile:

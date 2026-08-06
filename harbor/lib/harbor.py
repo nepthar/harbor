@@ -179,6 +179,10 @@ class HarborCtx:
       raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
     return paths.happ_path
 
+  def manifest_path(self, app: AppID | str) -> Path:
+    """The manifest of the happ harbor is actually running; see `app_path`."""
+    return self.app_path(app) / "manifest.toml"
+
   def bundle_path(self, app: AppID | str) -> Path:
     """The catalog entry `stage` copies from. Exactly one, or an error.
 

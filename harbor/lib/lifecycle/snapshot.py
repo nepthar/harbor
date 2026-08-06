@@ -95,7 +95,7 @@ def snapshot(
 
   try:
     included, excluded = _volume_names(paths.run_path / "volumes")
-    app_version = AppStack.from_path(paths.happ_path, app).version
+    app_version = AppStack.from_file(paths.manifest_path, app).version
     (staging / "snapshot.toml").write_text(
       "\n".join(
         [

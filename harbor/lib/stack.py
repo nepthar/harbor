@@ -125,15 +125,15 @@ class AppStack:
     return _build(parse_manifest(data, app_id, source), app_id)
 
   @classmethod
-  def from_path(cls, app_path: Path, app_id: AppID) -> "AppStack":
-    """Build from an extracted app directory (the one holding manifest.toml).
+  def from_file(cls, manifest_path: Path, app_id: AppID) -> "AppStack":
+    """Build from a manifest.toml on disk.
 
-    For an installed app, pass ``run/<id>/happ`` (via ``HarborCtx.app_path``),
-    never the catalog entry under ``apps/``. The id is explicit because the
-    directory name does not always carry it (the run copy has neither the id
-    nor a flavor suffix); ``happ.load_happ`` derives it for catalog bundles.
+    For an installed app that is ``run/<id>/happ/manifest.toml`` (via
+    ``HarborCtx.manifest_path``), never the catalog entry under ``apps/``. The
+    id is explicit because the path does not always carry it (the run copy has
+    neither the id nor a flavor suffix); ``happ.load_happ`` derives it for
+    catalog bundles.
     """
-    manifest_path = app_path / "manifest.toml"
     try:
       data = manifest_path.read_bytes()
     except OSError as e:

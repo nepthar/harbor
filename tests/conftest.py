@@ -30,7 +30,7 @@ def stack_of(tmp_path: Path, manifest: str, app_id: str = "demo") -> AppStack:
   happ = tmp_path / f"{app_id}.happ"
   happ.mkdir()
   (happ / "manifest.toml").write_text(manifest)
-  return AppStack.from_path(happ, AppID(app_id))
+  return AppStack.from_file(happ / "manifest.toml", AppID(app_id))
 
 
 # `pytester` runs a throwaway pytest inside a test, which is how

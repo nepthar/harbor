@@ -218,7 +218,7 @@ def restore(
 
   # Parse the snapshot's happ before touching anything; a corrupt snapshot
   # fails here with the current state intact.
-  stack = AppStack.from_path(plan.snapshot_path / "happ", app)
+  stack = AppStack.from_file(plan.snapshot_path / "happ" / "manifest.toml", app)
 
   take_snapshot = snapshot_first and plan.run_path.exists()
   if take_snapshot and plan.is_latest_pre_restore:
