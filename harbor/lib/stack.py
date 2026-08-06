@@ -10,6 +10,7 @@ from harbor.lib.manifest import (
   Manifest,
   ManifestParseFailure,
   app_to_manifest,
+  bytes_to_manifest,
 )
 
 logger = logging.getLogger("harbor.stack")
@@ -323,6 +324,18 @@ def build_app_stack(manifest: Manifest) -> AppStack:
   )
 
 
+def app_stack_from_bytes(data: bytes, app_id: AppID, source_path: Path) -> AppStack:
+  """Parse and validate raw manifest.toml bytes into an AppStack."""
+  match bytes_to_manifest(app_id, data, source_path):
+    case Manifest() as manifest:
+      return build_app_stack(manifest)
+    case ManifestParseFailure(errors):
+      detail = "\n".join(errors)
+      raise ValueError(
+        f"App {source_path} does not contain a valid manifest:\n{detail}"
+      )
+
+
 def app_stack(app_path: Path, app_id: AppID) -> AppStack:
   """Parse and validate an extracted app directory into an AppStack.
 
@@ -331,9 +344,8 @@ def app_stack(app_path: Path, app_id: AppID) -> AppStack:
   directory name does not always carry it (the run copy has neither the id
   nor a flavor suffix); ``happ.load_happ`` derives it for catalog bundles.
   """
-  manifest = app_to_manifest(app_id, app_path)
-  match manifest:
-    case Manifest():
+  match app_to_manifest(app_id, app_path):
+    case Manifest() as manifest:
       return build_app_stack(manifest)
     case ManifestParseFailure(errors):
       detail = "\n".join(errors)

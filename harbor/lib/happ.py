@@ -1,13 +1,12 @@
 import os
 import re
 import shutil
-import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID
-from harbor.lib.stack import AppStack, app_stack
+from harbor.lib.stack import AppStack, app_stack, app_stack_from_bytes
 
 # The bundle flavors harbor knows, by filename suffix. These are the one
 # source of truth; everything that names a catalog entry derives from them.
@@ -63,10 +62,12 @@ class MdFile:
   executable: bool
   content: str
 
+
 @dataclass(frozen=True)
 class MdFileList:
   files: list[MdFile]
   unclosed_block: bool
+
 
 class HappMdFile(HarborApp):
   SUFFIX = HAPP_MD_SUFFIX
@@ -80,12 +81,10 @@ class HappMdFile(HarborApp):
     return (Path(file.path) for file in self._files.files)
 
   def app_stack(self) -> AppStack:
-    # The manifest parser reads from disk, so materialize the bundle in a
-    # scratch dir; a .happ.md is small by construction (HAPP_MD_CUTOFF_KB).
-    with tempfile.TemporaryDirectory() as tmp:
-      extracted = Path(tmp) / "happ"
-      self.extract_to(extracted)
-      return app_stack(extracted, self.app_id)
+    for md_file in self._files.files:
+      if md_file.path == "manifest.toml":
+        return app_stack_from_bytes(md_file.content.encode(), self.app_id, self.path)
+    raise ValueError(f"{self.path.name} is missing a manifest.toml file")
 
   def extract_to(self, target: Path):
     target.mkdir(parents=True, exist_ok=True)
@@ -223,20 +222,25 @@ def extract_md_files(content: str) -> MdFileList:
     else:
       if line.strip() == "```":
         # End of file
-        files.append(MdFile(path=current_path, executable=ex, content="\n".join(current_content)))
+        files.append(
+          MdFile(path=current_path, executable=ex, content="\n".join(current_content))
+        )
         current_path = None
         current_content = []
         ex = False
       else:
         current_content.append(line)
-    
+
   if current_path is not None:
-    files.append(MdFile(path=current_path, executable=ex, content="\n".join(current_content)))
+    files.append(
+      MdFile(path=current_path, executable=ex, content="\n".join(current_content))
+    )
     unclosed_block = True
   else:
     unclosed_block = False
 
   return MdFileList(files=files, unclosed_block=unclosed_block)
+
 
 def load_happ_md(path: Path, app_id: AppID) -> HappMdFile:
   st_size_kb = path.stat().st_size / 1024

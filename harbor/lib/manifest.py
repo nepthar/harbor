@@ -305,6 +305,21 @@ class ManifestParseFailure:
 ManifestParseResult = Manifest | ManifestParseFailure
 
 
+def bytes_to_manifest(
+  app: AppID, data: bytes, source_path: Path
+) -> ManifestParseResult:
+  try:
+    manifest = parse_manifest_bytes(data, source_path)
+    errors = _validate_manifest(app, manifest)
+
+    if errors:
+      return ManifestParseFailure(errors)
+    manifest._app_handle = app
+    return manifest
+  except ConfigError as e:
+    return ManifestParseFailure([str(e)])
+
+
 def app_to_manifest(app: AppID, app_path: Path) -> ManifestParseResult:
   try:
     manifest = parse_manifest(app_path / "manifest.toml")
