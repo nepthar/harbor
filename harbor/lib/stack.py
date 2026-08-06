@@ -151,7 +151,7 @@ class AppRoute:
   host_port: int
   container_port: int
   proto: str
-  publish: Literal["web", "lan", "none"]
+  publish: Literal["web", "lan"]
   scheme: Literal["http", "https"]
 
   def subdomain(self, app_subdomain: str) -> str:

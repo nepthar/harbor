@@ -49,9 +49,9 @@ metrics = { port = "9090:9091/udp", publish = "lan" }
 
 
 # ── resolution ────────────────────────────────────────────────────────────
-def test_publish_defaults_to_none():
+def test_publish_defaults_to_lan():
   stack = _stack(ROUTES)
-  assert stack.routes["default"].publish == "none"
+  assert stack.routes["default"].publish == "lan"
 
 
 def test_scheme_defaults_to_http():

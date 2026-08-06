@@ -81,7 +81,7 @@ class RouteEntry(BaseModel):
 
   model_config = ConfigDict(extra="forbid")
   port: str
-  publish: Literal["web", "lan", "none"] = "none"
+  publish: Literal["web", "lan"] = "lan"
   scheme: Literal["http", "https"] = "http"
 
 

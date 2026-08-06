@@ -80,7 +80,9 @@ You can create your own harbor app by making (or linking in) a folder in `$harbo
 [[app_source]]
 name     = "dev"
 location = "~/code/happs"
-``` The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
+```
+
+The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
 
 
 ## Audience

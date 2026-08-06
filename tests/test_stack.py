@@ -182,7 +182,7 @@ secure = { port = "8443", publish = "web", scheme = "https" }
   admin = stack.routes["admin"]
   assert (admin.host_port, admin.container_port) == (9000, 80)
   assert admin.needs_allocation is False
-  assert admin.publish == "none"
+  assert admin.publish == "lan"
 
   assert stack.routes["dns"].container_port == 53
   assert stack.routes["dns"].proto == "udp"

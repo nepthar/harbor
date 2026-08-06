@@ -16,7 +16,7 @@ HAPP_MD_SUFFIX = ".happ.md"
 HAPP_TAR_SUFFIX = ".happ.tar.gz"
 
 # The point of markdown files is to be frictonless to audit and understand
-# Bigger happs are supported in the standard foldar form.
+# Bigger happs are supported in the standard folder format.
 # This was chosen to be about 10x as long as what I considered "reasonable"
 HAPP_MD_CUTOFF_KB = 128
 
