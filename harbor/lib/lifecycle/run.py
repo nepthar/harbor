@@ -39,16 +39,18 @@ def start(
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
-  source: Path | None = None,
+  bundle: Path | None = None,
 ) -> StageSuccess:
   """Stage if needed, then bring the app up and publish its web routes.
 
   `--set` and `--bind` re-stage, because config and binds are inputs to the
-  volume links and compose file that staging generates. `source` is passed
-  through to `stage`; an app already staged runs its own copy either way.
+  volume links and compose file that staging generates. `bundle` names what
+  to stage; without one the id has to resolve to exactly one bundle, and only
+  if there is anything to stage at all -- an app already installed runs its
+  own copy, whatever became of the bundle it came from.
   """
   if sets or binds or not ctx.is_staged(app):
-    result = stage(app, ctx, sets=sets, binds=binds, source=source)
+    result = stage(app, bundle or ctx.bundle_path(app), ctx, sets=sets, binds=binds)
   else:
     stack = app_stack(ctx.app_path(app), app)
     result = StageSuccess(stack, load_run_data(stack, ctx))

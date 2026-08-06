@@ -1,7 +1,6 @@
 import logging
 import os
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID
@@ -35,19 +34,11 @@ def _expand_path(
   return (relative_base / p).resolve()
 
 
-@dataclass(frozen=True)
-class AppSource:
-  """A directory harbor looks in for happ bundles."""
-
-  name: str
-  path: Path
-
-
 class Config:
   harbor_root: Path
   volume_roots: dict[str, Path]
   apps_root: Path
-  app_sources: tuple[AppSource, ...]
+  app_sources: dict[str, Path]
   run_root: Path
   master_key: str
   master_keyfile: Path
@@ -67,12 +58,12 @@ class Config:
     domain: str,
     port_base: int = 41000,
     route_provider: dict | None = None,
-    extra_app_sources: tuple[AppSource, ...] = (),
+    extra_app_sources: dict[str, Path] | None = None,
   ) -> None:
     self.harbor_root = harbor_root
     self.volume_roots = volume_roots
     self.apps_root = apps_root
-    self.app_sources = (AppSource(DEFAULT_APP_SOURCE, apps_root), *extra_app_sources)
+    self.app_sources = {DEFAULT_APP_SOURCE: apps_root, **(extra_app_sources or {})}
     self.run_root = run_root
     self.snapshot_root = snapshot_root
     self.master_key = master_key
@@ -153,49 +144,62 @@ def load_config_file(config_file: str | Path) -> Config:
   )
 
 
-def _parse_app_sources(entries, apps_root: Path, ep) -> tuple[AppSource, ...]:
-  """Read the `[[app_source]]` blocks that add app directories beyond `apps/`.
+def _nonempty_str(value) -> bool:
+  return isinstance(value, str) and bool(value)
+
+
+def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:
+  """The `[[app_source]]` blocks that add app directories beyond `apps/`.
 
   Names and locations must both be unique: two sources sharing a location
-  would make every app in it resolve to two places.
+  would make every app in it resolve to two places. A problem with any of
+  them drops all of them -- every harbor command loads this file, and a typo
+  in an optional section should not be able to stop the user working.
   """
-  if not isinstance(entries, list):
-    raise ValueError("app_source must be a list of [[app_source]] tables")
 
-  sources: list[AppSource] = []
-  by_path = {apps_root: DEFAULT_APP_SOURCE}
-  by_name = {DEFAULT_APP_SOURCE: apps_root}
+  def refuse(problem: str) -> dict[str, Path]:
+    logger.error(
+      "%s. Ignoring every [[app_source]] until config.toml is fixed", problem
+    )
+    return {}
+
+  if not isinstance(entries, list):
+    return refuse("app_source must be a list of [[app_source]] tables")
+
+  sources: dict[str, Path] = {}
+  names_by_path = {apps_root: DEFAULT_APP_SOURCE}
 
   for entry in entries:
-    name = entry.get("name")
-    location = entry.get("location")
-    if not name or not location:
-      raise ValueError(
-        "each [[app_source]] needs a name and a location, e.g.\n"
-        '  [[app_source]]\n  name = "dev"\n  location = "~/code/happs"'
+    name = entry.get("name") if isinstance(entry, dict) else None
+    location = entry.get("location") if isinstance(entry, dict) else None
+    if not _nonempty_str(name) or not _nonempty_str(location):
+      return refuse(
+        'each [[app_source]] needs a name and a location, e.g. name = "dev", '
+        'location = "~/code/happs"'
       )
+
     try:
       validate_identifier(name)
     except ValueError as e:
-      raise ValueError(f"app_source name {name!r} is not a valid name: {e}") from e
-    if name in by_name:
-      raise ValueError(
+      return refuse(f"app_source name {name!r} is not a valid name: {e}")
+
+    if name == DEFAULT_APP_SOURCE or name in sources:
+      return refuse(
         f"app_source {name!r} is defined twice (or collides with the built-in "
-        f"{DEFAULT_APP_SOURCE!r} source at {by_name[name]}); give it another name"
+        f"{DEFAULT_APP_SOURCE!r} source at {apps_root}); give it another name"
       )
 
     path = ep(location)
-    if path in by_path:
-      raise ValueError(
+    if path in names_by_path:
+      return refuse(
         f"app_source {name!r} points at {path}, which is already the "
-        f"{by_path[path]!r} source; every app there would resolve twice"
+        f"{names_by_path[path]!r} source; every app there would resolve twice"
       )
 
-    by_name[name] = path
-    by_path[path] = name
-    sources.append(AppSource(name, path))
+    names_by_path[path] = name
+    sources[name] = path
 
-  return tuple(sources)
+  return sources
 
 
 CONFIG_LOCATIONS = [

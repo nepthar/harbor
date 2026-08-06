@@ -5,6 +5,7 @@ Several sources can carry the same app id. Harbor never picks between them:
 one you mean.
 """
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -68,14 +69,14 @@ def test_apps_is_always_the_first_source(harbor_env):
 
   config = load_config_file(harbor_env.config)
 
-  assert [source.name for source in config.app_sources] == ["apps", "hrbr-dev"]
-  assert config.app_sources[0].path == harbor_env.root / "apps"
-  assert config.app_sources[1].path == dev
+  assert list(config.app_sources) == ["apps", "hrbr-dev"]
+  assert config.app_sources["apps"] == harbor_env.root / "apps"
+  assert config.app_sources["hrbr-dev"] == dev
 
 
 def test_the_default_config_has_only_the_apps_source(harbor_env):
   config = load_config_file(harbor_env.config)
-  assert [source.name for source in config.app_sources] == ["apps"]
+  assert list(config.app_sources) == ["apps"]
 
 
 @pytest.mark.parametrize(
@@ -88,20 +89,51 @@ def test_the_default_config_has_only_the_apps_source(harbor_env):
     ('[[app_source]]\nname = "b a d"\nlocation = "elsewhere"\n', "not a valid name"),
   ],
 )
-def test_bad_app_source_blocks_are_refused(harbor_env, block, problem):
+def test_a_bad_app_source_is_reported_and_ignored(harbor_env, caplog, block, problem):
+  """A typo in an optional section must not stop every harbor command."""
   with open(harbor_env.config, "a") as f:
     f.write("\n" + block)
 
-  with pytest.raises(ValueError, match=problem):
-    load_config_file(harbor_env.config)
+  with caplog.at_level(logging.ERROR, logger="harbor.config"):
+    config = load_config_file(harbor_env.config)
+
+  assert list(config.app_sources) == ["apps"]
+  assert problem in caplog.text
+  assert "Ignoring every [[app_source]]" in caplog.text
 
 
-def test_two_extra_sources_may_not_share_a_name(harbor_env):
+def test_one_bad_source_drops_the_good_ones_too(harbor_env, caplog):
+  """All or nothing: a half-applied catalog is harder to explain than none."""
+  dev = harbor_env.root / "dev-apps"
+  a_happ(dev, "dev-app")
+  add_source(harbor_env, "hrbr-dev", dev)
+  add_source(harbor_env, "b a d", harbor_env.root / "other")
+
+  with caplog.at_level(logging.ERROR, logger="harbor.config"):
+    config = load_config_file(harbor_env.config)
+
+  assert list(config.app_sources) == ["apps"]
+  assert "not a valid name" in caplog.text
+
+
+def test_a_bad_app_source_still_lets_commands_run(harbor_env):
+  add_source(harbor_env, "b a d", harbor_env.root / "other")
+
+  result = harbor_env.run("catalog")
+
+  assert result.returncode == 0, result.stderr
+  assert "ports-demo" in result.stdout
+
+
+def test_two_extra_sources_may_not_share_a_name(harbor_env, caplog):
   add_source(harbor_env, "dev", harbor_env.root / "one")
   add_source(harbor_env, "dev", harbor_env.root / "two")
 
-  with pytest.raises(ValueError, match="defined twice"):
-    load_config_file(harbor_env.config)
+  with caplog.at_level(logging.ERROR, logger="harbor.config"):
+    config = load_config_file(harbor_env.config)
+
+  assert list(config.app_sources) == ["apps"]
+  assert "defined twice" in caplog.text
 
 
 # --- using an extra source --------------------------------------------------

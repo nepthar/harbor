@@ -657,7 +657,7 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(
   ctx = HarborCtx(load_config_file(harbor_env.config))
 
   app = ctx.resolve_app("routes-demo")
-  lifecycle.stage(app, ctx)
+  lifecycle.stage(app, ctx.bundle_path(app), ctx)
 
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
   with pytest.raises(ValueError, match="already owned"):
@@ -676,7 +676,7 @@ def test_stop_uses_staged_manifest_when_bundle_is_missing(
   )
   stage_ctx = HarborCtx(load_config_file(harbor_env.config))
   app = stage_ctx.resolve_app("routes-demo")
-  lifecycle.stage(app, stage_ctx)
+  lifecycle.stage(app, stage_ctx.bundle_path(app), stage_ctx)
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
   lifecycle.start(app, start_ctx)
   shutil.rmtree(harbor_env.root / "apps" / "routes-demo.happ")
@@ -744,7 +744,7 @@ def test_every_shipped_happ_stages(harbor_env):
       shutil.copy2(source, dest)
     fresh = HarborCtx(load_config_file(harbor_env.config))
     app = fresh.resolve_app(app_id)
-    lifecycle.stage(app, fresh)
+    lifecycle.stage(app, fresh.bundle_path(app), fresh)
     assert (harbor_env.run_root / app_id / "compose.yml").is_file(), source.name
 
 

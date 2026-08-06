@@ -37,14 +37,14 @@ def _has_volume_data(app_id: AppID, ctx: HarborCtx) -> bool:
   return False
 
 
-def _stage_incoming(catalog: Path, run_path: Path) -> Path:
-  """Extract the catalog happ into ``run/<id>/.happ.incoming`` (not yet live).
+def _stage_incoming(bundle: Path, run_path: Path) -> Path:
+  """Extract the happ into ``run/<id>/.happ.incoming`` (not yet live).
 
   `load_happ` handles both bundle flavors, so a `.happ` directory is copied
   and a `.happ.md` file is expanded into the files it embeds; the run tree is
   always a plain directory either way.
   """
-  happ = load_happ(catalog)
+  happ = load_happ(bundle)
   incoming = run_path / INCOMING
   outgoing = run_path / OUTGOING
   for scratch in (incoming, outgoing):
@@ -200,31 +200,38 @@ def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str,
   return run_data, dropped
 
 
-def catalog_entry(
-  ctx: HarborCtx, target: str
-) -> tuple[AppID, Path | None, Path | None]:
-  """Resolve a stage/start target to an app id and the bundle to copy from.
+@dataclass(frozen=True)
+class StagingTarget:
+  """What a `stage`/`start` argument named."""
+
+  app_id: AppID
+  # The bundle to stage: a `.happ` directory or a `.happ.md` file. None when
+  # the argument was a bare id, which does not say which bundle it means --
+  # `ctx.bundle_path` answers that, and only for a caller that has to stage.
+  bundle: Path | None
+  # The catalog entry created to reach the bundle, for the caller to report.
+  linked_entry: Path | None
+
+
+def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
+  """Resolve a stage/start argument -- an app id, or a path to a bundle.
 
   A path that no app source already carries is symlinked into `apps/`, so a
   developer's checkout keeps working (docs/run-layout.md L14). A path that one
   *does* carry is used where it lies: linking it into `apps/` would leave the
   id resolving to two places, which is also why naming a bundle by path is how
   you pick between two sources -- or two flavors -- that share an id.
-
-  Returns the app id, the bundle to stage from, and the entry created (if
-  any) so the caller can say so. A bare id resolves to no bundle here: which
-  one it names is `stage`'s problem, and only if it actually has to stage.
   """
   if not is_pathlike(target):
-    return ctx.resolve_app(target), None, None
+    return StagingTarget(ctx.resolve_app(target), None, None)
 
-  source = Path(target).expanduser().resolve()
-  app = app_id_from_path(source)
+  bundle = Path(target).expanduser().resolve()
+  app = app_id_from_path(bundle)
   catalogued = ctx.catalog().get(str(app), ())
 
   for entry in catalogued:
-    if entry.path.resolve() == source:
-      return app, entry.path, None
+    if entry.path.resolve() == bundle:
+      return StagingTarget(app, entry.path, None)
 
   # One id, one entry: refuse when the id is already backed by a different
   # path, even if that entry is the other bundle flavor or another source.
@@ -232,21 +239,21 @@ def catalog_entry(
     other = catalogued[0]
     raise ValueError(
       f"App {app} is already in the catalog as {other.path} -> "
-      f"{other.path.resolve()}. Remove that entry to stage from {source} instead."
+      f"{other.path.resolve()}. Remove that entry to stage from {bundle} instead."
     )
 
-  # The id comes from the bundle's own name, so the entry keeps the source's
+  # The id comes from the bundle's own name, so the entry keeps the bundle's
   # flavor suffix (`.happ` directory or `.happ.md` file).
-  link = ctx.config.apps_root / source.name
+  link = ctx.config.apps_root / bundle.name
   if link.is_symlink() or link.exists():
     raise ValueError(
       f"App {app} is already in the catalog as {link} -> {link.resolve()}. "
-      f"Remove that entry to stage from {source} instead."
+      f"Remove that entry to stage from {bundle} instead."
     )
 
   link.parent.mkdir(parents=True, exist_ok=True)
-  link.symlink_to(source)
-  return app, link, link
+  link.symlink_to(bundle)
+  return StagingTarget(app, link, link)
 
 
 def apply_config_sets(
@@ -284,23 +291,24 @@ def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> N
 
 def stage(
   app: AppID,
+  bundle: Path,
   ctx: HarborCtx,
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
-  source: Path | None = None,
 ) -> StageSuccess:
-  """Install a catalog bundle into `run/<id>/` without starting it.
+  """Install `bundle` into `run/<id>/` without starting it.
+
+  `bundle` is the happ itself -- a `.happ` directory or a `.happ.md` file --
+  and is recorded as the app's origin. Which app source it happens to sit in
+  is a fact about that path, derivable when anyone needs it, so nothing here
+  carries a catalog around.
 
   The happ copy, the volume links, the routes and compose.yml are all rebuilt
   from the manifest every time. Config values and volume *contents* are not:
   they belong to the installation, not the bundle (docs/run-layout.md §5).
-
-  `source` names the bundle to stage, for when the id alone does not (two app
-  sources carrying it). Without it the id must resolve to exactly one.
   """
   paths = ctx.staged_app_paths(app)
-  catalog = source if source is not None else ctx.bundle_path(app)
 
   try:
     running_count = ctx.run_state(app).running_count
@@ -323,12 +331,12 @@ def stage(
       f"`harbor rm {app}` to delete its config and data together."
     )
 
-  # Copy the catalog happ under run/ first, validate *that* copy, then promote
-  # it to happ/. AppStack always comes from the run tree, never apps/.
+  # Extract the happ under run/ first, validate *that* copy, then promote it
+  # to happ/. AppStack always comes from the run tree, never the bundle.
   run_path = paths.run_path
   run_path.mkdir(parents=True, exist_ok=True)
   try:
-    incoming = _stage_incoming(catalog, run_path)
+    incoming = _stage_incoming(bundle, run_path)
     stack = app_stack(incoming, app)
   except Exception:
     _discard_incoming(run_path)
@@ -353,7 +361,7 @@ def stage(
     raise
 
   store = ctx.app_store(app)
-  store.set_meta("origin", str(catalog))
+  store.set_meta("origin", str(bundle))
   store.set_meta("staged_at", LogTab.ts())
   record_app_action("staged", app, ctx.config)
   return StageSuccess(stack, run_data, dropped)

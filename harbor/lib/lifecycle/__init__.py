@@ -16,20 +16,21 @@ from harbor.lib.lifecycle.run import logs, recovery_lines, start, stop
 from harbor.lib.lifecycle.snapshot import snapshot
 from harbor.lib.lifecycle.stage import (
   StageSuccess,
+  StagingTarget,
   apply_config_sets,
   bind,
-  catalog_entry,
   materialize,
   stage,
+  staging_target,
 )
 
 __all__ = [
   "RemovalPlan",
   "RestorePlan",
   "StageSuccess",
+  "StagingTarget",
   "apply_config_sets",
   "bind",
-  "catalog_entry",
   "logs",
   "materialize",
   "preflight_app_routes",
@@ -43,6 +44,7 @@ __all__ = [
   "snapshot",
   "snapshot_names",
   "stage",
+  "staging_target",
   "start",
   "stop",
   "unregister_app_routes",

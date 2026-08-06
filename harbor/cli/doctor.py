@@ -34,15 +34,18 @@ def _catalog_notes(ctx: HarborCtx) -> list[str]:
   notice until someone runs one of them.
   """
   notes = []
-  for source in ctx.config.app_sources:
-    if not source.path.is_dir():
+  for name, path in ctx.config.app_sources.items():
+    if not path.is_dir():
       notes.append(
-        f"app source {source.name}: {source.path} is not a directory. "
+        f"app source {name}: {path} is not a directory. "
         f"Create it, fix its location in config.toml, or drop the entry."
       )
 
-  for app_id, entries in sorted(ctx.ambiguous_apps().items()):
-    notes.append(ambiguity_message(app_id, entries))
+  catalog = ctx.catalog()
+  for app_id in sorted(catalog):
+    entries = catalog[app_id]
+    if len(entries) > 1:
+      notes.append(ambiguity_message(app_id, entries))
   return notes
 
 

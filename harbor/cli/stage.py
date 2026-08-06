@@ -1,7 +1,7 @@
 import argparse
 
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import catalog_entry, stage
+from harbor.lib.lifecycle import stage, staging_target
 from harbor.lib.util import Conn
 
 
@@ -19,11 +19,12 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  app, source, linked = catalog_entry(ctx, args.app)
-  if linked is not None:
-    conn.out(f"Linked {linked} -> {linked.resolve()}")
+  target = staging_target(ctx, args.app)
+  app = target.app_id
+  if target.linked_entry is not None:
+    conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
 
-  result = stage(app, ctx, source=source)
+  result = stage(app, target.bundle or ctx.bundle_path(app), ctx)
   for name in result.dropped_volumes:
     conn.err(
       f"volume {name} is no longer declared in the manifest; "

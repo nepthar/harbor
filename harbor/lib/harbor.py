@@ -61,20 +61,12 @@ def _resolve_app_query(candidates: list[AppID], query: str) -> list[AppID]:
 
 @dataclass(frozen=True)
 class CatalogEntry:
-  """One happ bundle, as found in one app source."""
-
   app_id: str
   path: Path
   source: str
 
 
 def ambiguity_message(app: AppID | str, entries: tuple[CatalogEntry, ...]) -> str:
-  """Why an ambiguous id cannot be acted on, and how to say which one you mean.
-
-  Same rule as `resolve_app`: an app id names exactly one app. Two app sources
-  carrying the same id is the one way that can be true of the catalog and
-  still be fixable by the operator, so say where both are.
-  """
   locations = "\n".join(f"  {entry.source}: {entry.path}" for entry in entries)
   return (
     f'Multiple apps matched app_id "{app}":\n{locations}\n'
@@ -227,15 +219,12 @@ class HarborCtx:
     once -- `bundle_path` refuses to guess, and `harbor doctor` reports it.
     """
     found: dict[str, list[CatalogEntry]] = {}
-    for source in self.config.app_sources:
-      for app_id, rel_path in scan_happs(source.path):
-        entry = CatalogEntry(app_id, source.path / rel_path, source.name)
-        found.setdefault(app_id, []).append(entry)
+    for name, source_path in self.config.app_sources.items():
+      for app_id, rel_path in scan_happs(source_path):
+        found.setdefault(app_id, []).append(
+          CatalogEntry(app_id, source_path / rel_path, name)
+        )
     return {app_id: tuple(entries) for app_id, entries in found.items()}
-
-  def ambiguous_apps(self) -> dict[str, tuple[CatalogEntry, ...]]:
-    """Ids that more than one app source carries. Empty is the normal case."""
-    return {app: entries for app, entries in self.catalog().items() if len(entries) > 1}
 
   def staged_origin(self, app: AppID | str) -> Path | None:
     """The bundle an installed app was staged from, as `stage` recorded it.
