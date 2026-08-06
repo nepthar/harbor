@@ -1,4 +1,3 @@
-import string
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,6 +5,7 @@ from typing import Any, Literal
 
 from harbor.lib.apps import AppID
 from harbor.lib.manifest import ConfigError, Manifest, parse_manifest
+from harbor.lib.util import EnvTemplate
 
 HARBOR_APP_ID_LABEL = "harbor.app_id"
 HARBOR_RUN_UNIT_LABEL = "harbor.run_unit"
@@ -188,8 +188,11 @@ def _resolve_run_units(
       "HAPP_RUN_UNIT": run_unit_name,
       **run_entry.env,
     }
+    # `${config}` becomes a compose variable, so its value never lands in
+    # compose.yml. `${routes.x}` is left for `make_compose_dict`, which is the
+    # first point where an allocated route exists to name.
     run_env = {
-      k: string.Template(str(v)).safe_substitute(config_varnames)
+      k: EnvTemplate(str(v)).safe_substitute(config_varnames)
       for k, v in run_env.items()
     }
 

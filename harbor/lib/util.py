@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import string
 from typing import Annotated
 
 from pydantic import AfterValidator
@@ -36,6 +37,22 @@ def validate_github_segment(value: str, kind: str) -> str:
 
 
 Identifier = Annotated[str, AfterValidator(validate_identifier)]
+
+# The namespace prefix in `${routes.<name>}`.
+ROUTE_NAMESPACE = "routes"
+
+
+class EnvTemplate(string.Template):
+  """What `[run.<unit>.env]` values may reference.
+
+  `${name}` is a [config] value; `${routes.<name>}` is a route's public URL.
+  Config names are plain identifiers, so the dot is what tells the two apart --
+  and it is why the default `Template` pattern (which stops at the dot, making
+  `${routes.main}` an invalid placeholder that substitution silently ignores)
+  is not enough.
+  """
+
+  idpattern = r"(?a:[_a-z][_a-z0-9-]*(?:\.[_a-z0-9-]+)?)"
 
 
 def fmt_size(n: float) -> str:

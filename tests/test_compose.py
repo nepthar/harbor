@@ -20,6 +20,7 @@ from harbor.lib.run_layout import (
   AssignedRoute,
   ConfigIssue,
   ConfigValue,
+  _route_urls,
   make_compose_dict,
 )
 from harbor.lib.stack import HARBOR_SUBDOMAIN_LABEL, AppConfig, AppStack
@@ -30,6 +31,7 @@ def run_data(
   stack: AppStack,
   *,
   app_domain: str | None = None,
+  domain: str = "home.example",
   host_ports: dict[str, int] | None = None,
   config_values: dict[str, ConfigValue] | None = None,
   issues: tuple[ConfigIssue, ...] = (),
@@ -43,7 +45,7 @@ def run_data(
   routes = {
     name: AssignedRoute(
       name=name,
-      subdomain="",
+      subdomain=route.subdomain(stack.subdomain) if stack.subdomain else "",
       run_unit_name=route.run_unit_name,
       host_port=host_ports.get(name, route.host_port),
       container_port=route.container_port,
@@ -60,6 +62,7 @@ def run_data(
     volume_links={},
     config_values=config_values or {},
     routes=routes,
+    route_urls=_route_urls(routes, domain),
     issues=issues,
   )
 
@@ -261,6 +264,66 @@ image = "alpine"
   assert service["labels"][HARBOR_SUBDOMAIN_LABEL] == "photos.harbor.localhost"
 
 
+def test_a_route_reference_in_env_becomes_the_published_url(tmp_path):
+  """`${routes.<name>}` is the app telling itself where it answers.
+
+  The URL is not knowable when the stack is built -- it needs the harbor
+  domain and an allocated route -- so it survives as a placeholder until the
+  compose file is written.
+  """
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+subdomain = "mealie"
+
+[run.main]
+image = "alpine"
+env = { BASE_URL = "${routes.main}", API = "${routes.api}/v1" }
+
+[run.main.routes]
+main = { port = "9000", publish = "web" }
+api  = { port = "9001", publish = "web" }
+""",
+  )
+
+  env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
+
+  # The reverse proxy terminates TLS, so a published route is always https --
+  # and "main" is the one route that gets the bare app subdomain.
+  assert env["BASE_URL"] == "https://mealie.home.example"
+  assert env["API"] == "https://api-mealie.home.example/v1"
+
+
+def test_a_route_reference_survives_alongside_a_config_reference(tmp_path):
+  """Two substitutions, two mechanisms: config indirects through compose."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+subdomain = "mealie"
+
+[config]
+timezone = { default = "UTC" }
+
+[run.main]
+image = "alpine"
+env = { GREETING = "${timezone} at ${routes.main}" }
+
+[run.main.routes]
+main = { port = "9000", publish = "web" }
+""",
+  )
+
+  env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
+
+  assert (
+    env["GREETING"] == "${__HARBOR_CONFIG__timezone} at https://mealie.home.example"
+  )
+
+
 def test_host_network_mode_is_set_per_service(tmp_path):
   stack = stack_of(
     tmp_path,
@@ -325,6 +388,7 @@ def test_start_blockers_leave_out_what_staging_repairs_itself():
     volume_links={},
     config_values={},
     routes={},
+    route_urls={},
     issues=(operator, allocation, fatal),
   )
 
@@ -348,6 +412,7 @@ def test_config_env_names_every_value_including_the_unset_ones():
       "api_key": ConfigValue(AppConfig("api_key", True, None, None), None),
     },
     routes={},
+    route_urls={},
     issues=(),
   )
 

@@ -18,6 +18,7 @@ from harbor.lib.stack import (
   AppVolume,
   BoundVolume,
 )
+from harbor.lib.util import ROUTE_NAMESPACE, EnvTemplate
 
 logger = getLogger("harbor.run_layout")
 
@@ -117,6 +118,9 @@ class AppRunData:
   volume_links: Mapping[str, VolumeLink]
   config_values: Mapping[str, ConfigValue]
   routes: Mapping[str, AssignedRoute]
+  # The public URL of each web route, by route name; what `${routes.<name>}`
+  # in [run.*.env] resolves to. Lan routes have none -- see `_route_urls`.
+  route_urls: Mapping[str, str]
   issues: tuple[ConfigIssue, ...]
 
   @property
@@ -289,10 +293,34 @@ def _load_routes(
   return loaded
 
 
+def _route_urls(routes: Mapping[str, AssignedRoute], domain: str) -> dict[str, str]:
+  """Where each web route answers from outside: `https://<subdomain>.<domain>`.
+
+  The reverse proxy terminates TLS for every route it publishes, so this is
+  https regardless of the route's `scheme` -- that one says how the proxy
+  dials the container behind it.
+  """
+  return {
+    name: f"https://{route.subdomain}.{domain}"
+    for name, route in routes.items()
+    if route.publish == "web" and route.subdomain
+  }
+
+
 def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
+  route_vars = {
+    f"{ROUTE_NAMESPACE}.{name}": url for name, url in data.route_urls.items()
+  }
+
   services: dict[str, Any] = {}
   for run_name, run_unit in stack.run_units.items():
-    environment = {str(k): str(v) for k, v in run_unit.environment.items()}
+    # The manifest validator has already checked that every `${routes.x}` here
+    # names a web route, so the only way one survives unsubstituted is a route
+    # that was never allocated -- and `materialize` allocates before it writes.
+    environment = {
+      str(k): EnvTemplate(str(v)).safe_substitute(route_vars)
+      for k, v in run_unit.environment.items()
+    }
     labels = {str(k): str(v) for k, v in run_unit.labels.items()}
     if data.app_domain:
       environment["HAPP_DOMAIN"] = data.app_domain
@@ -366,6 +394,7 @@ def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
     volume_links=vol_links,
     config_values=config_values,
     routes=routes,
+    route_urls=_route_urls(routes, ctx.config.domain),
     issues=tuple(issues),
   )
 

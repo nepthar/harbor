@@ -18,7 +18,7 @@ from harbor.lib.routes import (
   RouteProviderError,
   get_route_provider,
 )
-from harbor.lib.run_layout import AppRunData, AssignedRoute
+from harbor.lib.run_layout import AppRunData, AssignedRoute, _route_urls
 from harbor.lib.stack import AppStack
 
 
@@ -209,6 +209,34 @@ dash = { port = "8081", publish = "lan" }
   assert any("dash" in e and "multiple run units" in e for e in errors)
 
 
+def test_duplicate_route_name_never_reaches_a_stack():
+  """The app-level uniqueness rule, from the entry point rather than the check.
+
+  `_build` flattens per-unit routes into one app-level mapping, so a duplicate
+  that got past validation would not raise -- the last unit declared would
+  quietly win, and the other unit's port would vanish from the compose file.
+  """
+  with pytest.raises(ConfigError, match="multiple run units"):
+    _stack(
+      """
+[app]
+version = "0.1.0"
+subdomain = "photos"
+main = "web"
+
+[run.web]
+image = "alpine:latest"
+[run.web.routes]
+dash = { port = "8080", publish = "web" }
+
+[run.worker]
+image = "alpine:latest"
+[run.worker.routes]
+dash = { port = "8081", publish = "lan" }
+"""
+    )
+
+
 def test_host_network_mode_forbids_routes():
   errors = _validate_routes(
     _model(
@@ -283,6 +311,91 @@ version = "0.1.0"
 
 [routes]
 site = { audience = "web" }
+"""
+    )
+
+
+# ── ${routes.<name>} references in [run.*.env] ────────────────────────────
+def test_env_may_reference_a_web_route():
+  # Resolving it needs an allocated route; see test_compose.py for the value.
+  stack = _stack(
+    """
+[app]
+version = "0.1.0"
+subdomain = "photos"
+
+[run.main]
+image = "alpine:latest"
+env = { BASE_URL = "${routes.main}" }
+[run.main.routes]
+main = { port = "8080", publish = "web" }
+"""
+  )
+  assert stack.run_units["main"].environment["BASE_URL"] == "${routes.main}"
+
+
+def test_env_may_reference_a_web_route_on_another_run_unit():
+  """Routes are app-level, so a unit can name one it does not itself publish."""
+  stack = _stack(
+    """
+[app]
+version = "0.1.0"
+subdomain = "photos"
+
+[run.main]
+image = "alpine:latest"
+env = { PEER = "${routes.api}" }
+
+[run.api]
+image = "alpine:latest"
+[run.api.routes]
+api = { port = "8080", publish = "web" }
+"""
+  )
+  assert stack.run_units["main"].environment["PEER"] == "${routes.api}"
+
+
+def test_env_reference_to_an_undeclared_route_is_rejected():
+  with pytest.raises(ConfigError, match="not declared in"):
+    _stack(
+      """
+[app]
+version = "0.1.0"
+
+[run.main]
+image = "alpine:latest"
+env = { BASE_URL = "${routes.nope}" }
+"""
+    )
+
+
+def test_env_reference_to_a_lan_route_is_rejected():
+  """A lan route is a port on a host harbor cannot name, so it has no URL."""
+  with pytest.raises(ConfigError, match="not web-facing"):
+    _stack(
+      """
+[app]
+version = "0.1.0"
+
+[run.main]
+image = "alpine:latest"
+env = { BASE_URL = "${routes.main}" }
+[run.main.routes]
+main = { port = "8080", publish = "lan" }
+"""
+    )
+
+
+def test_env_reference_to_an_unknown_namespace_is_rejected():
+  with pytest.raises(ConfigError, match="not a known namespace"):
+    _stack(
+      """
+[app]
+version = "0.1.0"
+
+[run.main]
+image = "alpine:latest"
+env = { BASE_URL = "${volumes.data}" }
 """
     )
 
@@ -460,16 +573,18 @@ def _assigned(stack, route_name: str, host_port: int = 41000) -> AssignedRoute:
 
 def _run_data(stack, host_ports: dict[str, int] | None = None) -> AppRunData:
   ports = host_ports or {}
+  assigned = {
+    name: _assigned(stack, name, ports.get(name, 41000 + i))
+    for i, name in enumerate(stack.routes)
+  }
   return AppRunData(
     app=stack.app,
     run_path=Path("/tmp/unused"),
     app_domain=f"{stack.subdomain}.home.example" if stack.subdomain else None,
     volume_links={},
     config_values={},
-    routes={
-      name: _assigned(stack, name, ports.get(name, 41000 + i))
-      for i, name in enumerate(stack.routes)
-    },
+    routes=assigned,
+    route_urls=_route_urls(assigned, "home.example"),
     issues=(),
   )
 

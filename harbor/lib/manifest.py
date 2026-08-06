@@ -14,7 +14,7 @@ from pydantic import (
 )
 
 from harbor.lib.apps import AppID
-from harbor.lib.util import Identifier
+from harbor.lib.util import ROUTE_NAMESPACE, EnvTemplate, Identifier
 
 NetworkMode = Literal["normal", "host"]
 VolumeKind = Literal["app", "data", "temp", "bulk", "logs", "ext"]
@@ -247,15 +247,46 @@ def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
   errors.extend(_validate_volumes(manifest))
   errors.extend(_validate_run_volumes(manifest))
   errors.extend(_validate_routes(manifest))
+  errors.extend(_validate_env_refs(manifest))
+  return errors
+
+
+def _validate_env_refs(manifest: Manifest) -> list[str]:
+  """`${routes.<name>}` in [run.*.env] must name a route that has a URL.
+
+  Only web routes do: a lan route is a host port on a machine whose name
+  harbor does not know, so there is nothing honest to substitute.
+  """
+  routes = {
+    name: route
+    for run_entry in manifest.run.values()
+    for name, route in run_entry.routes.items()
+  }
+
+  errors: list[str] = []
+  for unit_name, run_entry in manifest.run.items():
+    for var, value in run_entry.env.items():
+      for ref in sorted(EnvTemplate(value).get_identifiers()):
+        namespace, dot, route_name = ref.partition(".")
+        where = f"[run.{unit_name}.env]: {var} references ${{{ref}}}"
+        if not dot:
+          continue  # A [config] value; `_resolve_run_units` wires those up.
+        if namespace != ROUTE_NAMESPACE:
+          errors.append(f"{where}, but {namespace!r} is not a known namespace")
+        elif route_name not in routes:
+          errors.append(f"{where}, which is not declared in [run.*.routes]")
+        elif routes[route_name].publish != "web":
+          errors.append(
+            f'{where}, which is not web-facing; set publish = "web" on route '
+            f"{route_name!r} to give it a URL"
+          )
   return errors
 
 
 def _validate_volumes(manifest: Manifest) -> list[str]:
   """`app` volumes are the happ's own files: input, never state.
 
-  Harbor mounts every one of them read-only, so an explicit `readonly = false`
-  is refused rather than silently reversed -- the author wrote it meaning
-  something, and should be told it is impossible (docs/run-layout.md L4).
+  A harbor app is read only, so trying to set it false is refused.
   """
   errors: list[str] = []
   for name, volume in manifest.volumes.items():
