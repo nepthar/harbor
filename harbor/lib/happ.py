@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID
-from harbor.lib.stack import AppStack, app_stack, app_stack_from_bytes
+from harbor.lib.stack import AppStack
 
 # The bundle flavors harbor knows, by filename suffix. These are the one
 # source of truth; everything that names a catalog entry derives from them.
@@ -49,7 +49,7 @@ class HappFolder(HarborApp):
     return self.path.rglob("*")
 
   def app_stack(self) -> AppStack:
-    return app_stack(self.path, self.app_id)
+    return AppStack.from_path(self.path, self.app_id)
 
   def extract_to(self, target: Path):
     target.mkdir(parents=True, exist_ok=True)
@@ -83,7 +83,7 @@ class HappMdFile(HarborApp):
   def app_stack(self) -> AppStack:
     for md_file in self._files.files:
       if md_file.path == "manifest.toml":
-        return app_stack_from_bytes(md_file.content.encode(), self.app_id, self.path)
+        return AppStack.from_bytes(md_file.content.encode(), self.app_id, self.path)
     raise ValueError(f"{self.path.name} is missing a manifest.toml file")
 
   def extract_to(self, target: Path):

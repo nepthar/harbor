@@ -9,7 +9,6 @@ from pydantic import (
   BaseModel,
   ConfigDict,
   Field,
-  PrivateAttr,
   ValidationError,
   model_validator,
 )
@@ -21,7 +20,7 @@ NetworkMode = Literal["normal", "host"]
 VolumeKind = Literal["app", "data", "temp", "bulk", "logs", "ext"]
 
 
-class ConfigError(Exception):
+class ConfigError(ValueError):
   """Raised on manifest TOML load or validation failures."""
 
 
@@ -66,6 +65,40 @@ class ConfigEntry(BaseModel):
   secret: bool = False
 
 
+@dataclass(frozen=True)
+class PortSpec:
+  """A parsed route `port` string. host_port -1 means "assign one"."""
+
+  host_port: int
+  container_port: int
+  proto: Literal["tcp", "udp"]
+
+  @classmethod
+  def parse(cls, value: str) -> Self:
+    ports, _, proto = value.partition("/")
+    port1, separator, port2 = ports.partition(":")
+
+    if separator:
+      if not port2:
+        raise ValueError(f"port {value!r}: container port is required after ':'")
+      host_port = _port_number(value, port1)
+      container_port = _port_number(value, port2)
+    else:
+      host_port = -1
+      container_port = _port_number(value, port1)
+
+    if proto and proto not in ("tcp", "udp"):
+      raise ValueError(f"port {value!r}: unknown proto {proto!r}; expected tcp, udp")
+
+    return cls(host_port, container_port, proto or "tcp")
+
+
+def _port_number(value: str, text: str) -> int:
+  if not text.isdigit() or not (1 <= int(text) <= 65535):
+    raise ValueError(f"port {value!r}: {text!r} is not a port number (1-65535)")
+  return int(text)
+
+
 class RouteEntry(BaseModel):
   """A named port a run unit publishes, declared in [run.<unit>.routes].
 
@@ -83,6 +116,16 @@ class RouteEntry(BaseModel):
   port: str
   publish: Literal["web", "lan"] = "lan"
   scheme: Literal["http", "https"] = "http"
+
+  @model_validator(mode="after")
+  def check_port(self) -> Self:
+    PortSpec.parse(self.port)
+    return self
+
+  @property
+  def port_spec(self) -> PortSpec:
+    """Always parses: `check_port` rejected anything malformed at load time."""
+    return PortSpec.parse(self.port)
 
 
 # Compose service keys harbor generates itself; [run.<unit>.compose] may not
@@ -151,18 +194,33 @@ class Manifest(BaseModel):
   # Reserved:
   cron: dict[Identifier, Any] = Field(default_factory=dict)
 
-  # Not parsed - assigned after validation
-  _app_handle: AppID | None = PrivateAttr(default=None)
 
-  @property
-  def app_handle(self) -> AppID:
-    if self._app_handle is None:
-      raise ValueError("App handle not set")
-    return self._app_handle
+def parse_manifest(data: bytes, app: AppID, source: Path) -> Manifest:
+  """Load manifest TOML and check that it is a valid manifest for `app`.
+
+  The only way to get a `Manifest`; `AppStack` is the only caller. Every
+  failure -- unreadable bytes, bad TOML, schema violations, cross-section
+  inconsistencies -- comes back as one `ConfigError` naming `source`.
+  """
+  try:
+    manifest = Manifest.model_validate(tomllib.loads(data.decode()))
+  except UnicodeDecodeError as e:
+    raise ConfigError(f"manifest {source}: not valid UTF-8") from e
+  except tomllib.TOMLDecodeError as e:
+    raise ConfigError(f"manifest {source}: not valid TOML") from e
+  except ValidationError as e:
+    raise ConfigError(_fmt_validation_error(e, source)) from e
+
+  errors = _validate_manifest(app, manifest)
+  if errors:
+    raise ConfigError(
+      f"manifest {source}: not a valid manifest for {app}\n  " + "\n  ".join(errors)
+    )
+  return manifest
 
 
-def _fmt_validation_error(e: ValidationError, source: str) -> str:
-  lines = [f"manifest {source!r}: {e.error_count()} validation error(s)"]
+def _fmt_validation_error(e: ValidationError, source: Path) -> str:
+  lines = [f"manifest {source}: {e.error_count()} validation error(s)"]
   for err in e.errors():
     loc = ".".join(str(p) for p in err["loc"]) or "<root>"
     msg = err["msg"]
@@ -172,57 +230,24 @@ def _fmt_validation_error(e: ValidationError, source: str) -> str:
   return "\n".join(lines)
 
 
-def parse_manifest_bytes(data: bytes, source_path: Path) -> Manifest:
-  """Parse and validate a manifest from raw TOML bytes (path not set)."""
-  source_desc = str(source_path)
-
-  try:
-    raw = tomllib.loads(data.decode())
-    doc = Manifest.model_validate(raw)
-    return doc
-  except UnicodeDecodeError as e:
-    raise ConfigError(f"manifest {source_desc}: not valid UTF-8") from e
-  except tomllib.TOMLDecodeError as e:
-    raise ConfigError(f"manifest {source_desc}: not valid TOML") from e
-  except ValidationError as e:
-    raise ConfigError(_fmt_validation_error(e, source_desc)) from e
-  except ValueError as e:
-    raise ConfigError(f"manifest {source_desc}: {e}") from e
-
-
-def parse_manifest(manifest_path: str | Path) -> Manifest:
-  try:
-    path = Path(manifest_path)
-    with open(path, "rb") as f:
-      return parse_manifest_bytes(f.read(), path.resolve().parent)
-  except FileNotFoundError as e:
-    raise ConfigError(f"manifest not found: {manifest_path}") from e
-
-
 def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
-  """Ensure that the Manifest is valid & correct for the given AppHandle"""
+  """Checks that span sections, which the per-section models cannot make."""
   errors: list[str] = []
-  app_id = app
 
-  try:
-    ## TODO: Don't spend much time on this now. Just get the basics, which creating a compse file might miss.
-    if manifest.app.app_id is not None and manifest.app.app_id != app:
-      errors.append(
-        f"[app]: app_id {manifest.app.app_id!r} does not match app_id {app_id!r}"
-      )
+  ## TODO: Don't spend much time on this now. Just get the basics, which creating a compse file might miss.
+  if manifest.app.app_id is not None and manifest.app.app_id != app:
+    errors.append(
+      f"[app]: app_id {manifest.app.app_id!r} does not match app_id {app!r}"
+    )
 
-    main_run_unit = manifest.app.main
-    if main_run_unit not in manifest.run:
-      errors.append(f"[app]: main container ({main_run_unit}) not found in [run]")
+  main_run_unit = manifest.app.main
+  if main_run_unit not in manifest.run:
+    errors.append(f"[app]: main container ({main_run_unit}) not found in [run]")
 
-    errors.extend(_validate_volumes(manifest))
-    errors.extend(_validate_run_volumes(manifest))
-    errors.extend(_validate_routes(manifest))
-
-    return errors
-  except ConfigError as e:
-    errors.append(str(e))
-    return [str(e)]
+  errors.extend(_validate_volumes(manifest))
+  errors.extend(_validate_run_volumes(manifest))
+  errors.extend(_validate_routes(manifest))
+  return errors
 
 
 def _validate_volumes(manifest: Manifest) -> list[str]:
@@ -295,39 +320,3 @@ def _validate_routes(manifest: Manifest) -> list[str]:
     )
 
   return errors
-
-
-@dataclass
-class ManifestParseFailure:
-  errors: list[str]
-
-
-ManifestParseResult = Manifest | ManifestParseFailure
-
-
-def bytes_to_manifest(
-  app: AppID, data: bytes, source_path: Path
-) -> ManifestParseResult:
-  try:
-    manifest = parse_manifest_bytes(data, source_path)
-    errors = _validate_manifest(app, manifest)
-
-    if errors:
-      return ManifestParseFailure(errors)
-    manifest._app_handle = app
-    return manifest
-  except ConfigError as e:
-    return ManifestParseFailure([str(e)])
-
-
-def app_to_manifest(app: AppID, app_path: Path) -> ManifestParseResult:
-  try:
-    manifest = parse_manifest(app_path / "manifest.toml")
-    errors = _validate_manifest(app, manifest)
-
-    if errors:
-      return ManifestParseFailure(errors)
-    manifest._app_handle = app
-    return manifest
-  except ConfigError as e:
-    return ManifestParseFailure([str(e)])

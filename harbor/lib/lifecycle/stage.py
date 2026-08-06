@@ -19,7 +19,7 @@ from harbor.lib.run_layout import (
   make_compose_dict,
 )
 from harbor.lib.secrets import SecretGenerationError, generate_secret
-from harbor.lib.stack import AppStack, app_stack
+from harbor.lib.stack import AppStack
 
 # Scratch names used while swapping in a new happ copy. Both are inside the run
 # dir so the swap is a rename on one filesystem rather than a second copy.
@@ -337,7 +337,7 @@ def stage(
   run_path.mkdir(parents=True, exist_ok=True)
   try:
     incoming = _stage_incoming(bundle, run_path)
-    stack = app_stack(incoming, app)
+    stack = AppStack.from_path(incoming, app)
   except Exception:
     _discard_incoming(run_path)
     raise

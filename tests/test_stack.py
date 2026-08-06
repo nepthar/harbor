@@ -222,7 +222,6 @@ env = { POSTGRES_DB = "app" }
   # owns it and appears once in the stack.
   assert set(stack.routes) == {"main"}
   assert stack.routes["main"].run_unit_name == "web"
-  assert set(stack.ports) == {"main"}
 
   db = stack.run_units["db"]
   assert db.command == ("postgres", "-c", "max_connections=50")

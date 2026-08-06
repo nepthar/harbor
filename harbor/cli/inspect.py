@@ -5,7 +5,7 @@ from harbor.lib.happ import is_pathlike, load_happ
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.receipt import capability_receipt
 from harbor.lib.run_layout import load_run_data
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack
 
 
 def register(subparsers) -> None:
@@ -31,6 +31,6 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
   # Report what is installed under run/, never the catalog entry under apps/.
   # Pass a path to a .happ to inspect a bundle that is not staged yet.
-  stack = app_stack(ctx.app_path(app), app)
+  stack = AppStack.from_path(ctx.app_path(app), app)
   run_data = load_run_data(stack, ctx)
   conn.out(capability_receipt(stack, run_data, ctx, compact=False))

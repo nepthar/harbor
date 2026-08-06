@@ -13,8 +13,8 @@ from pydantic import ValidationError
 
 from harbor.lib.apps import AppID
 from harbor.lib.crypto import FernetCryptoEngine, NoopCryptoEngine
-from harbor.lib.manifest import ConfigEntry, parse_manifest_bytes
-from harbor.lib.stack import HARBOR_CONFIG_ENV_PREFIX, AppConfig, build_app_stack
+from harbor.lib.manifest import ConfigEntry, parse_manifest
+from harbor.lib.stack import HARBOR_CONFIG_ENV_PREFIX, AppConfig, AppStack
 from harbor.lib.store import AppStore
 
 FIXTURES = Path(__file__).parent / "fixtures" / "apps"
@@ -69,12 +69,12 @@ env   = { ADMIN_USER = "${admin_user}" }
 
 
 def _stack_from(manifest_bytes):
-  manifest = parse_manifest_bytes(manifest_bytes, Path("manifest.toml"))
-  manifest._app_handle = AppID("io.test.example")
-  return build_app_stack(manifest)
+  return AppStack.from_bytes(
+    manifest_bytes, AppID("io.test.example"), Path("manifest.toml")
+  )
 
 
-def test_build_app_stack_resolves_config():
+def test_app_stack_resolves_config():
   stack = _stack_from(MANIFEST)
 
   secret = stack.config["admin_pass"]
@@ -105,7 +105,7 @@ def test_config_env_var_injected_into_run_env():
 def test_fixtures_parse_with_config_section():
   for happ in ("io.p2net.basic-features.happ", "routes-demo.happ"):
     path = FIXTURES / happ / "manifest.toml"
-    manifest = parse_manifest_bytes(path.read_bytes(), path)
+    manifest = parse_manifest(path.read_bytes(), AppID(happ.split(".happ")[0]), path)
     assert manifest.config  # non-empty [config] section
 
 

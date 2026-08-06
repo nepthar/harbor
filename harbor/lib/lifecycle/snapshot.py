@@ -8,7 +8,7 @@ from pathlib import Path
 
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.manifest import parse_manifest
+from harbor.lib.stack import AppStack
 from harbor.lib.util import validate_identifier
 
 logger = getLogger("harbor.lifecycle.snapshot")
@@ -95,7 +95,7 @@ def snapshot(
 
   try:
     included, excluded = _volume_names(paths.run_path / "volumes")
-    app_version = parse_manifest(paths.manifest_path).app.version
+    app_version = AppStack.from_path(paths.happ_path, app).version
     (staging / "snapshot.toml").write_text(
       "\n".join(
         [

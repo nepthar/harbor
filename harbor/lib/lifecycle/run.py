@@ -12,10 +12,9 @@ from harbor.lib.lifecycle.routes import (
   unregister_app_routes,
 )
 from harbor.lib.lifecycle.stage import StageSuccess, stage
-from harbor.lib.manifest import ConfigError
 from harbor.lib.routes import RouteProviderError
 from harbor.lib.run_layout import ConfigIssue, load_run_data
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack
 
 
 def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
@@ -52,7 +51,7 @@ def start(
   if sets or binds or not ctx.is_staged(app):
     result = stage(app, bundle or ctx.bundle_path(app), ctx, sets=sets, binds=binds)
   else:
-    stack = app_stack(ctx.app_path(app), app)
+    stack = AppStack.from_path(ctx.app_path(app), app)
     result = StageSuccess(stack, load_run_data(stack, ctx))
 
   stack, run_data = result.stack, result.run_data
@@ -103,9 +102,9 @@ def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
   that will not parse falls back to no env rather than blocking teardown.
   """
   try:
-    stack = app_stack(ctx.app_path(app_id), app_id)
+    stack = AppStack.from_path(ctx.app_path(app_id), app_id)
     return load_run_data(stack, ctx).config_env()
-  except (ValueError, ConfigError) as e:
+  except ValueError as e:
     logger.debug("no config env for %s: %s", app_id, e)
     return {}
 

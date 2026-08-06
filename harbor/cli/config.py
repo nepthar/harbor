@@ -6,7 +6,7 @@ from harbor.cli.kv import parse_kv
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind
-from harbor.lib.stack import AppStack, app_stack
+from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore
 
 
@@ -54,7 +54,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
   # Schema from the staged run copy; values from the run-dir config store.
   # `harbor start --set` is the one-shot for first install.
-  stack = app_stack(ctx.app_path(app), app)
+  stack = AppStack.from_path(ctx.app_path(app), app)
   store = ctx.app_store(app)
 
   if args.get_name is not None:

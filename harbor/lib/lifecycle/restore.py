@@ -13,7 +13,7 @@ from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle.snapshot import snapshot
 from harbor.lib.lifecycle.stage import materialize
 from harbor.lib.run_layout import AppRunData
-from harbor.lib.stack import app_stack
+from harbor.lib.stack import AppStack
 from harbor.lib.util import validate_identifier
 
 logger = getLogger("harbor.lifecycle.restore")
@@ -218,7 +218,7 @@ def restore(
 
   # Parse the snapshot's happ before touching anything; a corrupt snapshot
   # fails here with the current state intact.
-  stack = app_stack(plan.snapshot_path / "happ", app)
+  stack = AppStack.from_path(plan.snapshot_path / "happ", app)
 
   take_snapshot = snapshot_first and plan.run_path.exists()
   if take_snapshot and plan.is_latest_pre_restore:
