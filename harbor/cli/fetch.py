@@ -41,7 +41,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   # sources count: installing into apps/ over an id one of them already
   # carries would leave that id resolving to two places.
   ensure_destination_for(target.app_id, apps_root, target.suffix)
-  elsewhere = ctx.catalog().get(str(target.app_id), ())
+  elsewhere = ctx.app_catalog().get(str(target.app_id), ())
   if elsewhere:
     raise ValueError(
       f"{target.app_id} is already in the {elsewhere[0].source} app source at "

@@ -37,7 +37,7 @@ def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn) -> bool:
 
   # Every source that carries the id: `rm` deletes the installation, never a
   # bundle, so all of them survive and saying so is the point of this list.
-  kept = [str(entry.path) for entry in ctx.catalog().get(str(plan.app_id), ())]
+  kept = [str(entry.path) for entry in ctx.app_catalog().get(str(plan.app_id), ())]
   kept += [f"{path} (external bind)" for path in plan.ext_paths]
   conn.out("Left alone:")
   for path in kept:

@@ -234,7 +234,7 @@ def test_a_bundle_symlinked_into_two_sources_counts_twice(harbor_env):
   link = harbor_env.root / "apps" / "dev-app.happ"
   link.symlink_to(bundle)
 
-  entries = ctx_for(harbor_env).catalog()["dev-app"]
+  entries = ctx_for(harbor_env).app_catalog()["dev-app"]
   assert [entry.source for entry in entries] == ["apps", "hrbr-dev"]
 
   by_id = harbor_env.run("stage", "dev-app")
@@ -296,7 +296,7 @@ def test_a_full_path_picks_which_source_to_stage(harbor_env):
   staged = harbor_env.run_root / "ports-demo" / "happ" / "manifest.toml"
   assert "From dev" in staged.read_text()
   # Picking one did not add a third entry for the id.
-  assert len(ctx_for(harbor_env).catalog()["ports-demo"]) == 2
+  assert len(ctx_for(harbor_env).app_catalog()["ports-demo"]) == 2
 
 
 def test_only_one_app_is_staged_per_id(harbor_env):

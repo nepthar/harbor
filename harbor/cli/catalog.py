@@ -15,7 +15,7 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  catalog = ctx.catalog()
+  catalog = ctx.app_catalog()
   staged = ctx.staged_app_ids()
   # One read of the activity log for every app, rather than one per row.
   actions = read_app_actions(ctx.config)

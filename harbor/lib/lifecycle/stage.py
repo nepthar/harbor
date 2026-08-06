@@ -227,7 +227,7 @@ def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
 
   bundle = Path(target).expanduser().resolve()
   app = app_id_from_path(bundle)
-  catalogued = ctx.catalog().get(str(app), ())
+  catalogued = ctx.app_catalog().get(str(app), ())
 
   for entry in catalogued:
     if entry.path.resolve() == bundle:

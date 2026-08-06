@@ -185,7 +185,7 @@ class HarborCtx:
     An id carried by two app sources is ambiguous, and harbor will not pick
     for you: name the bundle by path instead.
     """
-    entries = self.catalog().get(str(app), ())
+    entries = self.app_catalog().get(str(app), ())
     if not entries:
       raise ValueError(f'No app found for "{app}"')
     if len(entries) > 1:
@@ -206,7 +206,7 @@ class HarborCtx:
       raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
     return AppStore.from_path(paths.config_path, crypto_from_config(self.config))
 
-  def catalog(self) -> dict[str, tuple[CatalogEntry, ...]]:
+  def app_catalog(self) -> dict[str, tuple[CatalogEntry, ...]]:
     """Every bundle in every app source, keyed by app id, in source order.
 
     What counts as a bundle is `happ.could_be_happ`'s call (via `scan_happs`);
@@ -241,7 +241,7 @@ class HarborCtx:
     listing and diagnostics; anything that acts on a bundle goes through
     `bundle_path`, which refuses an ambiguous id rather than picking.
     """
-    return {app_id: entries[0].path for app_id, entries in self.catalog().items()}
+    return {app_id: entries[0].path for app_id, entries in self.app_catalog().items()}
 
   def staged_app_ids(self) -> set[str]:
     """Every app id with a happ copy under run/."""

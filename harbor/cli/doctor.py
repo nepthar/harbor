@@ -41,7 +41,7 @@ def _catalog_notes(ctx: HarborCtx) -> list[str]:
         f"Create it, fix its location in config.toml, or drop the entry."
       )
 
-  catalog = ctx.catalog()
+  catalog = ctx.app_catalog()
   for app_id in sorted(catalog):
     entries = catalog[app_id]
     if len(entries) > 1:
