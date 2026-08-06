@@ -16,10 +16,12 @@ import pytest
 from harbor.lib.apps import AppID
 from harbor.lib.manifest import ConfigError, parse_manifest
 from harbor.lib.run_layout import (
+  LOCALTIME_PATH,
   AppRunData,
   AssignedRoute,
   ConfigIssue,
   ConfigValue,
+  _host_mounts,
   _route_urls,
   make_compose_dict,
 )
@@ -34,6 +36,7 @@ def run_data(
   domain: str = "home.example",
   host_ports: dict[str, int] | None = None,
   config_values: dict[str, ConfigValue] | None = None,
+  host_mounts: tuple[str, ...] = (),
   issues: tuple[ConfigIssue, ...] = (),
 ) -> AppRunData:
   """An `AppRunData` for `stack`, with every route allocated.
@@ -63,6 +66,7 @@ def run_data(
     config_values=config_values or {},
     routes=routes,
     route_urls=_route_urls(routes, domain),
+    host_mounts=host_mounts,
     issues=issues,
   )
 
@@ -178,6 +182,61 @@ dns   = { port = "53/udp" }
 
   assert service["ports"] == ["41000:8080", "9000:80", "41001:53/udp"]
   assert service["environment"]["HAPP_ROUTES"] == "main:8080,admin:80,dns:53"
+
+
+def test_harbor_mounts_land_after_the_happs_own_and_outside_HAPP_VOLUMES(tmp_path):
+  """HAPP_VOLUMES tells a happ where its [volumes] went; it declared none of these."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[volumes]
+app_config = { kind = "data" }
+
+[run.main]
+image = "alpine"
+volumes = { app_config = "/config" }
+""",
+  )
+
+  data = run_data(stack, host_mounts=("/etc/localtime:/etc/localtime:ro",))
+  service = make_compose_dict(stack, data)["services"]["main"]
+
+  assert service["volumes"] == [
+    "./volumes/data/app_config:/config",
+    "/etc/localtime:/etc/localtime:ro",
+  ]
+  assert service["environment"]["HAPP_VOLUMES"] == "app_config:/config"
+
+
+def test_a_unit_with_no_volumes_of_its_own_still_gets_the_harbor_mounts(tmp_path):
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+""",
+  )
+
+  data = run_data(stack, host_mounts=("/etc/localtime:/etc/localtime:ro",))
+  service = make_compose_dict(stack, data)["services"]["main"]
+
+  assert service["volumes"] == ["/etc/localtime:/etc/localtime:ro"]
+  assert "HAPP_VOLUMES" not in service["environment"]
+
+
+def test_the_host_clock_is_mounted_read_only_when_the_host_has_one():
+  """Images without tzdata cannot resolve a TZ name; the zone file is the fix."""
+  if Path(LOCALTIME_PATH).exists():
+    assert _host_mounts() == (f"{LOCALTIME_PATH}:{LOCALTIME_PATH}:ro",)
+  else:
+    # A mount docker cannot satisfy would fail every container at start.
+    assert _host_mounts() == ()
 
 
 def test_a_command_is_published_to_the_container_too(tmp_path):
@@ -389,6 +448,7 @@ def test_start_blockers_leave_out_what_staging_repairs_itself():
     config_values={},
     routes={},
     route_urls={},
+    host_mounts=(),
     issues=(operator, allocation, fatal),
   )
 
@@ -413,6 +473,7 @@ def test_config_env_names_every_value_including_the_unset_ones():
     },
     routes={},
     route_urls={},
+    host_mounts=(),
     issues=(),
   )
 

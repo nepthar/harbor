@@ -585,6 +585,7 @@ def _run_data(stack, host_ports: dict[str, int] | None = None) -> AppRunData:
     config_values={},
     routes=assigned,
     route_urls=_route_urls(assigned, "home.example"),
+    host_mounts=(),
     issues=(),
   )
 

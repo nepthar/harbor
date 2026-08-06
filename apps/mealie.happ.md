@@ -9,15 +9,17 @@ so it has to be told the address it answers on. `${routes.main}` is that
 address: the URL harbor publishes the `main` route at, which is only knowable
 once the app is staged and the route is allocated.
 
+Upstream's compose sets `TZ`; this one does not. Harbor mounts the host's
+`/etc/localtime` into every container, so mealie keeps the host's time without
+being told what it is.
+
+## manifest.toml
 ```toml happ_path="manifest.toml"
 [app]
 version      = "3.22.0"
 display_name = "Mealie Recipe Manager (sqlite)"
 description  = "Manage, save, share recipes and make shopping lists"
 subdomain    = "mealie"
-
-[config]
-timezone = { desc = "The timezone of the host system", default = "UTC" }
 
 [volumes]
 data = { kind = "data", desc = "sqlite database, mealie state" }
@@ -37,6 +39,5 @@ mem_limit = "1000m"
 ALLOW_SIGNUP = "false"
 PUID         = "1000"
 PGID         = "1000"
-TZ           = "${timezone}"
 BASE_URL     = "${routes.main}"
 ```

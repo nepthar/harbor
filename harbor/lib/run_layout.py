@@ -22,6 +22,9 @@ from harbor.lib.util import ROUTE_NAMESPACE, EnvTemplate
 
 logger = getLogger("harbor.run_layout")
 
+# The host clock, bind-mounted into every container. See `_host_mounts`.
+LOCALTIME_PATH = "/etc/localtime"
+
 
 def _project_name(app_id: str) -> str:
   return re.sub(r"[^a-z0-9_-]", "_", app_id.lower())
@@ -121,6 +124,10 @@ class AppRunData:
   # The public URL of each web route, by route name; what `${routes.<name>}`
   # in [run.*.env] resolves to. Lan routes have none -- see `_route_urls`.
   route_urls: Mapping[str, str]
+  # Harbor-managed bind mounts every run unit gets; see `_host_mounts`. Held
+  # here rather than read at compose time so that what a host happens to have
+  # is decided once, in the one pass that is allowed to look at it.
+  host_mounts: tuple[str, ...]
   issues: tuple[ConfigIssue, ...]
 
   @property
@@ -293,6 +300,24 @@ def _load_routes(
   return loaded
 
 
+def _host_mounts() -> tuple[str, ...]:
+  """Binds harbor adds to every run unit, on top of the happ's own [volumes].
+
+  Just the host clock for now. An image without tzdata cannot resolve a `TZ`
+  name on its own -- bare alpine stays on UTC no matter what `TZ` says -- so
+  mounting the zone file is what upstream compose files do, and the only way
+  a happ can get host time at all ([run.*.compose] may not set `volumes`).
+
+  A happ that wants something else still wins: libc reads /etc/localtime only
+  when `TZ` is unset, so `TZ = "Etc/UTC"` in a manifest overrides this.
+  """
+  # A mount docker cannot satisfy fails the container at start, so a host
+  # without the file (or with a dangling link) simply does not get one.
+  if not Path(LOCALTIME_PATH).exists():
+    return ()
+  return (f"{LOCALTIME_PATH}:{LOCALTIME_PATH}:ro",)
+
+
 def _route_urls(routes: Mapping[str, AssignedRoute], domain: str) -> dict[str, str]:
   """Where each web route answers from outside: `https://<subdomain>.<domain>`.
 
@@ -311,7 +336,6 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
   route_vars = {
     f"{ROUTE_NAMESPACE}.{name}": url for name, url in data.route_urls.items()
   }
-
   services: dict[str, Any] = {}
   for run_name, run_unit in stack.run_units.items():
     # The manifest validator has already checked that every `${routes.x}` here
@@ -333,13 +357,20 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
 
     service["restart"] = run_unit.restart or "unless-stopped"
 
+    mounts = [_mount_string(bound) for bound in run_unit.volumes.values()]
     if run_unit.volumes:
-      service["volumes"] = [_mount_string(bound) for bound in run_unit.volumes.values()]
       volstr = ",".join(
         _env_kvpair(volname, bound.guest_path)
         for volname, bound in run_unit.volumes.items()
       )
       environment["HAPP_VOLUMES"] = volstr
+
+    # Harbor's own mounts come last, and stay out of HAPP_VOLUMES: that
+    # variable tells a happ where the volumes it declared ended up, and it
+    # declared none of these.
+    mounts.extend(data.host_mounts)
+    if mounts:
+      service["volumes"] = mounts
 
     if run_unit.command:
       environment["HAPP_CMD"] = " ".join(run_unit.command)
@@ -395,6 +426,7 @@ def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
     config_values=config_values,
     routes=routes,
     route_urls=_route_urls(routes, ctx.config.domain),
+    host_mounts=_host_mounts(),
     issues=tuple(issues),
   )
 
