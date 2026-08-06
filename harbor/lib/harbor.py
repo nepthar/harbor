@@ -1,7 +1,3 @@
-"""
-A small facade that caches the per-invocation harbordb and docker status.
-"""
-
 import json
 import logging
 import os

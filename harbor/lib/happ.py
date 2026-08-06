@@ -16,7 +16,7 @@ HAPP_MD_SUFFIX = ".happ.md"
 HAPP_TAR_SUFFIX = ".happ.tar.gz"
 
 # The point of markdown files is to be frictonless to audit and understand
-# Bigger happs are absolutely supported, but larger than this is an anti-pattern.
+# Bigger happs are supported in the standard foldar form.
 # This was chosen to be about 10x as long as what I considered "reasonable"
 HAPP_MD_CUTOFF_KB = 128
 
@@ -59,20 +59,25 @@ class HappFolder(HarborApp):
 
 @dataclass(frozen=True)
 class MdFile:
+  path: str
   executable: bool
   content: str
 
+@dataclass(frozen=True)
+class MdFileList:
+  files: list[MdFile]
+  unclosed_block: bool
 
 class HappMdFile(HarborApp):
   SUFFIX = HAPP_MD_SUFFIX
 
-  def __init__(self, path: Path, app_id: AppID, files: dict[str, MdFile]):
+  def __init__(self, path: Path, app_id: AppID, files: MdFileList):
     self.path = path
     self.app_id = app_id
     self._files = files
 
   def files(self) -> Iterator[Path]:
-    return (Path(path) for path in self._files.keys())
+    return (Path(file.path) for file in self._files.files)
 
   def app_stack(self) -> AppStack:
     # The manifest parser reads from disk, so materialize the bundle in a
@@ -84,8 +89,8 @@ class HappMdFile(HarborApp):
 
   def extract_to(self, target: Path):
     target.mkdir(parents=True, exist_ok=True)
-    for rel_path, md_file in self._files.items():
-      dest = target / rel_path
+    for md_file in self._files.files:
+      dest = target / md_file.path
       dest.parent.mkdir(parents=True, exist_ok=True)
       dest.write_text(md_file.content + "\n")
       if md_file.executable:
@@ -161,8 +166,7 @@ def scan_happs(path: Path) -> Iterator[tuple[str, Path]]:
     if not could_be_happ(entry):
       continue
     name = entry.name
-    # Longest suffix first: ".happ" would never match the others anyway, but
-    # the order makes that not worth thinking about.
+    # Longest suffix first
     for suffix in (HAPP_TAR_SUFFIX, HAPP_MD_SUFFIX, HAPP_SUFFIX):
       if name.endswith(suffix):
         yield name.removesuffix(suffix), entry.relative_to(path)
@@ -197,17 +201,13 @@ def load_happ_folder(path: Path, app_id: AppID) -> HappFolder:
   return HappFolder(path, app_id)
 
 
-def load_happ_md(path: Path, app_id: AppID) -> HappMdFile:
-  st_size_kb = path.stat().st_size / 1024
-  if st_size_kb > HAPP_MD_CUTOFF_KB:
-    raise ValueError(
-      f"{path.name} is too large to load as a happ.md file ({st_size_kb} > {HAPP_MD_CUTOFF_KB})kb"
-    )
-
-  with open(path) as f:
-    content = f.read()
-
-  files = {}
+def extract_md_files(content: str) -> MdFileList:
+  """Look for code blocks within the markdown file that have a happ_path attribute
+  and gather the contents. This parer is simple and only supports ``` as a marker,
+  although CommonMark technically supports several others as well as marker indentiation.
+  For now, this is fine
+  """
+  files = []
 
   current_path = None
   current_content = []
@@ -223,30 +223,50 @@ def load_happ_md(path: Path, app_id: AppID) -> HappMdFile:
     else:
       if line.strip() == "```":
         # End of file
-        files[current_path] = MdFile(executable=ex, content="\n".join(current_content))
+        files.append(MdFile(path=current_path, executable=ex, content="\n".join(current_content)))
         current_path = None
         current_content = []
         ex = False
       else:
         current_content.append(line)
+    
+  if current_path is not None:
+    files.append(MdFile(path=current_path, executable=ex, content="\n".join(current_content)))
+    unclosed_block = True
+  else:
+    unclosed_block = False
+
+  return MdFileList(files=files, unclosed_block=unclosed_block)
+
+def load_happ_md(path: Path, app_id: AppID) -> HappMdFile:
+  st_size_kb = path.stat().st_size / 1024
+  if st_size_kb > HAPP_MD_CUTOFF_KB:
+    raise ValueError(
+      f"{path.name} is too large to load as a happ.md file ({st_size_kb} > {HAPP_MD_CUTOFF_KB})kb"
+    )
+
+  with open(path) as f:
+    content = f.read()
+
+  files = extract_md_files(content)
 
   # Validate
   problems = []
-  if current_path is not None:
-    problems.append(f"{path.name} has an unclosed file block ({current_path})")
-  if not files:
+  if files.unclosed_block:
+    problems.append(f"{path.name} has an unclosed file block {files.files[-1].path}")
+  if not files.files:
     problems.append(f"{path.name} does not contain any files")
-  if "manifest.toml" not in files:
+  if not any(f.path == "manifest.toml" for f in files.files):
     problems.append(f"{path.name} is missing a manifest.toml file")
 
-  for fpath, md_file in files.items():
-    p = Path(fpath)
+  for md_file in files.files:
+    p = Path(md_file.path)
     if p.is_absolute():
-      problems.append(f"{path.name} has absolute file paths ({fpath})")
+      problems.append(f"{path.name} has absolute file paths ({p})")
     if ".." in p.parts:
-      problems.append(f"{path.name} has files paths that traverse up ({fpath})")
+      problems.append(f"{path.name} has files paths that traverse up ({p})")
     if len(md_file.content) == 0:
-      problems.append(f"{path.name} has empty files ({fpath})")
+      problems.append(f"{path.name} has empty file ({p})")
 
   if problems:
     raise ValueError(f"{path.name} invalid happ.md file: {', '.join(problems)}")
