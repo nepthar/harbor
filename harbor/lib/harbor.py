@@ -60,6 +60,29 @@ def _resolve_app_query(candidates: list[AppID], query: str) -> list[AppID]:
 
 
 @dataclass(frozen=True)
+class CatalogEntry:
+  """One happ bundle, as found in one app source."""
+
+  app_id: str
+  path: Path
+  source: str
+
+
+def ambiguity_message(app: AppID | str, entries: tuple[CatalogEntry, ...]) -> str:
+  """Why an ambiguous id cannot be acted on, and how to say which one you mean.
+
+  Same rule as `resolve_app`: an app id names exactly one app. Two app sources
+  carrying the same id is the one way that can be true of the catalog and
+  still be fixable by the operator, so say where both are.
+  """
+  locations = "\n".join(f"  {entry.source}: {entry.path}" for entry in entries)
+  return (
+    f'Multiple apps matched app_id "{app}":\n{locations}\n'
+    f"Pass the full path to the one you mean, or remove the others."
+  )
+
+
+@dataclass(frozen=True)
 class StagedAppPaths:
   app_id: AppID
   run_path: Path
@@ -169,11 +192,17 @@ class HarborCtx:
     return paths.happ_path
 
   def bundle_path(self, app: AppID | str) -> Path:
-    """The catalog entry ``apps/<id>.happ`` -- the only thing `stage` copies from."""
-    known = self.known_bundles().get(str(app))
-    if known is None:
+    """The catalog entry `stage` copies from. Exactly one, or an error.
+
+    An id carried by two app sources is ambiguous, and harbor will not pick
+    for you: name the bundle by path instead.
+    """
+    entries = self.catalog().get(str(app), ())
+    if not entries:
       raise ValueError(f'No app found for "{app}"')
-    return known
+    if len(entries) > 1:
+      raise ValueError(ambiguity_message(app, entries))
+    return entries[0].path
 
   def is_staged(self, app: AppID | str) -> bool:
     return self.staged_app_paths(app).exists()
@@ -189,19 +218,45 @@ class HarborCtx:
       raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
     return AppStore.from_path(paths.config_path, crypto_from_config(self.config))
 
-  def known_bundles(self) -> dict[str, Path]:
-    """Map app_id -> catalog entry under apps/.
+  def catalog(self) -> dict[str, tuple[CatalogEntry, ...]]:
+    """Every bundle in every app source, keyed by app id, in source order.
 
-    What counts as an entry is `happ.could_be_happ`'s call (via `scan_happs`);
+    What counts as a bundle is `happ.could_be_happ`'s call (via `scan_happs`);
     entries may be real directories/files or symlinks, and contents are not
-    parsed or validated here. When an id has both flavors, the .happ
-    directory wins (`scan_happs` yields it first).
+    parsed or validated here. Nothing is dropped when an id appears more than
+    once -- `bundle_path` refuses to guess, and `harbor doctor` reports it.
     """
-    apps_root = self.config.apps_root
-    found: dict[str, Path] = {}
-    for app_id, rel_path in scan_happs(apps_root):
-      found.setdefault(app_id, apps_root / rel_path)
-    return found
+    found: dict[str, list[CatalogEntry]] = {}
+    for source in self.config.app_sources:
+      for app_id, rel_path in scan_happs(source.path):
+        entry = CatalogEntry(app_id, source.path / rel_path, source.name)
+        found.setdefault(app_id, []).append(entry)
+    return {app_id: tuple(entries) for app_id, entries in found.items()}
+
+  def ambiguous_apps(self) -> dict[str, tuple[CatalogEntry, ...]]:
+    """Ids that more than one app source carries. Empty is the normal case."""
+    return {app: entries for app, entries in self.catalog().items() if len(entries) > 1}
+
+  def staged_origin(self, app: AppID | str) -> Path | None:
+    """The bundle an installed app was staged from, as `stage` recorded it.
+
+    This is what says *which* bundle is installed when several sources carry
+    the id. None when the app is not installed, or predates the record.
+    """
+    paths = self.staged_app_paths(app)
+    if not paths.config_path.is_file():
+      return None
+    origin = self.app_store(app).get_meta("origin")
+    return Path(origin) if origin else None
+
+  def known_bundles(self) -> dict[str, Path]:
+    """Map app_id -> the one catalog entry harbor would use for it.
+
+    The first app source wins when an id appears in several. This is for
+    listing and diagnostics; anything that acts on a bundle goes through
+    `bundle_path`, which refuses an ambiguous id rather than picking.
+    """
+    return {app_id: entries[0].path for app_id, entries in self.catalog().items()}
 
   def staged_app_ids(self) -> set[str]:
     """Every app id with a happ copy under run/."""

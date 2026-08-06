@@ -19,6 +19,15 @@ master_keyfile = "master.key"
 domain = "harbor.localhost"
 port_base = 41000
 
+# Optional: extra directories to look for happs in, on top of apps_root above
+# (which is always the "apps" source). Repeat the block for more. An app id
+# carried by two sources is ambiguous; `harbor doctor` reports those, and you
+# stage one by passing its full path.
+#
+# [[app_source]]
+# name     = "dev"
+# location = "~/code/happs"
+
 # Optional: attach HTTP routes for happs with web routes (publish = "web")
 # through an external reverse proxy. Without this section, routing is skipped
 # and ports are still published to the LAN. Store the password with

@@ -69,7 +69,7 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
   concise_row = next(
     line for line in concise.stdout.splitlines() if line.startswith("ports-demo")
   )
-  assert concise_row.split() == ["ports-demo", "running", "start"]
+  assert concise_row.split() == ["ports-demo", "running", "started"]
 
   stopped = harbor_env.run("stop", "ports-demo")
   assert stopped.returncode == 0, stopped.stderr
@@ -79,7 +79,7 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
     for line in harbor_env.run("ps").stdout.splitlines()
     if line.startswith("ports-demo")
   )
-  assert concise_stopped_row.split() == ["ports-demo", "exited", "stop"]
+  assert concise_stopped_row.split() == ["ports-demo", "exited", "stopped"]
 
   calls = [
     json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
@@ -778,11 +778,14 @@ def test_last_action_is_read_in_one_pass(harbor_env):
   assert harbor_env.run("start", "routes-demo").returncode == 0
 
   config = load_config_file(harbor_env.config)
-  assert read_app_actions(config) == {"ports-demo": "start", "routes-demo": "start"}
+  assert read_app_actions(config) == {
+    "ports-demo": "started",
+    "routes-demo": "started",
+  }
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
-  assert listed.stdout.count("start") >= 2
+  assert listed.stdout.count("started") >= 2
 
 
 def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
@@ -791,7 +794,7 @@ def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
   assert harbor_env.run("start", app_id).returncode == 0
 
   config = load_config_file(harbor_env.config)
-  assert read_last_app_action(app_id, config) == "start"
+  assert read_last_app_action(app_id, config) == "started"
 
   assert harbor_env.run("rm", app_id, "-y").returncode == 0
 

@@ -1,12 +1,19 @@
 import logging
 import os
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID
 from harbor.lib.logtab import LogTab
+from harbor.lib.util import validate_identifier
 
 VOLUME_KINDS = ("data", "temp", "bulk", "logs")
+
+# The name of the app source backed by `apps_root`. Always present, always
+# first, and the only one harbor itself writes to (`fetch`, and the symlink
+# `stage <path>` leaves behind).
+DEFAULT_APP_SOURCE = "apps"
 
 
 logger = logging.getLogger("harbor.config")
@@ -28,10 +35,19 @@ def _expand_path(
   return (relative_base / p).resolve()
 
 
+@dataclass(frozen=True)
+class AppSource:
+  """A directory harbor looks in for happ bundles."""
+
+  name: str
+  path: Path
+
+
 class Config:
   harbor_root: Path
   volume_roots: dict[str, Path]
   apps_root: Path
+  app_sources: tuple[AppSource, ...]
   run_root: Path
   master_key: str
   master_keyfile: Path
@@ -51,10 +67,12 @@ class Config:
     domain: str,
     port_base: int = 41000,
     route_provider: dict | None = None,
+    extra_app_sources: tuple[AppSource, ...] = (),
   ) -> None:
     self.harbor_root = harbor_root
     self.volume_roots = volume_roots
     self.apps_root = apps_root
+    self.app_sources = (AppSource(DEFAULT_APP_SOURCE, apps_root), *extra_app_sources)
     self.run_root = run_root
     self.snapshot_root = snapshot_root
     self.master_key = master_key
@@ -113,6 +131,7 @@ def load_config_file(config_file: str | Path) -> Config:
     logger.warning("Using empty master key")
 
   apps_root = ep(data.get("apps_root", "apps"))
+  extra_app_sources = _parse_app_sources(data.get("app_source", []), apps_root, ep)
   run_root = ep(data.get("run_root", "run"))
   snapshot_root = ep(data.get("snapshot_root", "snapshots"))
   domain = data.get("domain", "harbor.localhost")
@@ -130,7 +149,53 @@ def load_config_file(config_file: str | Path) -> Config:
     domain=domain,
     port_base=port_base,
     route_provider=route_provider,
+    extra_app_sources=extra_app_sources,
   )
+
+
+def _parse_app_sources(entries, apps_root: Path, ep) -> tuple[AppSource, ...]:
+  """Read the `[[app_source]]` blocks that add app directories beyond `apps/`.
+
+  Names and locations must both be unique: two sources sharing a location
+  would make every app in it resolve to two places.
+  """
+  if not isinstance(entries, list):
+    raise ValueError("app_source must be a list of [[app_source]] tables")
+
+  sources: list[AppSource] = []
+  by_path = {apps_root: DEFAULT_APP_SOURCE}
+  by_name = {DEFAULT_APP_SOURCE: apps_root}
+
+  for entry in entries:
+    name = entry.get("name")
+    location = entry.get("location")
+    if not name or not location:
+      raise ValueError(
+        "each [[app_source]] needs a name and a location, e.g.\n"
+        '  [[app_source]]\n  name = "dev"\n  location = "~/code/happs"'
+      )
+    try:
+      validate_identifier(name)
+    except ValueError as e:
+      raise ValueError(f"app_source name {name!r} is not a valid name: {e}") from e
+    if name in by_name:
+      raise ValueError(
+        f"app_source {name!r} is defined twice (or collides with the built-in "
+        f"{DEFAULT_APP_SOURCE!r} source at {by_name[name]}); give it another name"
+      )
+
+    path = ep(location)
+    if path in by_path:
+      raise ValueError(
+        f"app_source {name!r} points at {path}, which is already the "
+        f"{by_path[path]!r} source; every app there would resolve twice"
+      )
+
+    by_name[name] = path
+    by_path[path] = name
+    sources.append(AppSource(name, path))
+
+  return tuple(sources)
 
 
 CONFIG_LOCATIONS = [

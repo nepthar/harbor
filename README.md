@@ -74,7 +74,13 @@ Preqrequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 7. Examine your `apps/` folder to look at how the hello-world example is constructed.
 
 ## Creating your own apps
-You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Small apps can instead be a single `$harbor/apps/<your_app_id>.happ.md` markdown file, which keeps the whole app auditable at a glance. Harbor will then recognize it under `<your_app_id>`. The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
+You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Small apps can instead be a single `$harbor/apps/<your_app_id>.happ.md` markdown file, which keeps the whole app auditable at a glance. Harbor will then recognize it under `<your_app_id>`. To develop against a directory of happs outside `apps/`, add it to your `config.toml` as an extra app source:
+
+```toml
+[[app_source]]
+name     = "dev"
+location = "~/code/happs"
+``` The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
 
 
 ## Audience

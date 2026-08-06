@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.docker import DockerError, docker_run_command
 from harbor.lib.harbor import HarborCtx
@@ -37,14 +39,16 @@ def start(
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
+  source: Path | None = None,
 ) -> StageSuccess:
   """Stage if needed, then bring the app up and publish its web routes.
 
   `--set` and `--bind` re-stage, because config and binds are inputs to the
-  volume links and compose file that staging generates.
+  volume links and compose file that staging generates. `source` is passed
+  through to `stage`; an app already staged runs its own copy either way.
   """
   if sets or binds or not ctx.is_staged(app):
-    result = stage(app, ctx, sets=sets, binds=binds)
+    result = stage(app, ctx, sets=sets, binds=binds, source=source)
   else:
     stack = app_stack(ctx.app_path(app), app)
     result = StageSuccess(stack, load_run_data(stack, ctx))
@@ -83,7 +87,7 @@ def start(
       f"{e}. Containers may still be running; run `harbor stop {app}` to stop them."
     ) from e
 
-  record_app_action("start", app, ctx.config)
+  record_app_action("started", app, ctx.config)
   return result
 
 
@@ -140,7 +144,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
       check=True,
       env=_compose_env(app_id, ctx),
     )
-    record_app_action("stop", app_id, ctx.config)
+    record_app_action("stopped", app_id, ctx.config)
   except DockerError as e:
     record_app_action("stop-failed", app_id, ctx.config)
     raise ValueError(str(e)) from e

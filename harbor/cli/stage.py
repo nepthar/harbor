@@ -19,11 +19,11 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  app, linked = catalog_entry(ctx, args.app)
+  app, source, linked = catalog_entry(ctx, args.app)
   if linked is not None:
     conn.out(f"Linked {linked} -> {linked.resolve()}")
 
-  result = stage(app, ctx)
+  result = stage(app, ctx, source=source)
   for name in result.dropped_volumes:
     conn.err(
       f"volume {name} is no longer declared in the manifest; "

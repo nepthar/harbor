@@ -24,10 +24,3 @@ volumes = { script = "/app/app.py" }
 
 [run.main.routes]
 main = { port = "8099", publish = "web" }
-
-
-[script]
-python = """
-import sys
-print("Hello, world!")
-"""

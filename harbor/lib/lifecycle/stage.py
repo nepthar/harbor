@@ -200,43 +200,53 @@ def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str,
   return run_data, dropped
 
 
-def catalog_entry(ctx: HarborCtx, target: str) -> tuple[AppID, Path | None]:
-  """Resolve a stage/start target to an app id backed by an `apps/` entry.
+def catalog_entry(
+  ctx: HarborCtx, target: str
+) -> tuple[AppID, Path | None, Path | None]:
+  """Resolve a stage/start target to an app id and the bundle to copy from.
 
-  A path argument is symlinked into the catalog first, so `apps/` is literally
-  the only thing staging copies from and a developer's checkout keeps working
-  (docs/run-layout.md L14). Returns the entry created, if any, so the caller
-  can say so.
+  A path that no app source already carries is symlinked into `apps/`, so a
+  developer's checkout keeps working (docs/run-layout.md L14). A path that one
+  *does* carry is used where it lies: linking it into `apps/` would leave the
+  id resolving to two places, which is also why naming a bundle by path is how
+  you pick between two sources -- or two flavors -- that share an id.
+
+  Returns the app id, the bundle to stage from, and the entry created (if
+  any) so the caller can say so. A bare id resolves to no bundle here: which
+  one it names is `stage`'s problem, and only if it actually has to stage.
   """
   if not is_pathlike(target):
-    return ctx.resolve_app(target), None
+    return ctx.resolve_app(target), None, None
 
   source = Path(target).expanduser().resolve()
   app = app_id_from_path(source)
-  # The id comes from the bundle's own name, so the entry keeps the source's
-  # flavor suffix (`.happ` directory or `.happ.md` file).
-  entry = ctx.config.apps_root / source.name
+  catalogued = ctx.catalog().get(str(app), ())
+
+  for entry in catalogued:
+    if entry.path.resolve() == source:
+      return app, entry.path, None
 
   # One id, one entry: refuse when the id is already backed by a different
-  # path, even if that entry is the other bundle flavor.
-  existing = ctx.known_bundles().get(str(app))
-  if existing is not None and existing.resolve() != source:
+  # path, even if that entry is the other bundle flavor or another source.
+  if catalogued:
+    other = catalogued[0]
     raise ValueError(
-      f"App {app} is already in the catalog as {existing} -> {existing.resolve()}. "
+      f"App {app} is already in the catalog as {other.path} -> "
+      f"{other.path.resolve()}. Remove that entry to stage from {source} instead."
+    )
+
+  # The id comes from the bundle's own name, so the entry keeps the source's
+  # flavor suffix (`.happ` directory or `.happ.md` file).
+  link = ctx.config.apps_root / source.name
+  if link.is_symlink() or link.exists():
+    raise ValueError(
+      f"App {app} is already in the catalog as {link} -> {link.resolve()}. "
       f"Remove that entry to stage from {source} instead."
     )
 
-  if entry.is_symlink() or entry.exists():
-    if entry.resolve() != source:
-      raise ValueError(
-        f"App {app} is already in the catalog as {entry} -> {entry.resolve()}. "
-        f"Remove that entry to stage from {source} instead."
-      )
-    return app, None
-
-  entry.parent.mkdir(parents=True, exist_ok=True)
-  entry.symlink_to(source)
-  return app, entry
+  link.parent.mkdir(parents=True, exist_ok=True)
+  link.symlink_to(source)
+  return app, link, link
 
 
 def apply_config_sets(
@@ -278,15 +288,19 @@ def stage(
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
+  source: Path | None = None,
 ) -> StageSuccess:
-  """Install `apps/<id>.happ` into `run/<id>/` without starting it.
+  """Install a catalog bundle into `run/<id>/` without starting it.
 
   The happ copy, the volume links, the routes and compose.yml are all rebuilt
   from the manifest every time. Config values and volume *contents* are not:
   they belong to the installation, not the bundle (docs/run-layout.md §5).
+
+  `source` names the bundle to stage, for when the id alone does not (two app
+  sources carrying it). Without it the id must resolve to exactly one.
   """
   paths = ctx.staged_app_paths(app)
-  catalog = ctx.bundle_path(app)
+  catalog = source if source is not None else ctx.bundle_path(app)
 
   try:
     running_count = ctx.run_state(app).running_count

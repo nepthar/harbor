@@ -37,13 +37,13 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  app, linked = catalog_entry(ctx, args.app)
+  app, source, linked = catalog_entry(ctx, args.app)
   if linked is not None:
     conn.out(f"Linked {linked} -> {linked.resolve()}")
 
   sets = [parse_kv(item, "--set") for item in args.sets]
   binds = [parse_kv(item, "--bind") for item in args.binds]
-  result = start(app, ctx, sets=sets, binds=binds)
+  result = start(app, ctx, sets=sets, binds=binds, source=source)
 
   compact = capability_receipt(result.stack, result.run_data, ctx, compact=True)
   if compact.strip():

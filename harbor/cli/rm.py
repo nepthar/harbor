@@ -35,8 +35,9 @@ def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn) -> bool:
     conn.out(f"  {path}")
   conn.out("  its route and host-port allocations")
 
-  catalog = ctx.known_bundles().get(str(plan.app_id))
-  kept = [str(catalog)] if catalog else []
+  # Every source that carries the id: `rm` deletes the installation, never a
+  # bundle, so all of them survive and saying so is the point of this list.
+  kept = [str(entry.path) for entry in ctx.catalog().get(str(plan.app_id), ())]
   kept += [f"{path} (external bind)" for path in plan.ext_paths]
   conn.out("Left alone:")
   for path in kept:
