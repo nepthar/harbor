@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from harbor.lib.logtab import LogTab
@@ -32,25 +33,28 @@ class AppID(str):
 
 def record_app_action(action: str, app_id: AppID, config: Config) -> None:
   """Record informational last-action metadata."""
-  key = f"{app_id}/status"
+  key = f"apps/{app_id}/status"
   LogTab(config.activity_log).write(key, action)
 
 
 def read_last_app_action(app_id: AppID, config: Config) -> str | None:
   """Read informational last-action metadata."""
-  key = f"{app_id}/status"
-  return LogTab(config.activity_log).read(key)
+  key = f"apps/{app_id}/status"
+  entry = LogTab(config.activity_log).read(key)
+  return entry.value if entry else None
 
 
-def read_app_actions(config: Config) -> dict[str, str]:
+def read_app_actions(config: Config) -> dict[str, tuple[datetime, str]]:
   """Last recorded action for every app, in one pass over the activity log.
 
   All apps share one log, so callers reporting on many of them should read it
-  once rather than per app.
+  once rather than per app. Keys are bare app ids.
   """
-  actions: dict[str, str] = {}
-  for key, action in LogTab(config.activity_log).load().items():
-    app_id, _, field = key.rpartition("/")
-    if field == "status" and app_id:
-      actions[app_id] = action
+  actions: dict[str, tuple[datetime, str]] = {}
+  for key, entry in (
+    LogTab(config.activity_log).scan(prefix="apps/", suffix="/status").items()
+  ):
+    app_id = key.removeprefix("apps/").removesuffix("/status")
+    if app_id:
+      actions[app_id] = (entry.datetime(), entry.value)
   return actions

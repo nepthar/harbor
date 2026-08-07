@@ -29,12 +29,12 @@ def test_the_lock_is_recorded_then_released(harbor_env):
   activity = LogTab(ctx.config.activity_log)
 
   with ctx.lock("ps"):
-    held = json.loads(activity.read(LOCK_KEY))
+    held = json.loads(activity.read(LOCK_KEY).value)
     assert held["state"] == "acquired"
     assert held["by"] == "ps"
     assert held["pid"] == os.getpid()
 
-  released = json.loads(activity.read(LOCK_KEY))
+  released = json.loads(activity.read(LOCK_KEY).value)
   assert released["state"] == "released"
   assert released["by"] == "ps"
 
@@ -49,7 +49,6 @@ def test_the_lock_timeout_message_names_the_holder(harbor_env):
         "state": "acquired",
         "by": "start ports-demo",
         "pid": 999999,
-        "at": "2026-07-29T18:22:04-06:00",
       }
     ),
   )
@@ -71,8 +70,8 @@ def test_the_recorded_holder_is_the_command_not_the_argv(harbor_env):
   config = load_config_file(harbor_env.config)
   recorded = LogTab(config.activity_log).read(LOCK_KEY)
 
-  assert "hunter2" not in recorded
-  assert json.loads(recorded)["by"] == f"config {app_id}"
+  assert "hunter2" not in recorded.value
+  assert json.loads(recorded.value)["by"] == f"config {app_id}"
 
 
 def test_a_held_lock_makes_a_command_give_up_with_a_reason(harbor_env):

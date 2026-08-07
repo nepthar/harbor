@@ -79,7 +79,7 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
   for raw_id in app_ids:
     app_id = AppID(raw_id)
     paths = ctx.staged_paths(app_id)
-    last_action = actions.get(raw_id)
+    action = actions.get(raw_id)
     observations[app_id] = AppObservation(
       app_id=app_id,
       bundle_path=bundles.get(raw_id),
@@ -87,6 +87,6 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
       compose_exists=paths.compose_path.is_file(),
       containers=docker.get(raw_id, ()),
       db_present=raw_id in db_ids,
-      last_action=last_action,
+      last_action=action[1] if action else None,
     )
   return observations

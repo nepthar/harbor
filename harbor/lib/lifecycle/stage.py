@@ -215,8 +215,7 @@ class StageSuccess:
 
 
 def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str, ...]]:
-  """Rebuild everything derived from the happ now sitting in the run dir.
-  """
+  """Rebuild everything derived from the happ now sitting in the run dir."""
   _clear_and_reallocate_ports(stack, ctx)
 
   run_data = load_run_data(stack, ctx)
@@ -244,8 +243,7 @@ class StagingTarget:
 
 
 def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
-  """Resolve a stage/start argument -- an app id, or a path to a bundle.
-  """
+  """Resolve a stage/start argument -- an app id, or a path to a bundle."""
   if not is_pathlike(target):
     return StagingTarget(ctx.resolve_app(target), None, None)
 

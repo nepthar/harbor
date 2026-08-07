@@ -50,8 +50,7 @@ def start(
   `--set` re-stages, because config values are inputs to what staging
   generates. `--bind` re-stages only to record the bind against a validated
   manifest -- the links themselves are built here, from whatever binds are on
-  file. `bundle` is always required (same as ``stage``); an already-installed
-  app still names where it came from, even when start skips restaging.
+  file.
   """
   paths = ctx.staged_paths(app)
 
@@ -112,7 +111,7 @@ def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
   effort -- a broken or half-removed app must still be stoppable, so a stack
   that will not parse falls back to no env rather than blocking teardown.
   """
-  try:  
+  try:
     stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
     return load_run_data(stack, ctx).config_env()
   except ValueError as e:

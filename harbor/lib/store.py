@@ -34,7 +34,8 @@ class ConfigStore(Protocol):
 
 
 class JsonLogtabStore(ConfigStore):
-  """ Json-based ConfigStore on top of a Logtab """
+  """Json-based ConfigStore on top of a Logtab"""
+
   def __init__(self, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     self._table = LogTab(path)
@@ -43,12 +44,12 @@ class JsonLogtabStore(ConfigStore):
     self._table.write(key, json.dumps(value, separators=(",", ":")))
 
   def read(self, key: str) -> Any:
-    value = self._table.read(key)
-    return json.loads(value) if value is not None else None
+    entry = self._table.read(key)
+    return json.loads(entry.value) if entry is not None else None
 
   def scan(self, prefix: str = "", suffix: str = "") -> dict[str, Any]:
     matches = self._table.scan(prefix=prefix, suffix=suffix)
-    return {k.removeprefix(prefix): json.loads(v) for k, v in matches.items()}
+    return {k.removeprefix(prefix): json.loads(v.value) for k, v in matches.items()}
 
   def clear(self, prefix_or_key: str) -> None:
     if not prefix_or_key.endswith("/"):

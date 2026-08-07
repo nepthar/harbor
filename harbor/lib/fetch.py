@@ -406,8 +406,7 @@ def _raw_url(target: GithubTarget, sha: str, *extra: str) -> str:
 
 
 def _download_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
-  """Download a single-file `.happ.md` into a scratch directory.
-  """
+  """Download a single-file `.happ.md` into a scratch directory."""
   sha = resolve_ref(target)
   app_id = target.app_id
   root = _download_root(app_id, apps_root)
@@ -432,8 +431,7 @@ def _download_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
 
 
 def download_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
-  """Download the happ into a scratch directory beside its final home.
-  """
+  """Download the happ into a scratch directory beside its final home."""
   if target.is_single_file:
     return _download_md_happ(target, apps_root)
 

@@ -893,7 +893,7 @@ def test_last_action_is_read_in_one_pass(harbor_env):
   assert harbor_env.run("start", "routes-demo").returncode == 0
 
   config = load_config_file(harbor_env.config)
-  assert read_app_actions(config) == {
+  assert {k: v[1] for k, v in read_app_actions(config).items()} == {
     "ports-demo": "started",
     "routes-demo": "started",
   }
@@ -915,4 +915,4 @@ def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
 
   assert not (harbor_env.run_root / app_id).exists()
   assert read_last_app_action(app_id, config) == "removed"
-  assert f"{app_id}/status" in LogTab(config.activity_log).load()
+  assert f"apps/{app_id}/status" in LogTab(config.activity_log).load()
