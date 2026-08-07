@@ -114,7 +114,8 @@ def load_config_file(config_file: str | Path) -> Config:
   master_keyfile = ep(data.get("master_keyfile", "master.key"))
 
   # NB: Should we technically hold the lock here? Eh.
-  master_key = LogTab(master_keyfile).read("master_key") or ""
+  master_key_entry = LogTab(master_keyfile).read("master_key")
+  master_key = master_key_entry.value if master_key_entry else ""
 
   if master_key:
     logger.debug(f"Using master key from {master_keyfile}")

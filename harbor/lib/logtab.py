@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -31,6 +32,14 @@ class LogTab:
     interleave complete writes on a local POSIX filesystem.
   - Each `read` loops through the whole file. If you're looking up lots of keys, consider calling `load` instead.
   """
+
+  @dataclass(frozen=True, slots=True)
+  class Entry:
+    ts: str
+    value: str
+
+    def datetime(self) -> datetime:
+      return datetime.fromisoformat(self.ts)
 
   FS = "\t"
   KEY_RE = re.compile(r"[a-zA-Z0-9_/.-]+\Z")
@@ -105,9 +114,9 @@ class LogTab:
     else:
       logger.error(errmsg)
 
-  def load(self) -> dict[str, str]:
-    """Materialize the table into a dictionary"""
-    results = {}
+  def load(self) -> dict[str, Entry]:
+    """Materialize the table into a dictionary of Entries."""
+    results: dict[str, LogTab.Entry] = {}
     with open(self.path) as f:
       for line_number, line in enumerate(f, start=1):
         if line.startswith("#") or not line.strip():
@@ -118,10 +127,10 @@ class LogTab:
           self._value_err(errmsg)
           continue
 
-        _ts, operation, key, value = split
+        ts, operation, key, value = split
         match operation:
           case "set":
-            results[key] = value
+            results[key] = LogTab.Entry(ts=ts, value=value)
           case "del":
             results.pop(key, None)
           case "clr":
@@ -139,8 +148,8 @@ class LogTab:
     """Write a single value to the table"""
     LogTab.write_entry(self.path, key, "set", value)
 
-  def read(self, key: str) -> str | None:
-    """Read a single value from the table by exact match. This performs a full file scan."""
+  def read(self, key: str) -> Entry | None:
+    """Read a single entry by exact match. This performs a full file scan."""
     return self.load().get(key)
 
   def clear(self, prefix: str, comment: str = "") -> None:
@@ -159,8 +168,8 @@ class LogTab:
 
   def scan(
     self, prefix: str = "", suffix: str = "", contains: str = ""
-  ) -> dict[str, str]:
-    """Scan the table for values matching the given prefix and suffix
+  ) -> dict[str, Entry]:
+    """Scan the table for entries matching the given prefix and suffix.
     If no prefix or suffix is given, this is the same as load()
     """
     if prefix:

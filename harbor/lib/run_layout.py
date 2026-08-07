@@ -195,22 +195,27 @@ def _load_volume_links(
 
     mkdir = volume.kind not in ("app", "ext")
 
+    bind_cmd = f"`harbor config {app_id} --bind {volume_name}=<host path>`"
+
     if not resolved:
       issues.append(
         ConfigIssue(
           f"volume {volume_name}: not bound to a host path",
-          "Bind with `harbor config <app_id> --bind`",
+          f"Bind with {bind_cmd}",
         )
       )
       continue
 
     source, target = resolved
+    # Prevent a bound path that doesn't exist at runtime.
+    # Docker would create a folder there otherwise.
     if not source.exists() and not mkdir:
+      if volume.kind == "ext":
+        fix = f"Make {source} available again, or re-bind with {bind_cmd}"
+      else:
+        fix = f"re-stage with `harbor stage {app_id}` or this might be a bug."
       issues.append(
-        ConfigIssue(
-          f"volume {volume_name}: host path does not exist: {source}",
-          "Bind with `harbor config <app_id> --bind`",
-        )
+        ConfigIssue(f"volume {volume_name}: host path does not exist: {source}", fix)
       )
       continue
 
@@ -303,28 +308,18 @@ def _load_routes(
 def _host_mounts() -> tuple[str, ...]:
   """Binds harbor adds to every run unit, on top of the happ's own [volumes].
 
-  Just the host clock for now. An image without tzdata cannot resolve a `TZ`
-  name on its own -- bare alpine stays on UTC no matter what `TZ` says -- so
-  mounting the zone file is what upstream compose files do, and the only way
-  a happ can get host time at all ([run.*.compose] may not set `volumes`).
+  At the moment, it's just the host clock if it exists.
 
   A happ that wants something else still wins: libc reads /etc/localtime only
   when `TZ` is unset, so `TZ = "Etc/UTC"` in a manifest overrides this.
   """
-  # A mount docker cannot satisfy fails the container at start, so a host
-  # without the file (or with a dangling link) simply does not get one.
   if not Path(LOCALTIME_PATH).exists():
     return ()
   return (f"{LOCALTIME_PATH}:{LOCALTIME_PATH}:ro",)
 
 
 def _route_urls(routes: Mapping[str, AssignedRoute], domain: str) -> dict[str, str]:
-  """Where each web route answers from outside: `https://<subdomain>.<domain>`.
-
-  The reverse proxy terminates TLS for every route it publishes, so this is
-  https regardless of the route's `scheme` -- that one says how the proxy
-  dials the container behind it.
-  """
+  """Where each web route answers from outside: `https://<subdomain>.<domain>`."""
   return {
     name: f"https://{route.subdomain}.{domain}"
     for name, route in routes.items()

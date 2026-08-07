@@ -19,9 +19,11 @@ from harbor.lib.lifecycle.stage import (
   StagingTarget,
   apply_config_sets,
   bind,
+  link_ext_volumes,
   materialize,
   stage,
   staging_target,
+  unlink_ext_volumes,
 )
 
 __all__ = [
@@ -31,6 +33,7 @@ __all__ = [
   "StagingTarget",
   "apply_config_sets",
   "bind",
+  "link_ext_volumes",
   "logs",
   "materialize",
   "preflight_app_routes",
@@ -47,6 +50,7 @@ __all__ = [
   "staging_target",
   "start",
   "stop",
+  "unlink_ext_volumes",
   "unregister_app_routes",
   "web_routes",
 ]

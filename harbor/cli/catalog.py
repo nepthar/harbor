@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 from tabulate import tabulate
@@ -37,7 +38,7 @@ def _status(
   entry: CatalogEntry,
   staged: set[str],
   origins: dict[str, Path | None],
-  actions: dict[str, str],
+  actions: dict[str, tuple[datetime, str]],
 ) -> str:
   """The last thing harbor did with this bundle, or how it stands if nothing yet.
 
@@ -56,4 +57,5 @@ def _status(
   if origin is not None and origin != entry.path:
     return "-"
 
-  return actions.get(entry.app_id, "installed")
+  action = actions.get(entry.app_id)
+  return action[1] if action else "installed"

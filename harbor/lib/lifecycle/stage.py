@@ -76,12 +76,7 @@ def _discard_incoming(run_path: Path) -> None:
 
 
 def _generate_missing_config(stack: AppStack, ctx: HarborCtx) -> None:
-  """Fill in defaults and `auto` secrets, for keys that have no value yet.
-
-  Only the missing ones. Re-staging must never mint a new secret over one the
-  app's existing data already depends on, which fails as an authentication
-  error that nothing in the app explains (docs/run-layout.md §5 step 5).
-  """
+  """Fill in defaults and generate secrets for all keys possible"""
   store = ctx.app_store(stack.app)
   for config_name, config in stack.config.items():
     if config.default is None or store.has_config(config_name):
@@ -138,8 +133,16 @@ def _existing_volume_kinds(volumes_root: Path) -> dict[str, str]:
   return found
 
 
+def _make_link(destination: Path, target: Path) -> None:
+  destination.parent.mkdir(parents=True, exist_ok=True)
+  destination.symlink_to(target)
+
+
 def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
   """Point `volumes/<kind>/<name>` at the current manifest's volumes.
+
+  Note: ext/ volumes are linked in at run time as they may change between stage/run
+  like configuration parameters or secrets.
 
   Returns the names the manifest no longer declares. Their links go; their data
   never does -- a manifest edit must not be able to delete bytes.
@@ -162,15 +165,33 @@ def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, .
     shutil.rmtree(volumes_root)
 
   for volume_name, link in run_data.volume_links.items():
+    if stack.volumes[volume_name].kind == "ext":
+      continue
     logger.debug("volume %s: %s -> %s", volume_name, link.destination, link.target)
     if link.mkdir:
       link.source.mkdir(parents=True, exist_ok=True)
     if not link.source.exists():
       raise ValueError(f"volume {volume_name} source does not exist: {link.source}")
-    link.destination.parent.mkdir(parents=True, exist_ok=True)
-    link.destination.symlink_to(link.target)
+    _make_link(link.destination, link.target)
 
   return tuple(sorted(name for name in existing if name not in stack.volumes))
+
+
+def link_ext_volumes(stack: AppStack, run_data: AppRunData) -> None:
+  """Build `volumes/ext/` from the binds on file. Clobber existing links."""
+  unlink_ext_volumes(run_data.run_path)
+  for volume_name, link in run_data.volume_links.items():
+    if stack.volumes[volume_name].kind != "ext":
+      continue
+    logger.debug("ext volume %s: %s -> %s", volume_name, link.destination, link.target)
+    _make_link(link.destination, link.target)
+
+
+def unlink_ext_volumes(run_path: Path) -> None:
+  """Drop `volumes/ext/`. Only links are in there. I mean, unless YOU added something that you shouldn't."""
+  ext_root = run_path / "volumes" / "ext"
+  if ext_root.exists():
+    shutil.rmtree(ext_root)
 
 
 @dataclass(frozen=True)
@@ -181,8 +202,7 @@ class StageSuccess:
 
 
 def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str, ...]]:
-  """Rebuild everything derived from the happ now sitting in the run dir.
-  """
+  """Rebuild everything derived from the happ now sitting in the run dir."""
   _clear_and_reallocate_ports(stack, ctx)
 
   run_data = load_run_data(stack, ctx)
@@ -210,8 +230,7 @@ class StagingTarget:
 
 
 def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
-  """Resolve a stage/start argument -- an app id, or a path to a bundle.
-  """
+  """Resolve a stage/start argument -- an app id, or a path to a bundle."""
   if not is_pathlike(target):
     return StagingTarget(ctx.resolve_app(target), None, None)
 
@@ -260,7 +279,11 @@ def apply_config_sets(
 
 
 def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> None:
-  """Record an external volume bind against the staged happ."""
+  """Record an external volume bind against the staged happ.
+
+  Recording is all it does; `start` turns the binds on file into the links
+  under `volumes/ext/`.
+  """
   app = stack.app
 
   if volname not in stack.volumes:
@@ -333,6 +356,9 @@ def stage(
     raise
   _commit_incoming(paths, incoming)
 
+  store = ctx.app_store(app)
+  store.set_meta("origin", str(bundle))
+
   # Apply configuration sets if we're given them
   if sets:
     apply_config_sets(stack, sets, ctx)
@@ -350,8 +376,6 @@ def stage(
     record_app_action("stage-failed", app, ctx.config)
     raise
 
-  store = ctx.app_store(app)
-  store.set_meta("origin", str(bundle))
   store.set_meta("staged_at", LogTab.ts())
   record_app_action("staged", app, ctx.config)
   return StageSuccess(stack, run_data, dropped)

@@ -132,8 +132,7 @@ def app_id_from_path(path: Path) -> AppID:
 
 
 def is_pathlike(raw: str) -> bool:
-  """Determine if an argument looks like a filesystem path of a harbor app.
-  """
+  """Determine if an argument looks like a filesystem path of a harbor app."""
   return (
     os.sep in raw
     or raw.startswith(("~", "."))

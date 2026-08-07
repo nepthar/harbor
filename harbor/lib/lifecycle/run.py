@@ -11,7 +11,12 @@ from harbor.lib.lifecycle.routes import (
   register_app_routes,
   unregister_app_routes,
 )
-from harbor.lib.lifecycle.stage import StageSuccess, stage
+from harbor.lib.lifecycle.stage import (
+  StageSuccess,
+  link_ext_volumes,
+  stage,
+  unlink_ext_volumes,
+)
 from harbor.lib.routes import RouteProviderError
 from harbor.lib.run_layout import ConfigIssue, load_run_data
 from harbor.lib.stack import AppStack
@@ -42,10 +47,10 @@ def start(
 ) -> StageSuccess:
   """Stage if needed, then bring the app up and publish its web routes.
 
-  `--set` and `--bind` re-stage, because config and binds are inputs to the
-  volume links and compose file that staging generates. `bundle` is always
-  required (same as ``stage``); an already-installed app still names where it
-  came from, even when start skips restaging.
+  `--set` re-stages, because config values are inputs to what staging
+  generates. `--bind` re-stages only to record the bind against a validated
+  manifest -- the links themselves are built here, from whatever binds are on
+  file.
   """
   paths = ctx.staged_paths(app)
 
@@ -67,6 +72,11 @@ def start(
   except RouteProviderError as e:
     record_app_action("start-failed", app, ctx.config)
     raise ValueError(str(e)) from e
+
+  # The binds only become links here, and only for as long as the app runs.
+  # Rebuilt from scratch every time, so a bind recorded since the last start --
+  # or since the last stage, which does not touch these -- takes effect now.
+  link_ext_volumes(stack, run_data)
 
   try:
     docker_run_command(
@@ -101,7 +111,7 @@ def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
   effort -- a broken or half-removed app must still be stoppable, so a stack
   that will not parse falls back to no env rather than blocking teardown.
   """
-  try:  
+  try:
     stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
     return load_run_data(stack, ctx).config_env()
   except ValueError as e:
@@ -145,6 +155,9 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
       check=True,
       env=_compose_env(app_id, ctx),
     )
+    # Nothing is mounting them now, and leaving them behind is how a stopped
+    # app keeps looking like it is still bound to somebody's data.
+    unlink_ext_volumes(state.run_path)
     record_app_action("stopped", app_id, ctx.config)
   except DockerError as e:
     record_app_action("stop-failed", app_id, ctx.config)

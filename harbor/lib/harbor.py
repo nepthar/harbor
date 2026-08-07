@@ -31,8 +31,8 @@ def lock_timeout() -> float:
   return float(os.environ.get("HARBOR_LOCK_TIMEOUT", LOCK_TIMEOUT))
 
 
-# Where lock activity is recorded. Not an app id, so it cannot collide with the
-# per-app `<app_id>/status` keys the same log carries.
+# Where lock activity is recorded. Not under apps/, so it cannot collide with
+# the per-app `apps/<app_id>/status` keys the same log carries.
 LOCK_KEY = "harbor/lock"
 
 
@@ -130,7 +130,6 @@ class HarborCtx:
           "state": state,
           "by": by,
           "pid": os.getpid(),
-          "at": LogTab.ts(),
         },
         separators=(",", ":"),
       ),
@@ -138,17 +137,17 @@ class HarborCtx:
 
   def _lock_holder_hint(self) -> str:
     """What the last lock record says, for a timed-out acquire."""
-    raw = LogTab(self.config.activity_log).read(LOCK_KEY)
-    if not raw:
+    entry = LogTab(self.config.activity_log).read(LOCK_KEY)
+    if not entry:
       return ""
     try:
-      record = json.loads(raw)
+      record = json.loads(entry.value)
     except json.JSONDecodeError:
       return ""
     held = "Held" if record.get("state") == "acquired" else "Last held"
     return (
       f"{held} by `harbor {record.get('by', '?')}` "
-      f"(pid {record.get('pid', '?')}, since {record.get('at', '?')}).\n"
+      f"(pid {record.get('pid', '?')}, since {entry.ts}).\n"
     )
 
   def harbor_db(self) -> HarborStore:
