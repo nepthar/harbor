@@ -167,10 +167,11 @@ def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:
   names_by_path = {apps_root: DEFAULT_APP_SOURCE}
 
   for entry in entries:
-    name = location = None
+    name = ""
+    location = ""
     if isinstance(entry, dict):
-      name = entry.get("name")
-      location = entry.get("location")
+      name = entry.get("name", "")
+      location = entry.get("location", "")
     if not _nonempty_str(name) or not _nonempty_str(location):
       return refuse(
         'each [[app_source]] needs a name and a location, e.g. name = "dev", '
