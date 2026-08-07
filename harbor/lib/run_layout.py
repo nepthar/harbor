@@ -319,8 +319,7 @@ def _host_mounts() -> tuple[str, ...]:
 
 
 def _route_urls(routes: Mapping[str, AssignedRoute], domain: str) -> dict[str, str]:
-  """Where each web route answers from outside: `https://<subdomain>.<domain>`.
-  """
+  """Where each web route answers from outside: `https://<subdomain>.<domain>`."""
   return {
     name: f"https://{route.subdomain}.{domain}"
     for name, route in routes.items()

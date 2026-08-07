@@ -376,7 +376,6 @@ def stage(
     record_app_action("stage-failed", app, ctx.config)
     raise
 
-
   store.set_meta("staged_at", LogTab.ts())
   record_app_action("staged", app, ctx.config)
   return StageSuccess(stack, run_data, dropped)
