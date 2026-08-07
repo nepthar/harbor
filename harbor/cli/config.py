@@ -52,10 +52,10 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
+  store = ctx.app_store(app)
   # Schema from the staged run copy; values from the run-dir config store.
   # `harbor start --set` is the one-shot for first install.
-  stack = AppStack.from_file(ctx.manifest_path(app), app)
-  store = ctx.app_store(app)
+  stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
 
   if args.get_name is not None:
     if args.sets or args.binds:

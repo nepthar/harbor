@@ -48,7 +48,7 @@ def snapshot(
   ctx: HarborCtx,
   label: str = "",
 ) -> Path:
-  paths = ctx.staged_app_paths(app)
+  paths = ctx.staged_paths(app)
 
   if not paths.run_path.exists():
     raise ValueError(f"App {app} is not staged and therefore cannot be snapshotted")

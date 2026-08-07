@@ -26,10 +26,7 @@ LOCK_TIMEOUT = 5.0
 
 def lock_timeout() -> float:
   """The acquire timeout, overridable via `HARBOR_LOCK_TIMEOUT`.
-
-  Read per call rather than at import: the contention tests are the only thing
-  that ever waits this out in full, and at 5s each they cost more than the rest
-  of the suite combined.
+  Read per call for testing. TODO: Better solution
   """
   return float(os.environ.get("HARBOR_LOCK_TIMEOUT", LOCK_TIMEOUT))
 
@@ -163,25 +160,9 @@ class HarborCtx:
     app_id = str(app)
     return self.config.run_root / app_id
 
-  def staged_app_paths(self, app: AppID | str) -> StagedAppPaths:
+  def staged_paths(self, app: AppID | str) -> StagedAppPaths:
     app_id = AppID(app)
     return StagedAppPaths(app_id, self.config.app_run_path(app_id))
-
-  def app_path(self, app: AppID | str) -> Path:
-    """The happ harbor is actually running: its own copy at ``run/<id>/happ``.
-
-    Staging copies the bundle in, so what is installed is a fact on disk. It no
-    longer depends on the catalog entry still existing, or still containing
-    what it did at stage time.
-    """
-    paths = self.staged_app_paths(app)
-    if not paths.exists():
-      raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
-    return paths.happ_path
-
-  def manifest_path(self, app: AppID | str) -> Path:
-    """The manifest of the happ harbor is actually running; see `app_path`."""
-    return self.app_path(app) / "manifest.toml"
 
   def bundle_path(self, app: AppID | str) -> Path:
     """The catalog entry `stage` copies from. Exactly one, or an error.
@@ -190,14 +171,15 @@ class HarborCtx:
     for you: name the bundle by path instead.
     """
     entries = self.app_catalog().get(str(app), ())
-    if not entries:
+    if len(entries) == 1:
+      return entries[0].path
+    elif not entries:
       raise ValueError(f'No app found for "{app}"')
-    if len(entries) > 1:
+    else:
       raise ValueError(ambiguity_message(app, entries))
-    return entries[0].path
 
   def is_staged(self, app: AppID | str) -> bool:
-    return self.staged_app_paths(app).exists()
+    return self.staged_paths(app).exists()
 
   def app_store(self, app: AppID | str) -> AppStore:
     """The app's own config store under its run directory.
@@ -205,7 +187,7 @@ class HarborCtx:
     Config lives with the app, so an app must be staged before it can be
     configured. `harbor start --set` covers the one-shot case.
     """
-    paths = self.staged_app_paths(app)
+    paths = self.staged_paths(app)
     if not paths.run_path.is_dir():
       raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
     return AppStore.from_path(paths.config_path, crypto_from_config(self.config))
@@ -232,7 +214,7 @@ class HarborCtx:
     This is what says *which* bundle is installed when several sources carry
     the id. None when the app is not installed, or predates the record.
     """
-    paths = self.staged_app_paths(app)
+    paths = self.staged_paths(app)
     if not paths.config_path.is_file():
       return None
     origin = self.app_store(app).get_meta("origin")
@@ -317,7 +299,7 @@ class HarborCtx:
   def run_state(self, app_id: AppID | str) -> RunState:
     """ "Light" run-state of an app"""
     resolved = AppID(self._resolve_state_id(str(app_id)))
-    paths = self.staged_app_paths(resolved)
+    paths = self.staged_paths(resolved)
     return RunState(
       app_id=resolved,
       run_path=paths.run_path,

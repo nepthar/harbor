@@ -182,10 +182,6 @@ class StageSuccess:
 
 def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str, ...]]:
   """Rebuild everything derived from the happ now sitting in the run dir.
-
-  Routes, volume links and compose.yml are all functions of the manifest plus
-  live harbordb state, so they are generated, never copied. `restore` shares
-  this: it puts a happ back from a snapshot and then needs exactly this pass.
   """
   _clear_and_reallocate_ports(stack, ctx)
 
@@ -194,7 +190,7 @@ def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str,
     raise ValueError("\n".join(i.problem for i in run_data.stage_blockers))
 
   dropped = _rebuild_volume_links(stack, run_data)
-  with open(ctx.staged_app_paths(stack.app).compose_path, "w") as f:
+  with open(ctx.staged_paths(stack.app).compose_path, "w") as f:
     yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
 
   return run_data, dropped
@@ -215,12 +211,6 @@ class StagingTarget:
 
 def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
   """Resolve a stage/start argument -- an app id, or a path to a bundle.
-
-  A path that no app source already carries is symlinked into `apps/`, so a
-  developer's checkout keeps working (docs/run-layout.md L14). A path that one
-  *does* carry is used where it lies: linking it into `apps/` would leave the
-  id resolving to two places, which is also why naming a bundle by path is how
-  you pick between two sources -- or two flavors -- that share an id.
   """
   if not is_pathlike(target):
     return StagingTarget(ctx.resolve_app(target), None, None)
@@ -233,7 +223,7 @@ def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
     if entry.path.resolve() == bundle:
       return StagingTarget(app, entry.path, None)
 
-  # One id, one entry: refuse when the id is already backed by a different
+  # refuse when the id is already backed by a different
   # path, even if that entry is the other bundle flavor or another source.
   if catalogued:
     other = catalogued[0]
@@ -308,7 +298,7 @@ def stage(
   from the manifest every time. Config values and volume *contents* are not:
   they belong to the installation, not the bundle (docs/run-layout.md §5).
   """
-  paths = ctx.staged_app_paths(app)
+  paths = ctx.staged_paths(app)
 
   try:
     running_count = ctx.run_state(app).running_count

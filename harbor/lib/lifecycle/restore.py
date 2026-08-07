@@ -146,7 +146,7 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
     app_id=app,
     snapshot_path=snapshot_path,
     app_version=str(meta.get("app_version", "")),
-    run_path=ctx.staged_app_paths(app).run_path,
+    run_path=ctx.staged_paths(app).run_path,
     data_volumes=tuple(data_volumes),
     is_latest_pre_restore=bool(pre_restores) and snapshot_name == pre_restores[-1],
   )

@@ -11,7 +11,7 @@ place metadata.
 ## manifest.toml
 ```toml happ_path="manifest.toml"
 [app]
-version      = "latest"
+version      = "1.0.0"
 display_name = "Jellyfin Media Server"
 description  = "Stream your own movies, shows and music to any device"
 subdomain    = "jelly"

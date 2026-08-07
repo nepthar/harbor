@@ -78,7 +78,7 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
   observations: dict[str, AppObservation] = {}
   for raw_id in app_ids:
     app_id = AppID(raw_id)
-    paths = ctx.staged_app_paths(app_id)
+    paths = ctx.staged_paths(app_id)
     last_action = actions.get(raw_id)
     observations[app_id] = AppObservation(
       app_id=app_id,

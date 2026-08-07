@@ -411,7 +411,7 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
 
 def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
   issues: list[ConfigIssue] = []
-  run_path = ctx.staged_app_paths(stack.app).run_path
+  run_path = ctx.staged_paths(stack.app).run_path
   config_values = _load_config_values(stack, issues, ctx)
   routes = _load_routes(stack, issues, ctx)
   vol_links = _load_volume_links(stack, issues, ctx)

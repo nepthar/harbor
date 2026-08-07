@@ -31,6 +31,6 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
   # Report what is installed under run/, never the catalog entry under apps/.
   # Pass a path to a .happ to inspect a bundle that is not staged yet.
-  stack = AppStack.from_file(ctx.manifest_path(app), app)
+  stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
   run_data = load_run_data(stack, ctx)
   conn.out(capability_receipt(stack, run_data, ctx, compact=False))

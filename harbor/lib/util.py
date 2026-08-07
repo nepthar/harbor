@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import string
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from pydantic import AfterValidator
 
@@ -63,7 +63,7 @@ def fmt_size(n: float) -> str:
   return f"{n:.1f} PB"
 
 
-class Conn:
+class Conn(Protocol):
   def out(self, data: str): ...
 
   def err(self, data: str): ...

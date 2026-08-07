@@ -132,10 +132,7 @@ def app_id_from_path(path: Path) -> AppID:
 
 
 def is_pathlike(raw: str) -> bool:
-  """Decide whether an APP argument names a filesystem path vs an app id.
-
-  A valid happ path ends in a flavor suffix, so a bare name without one can
-  never be a path.
+  """Determine if an argument looks like a filesystem path of a harbor app.
   """
   return (
     os.sep in raw
@@ -256,7 +253,6 @@ def load_happ_md(path: Path, app_id: AppID) -> HappMdFile:
 
   files = extract_md_files(content)
 
-  # Validate
   problems = []
   if files.unclosed_block:
     problems.append(f"{path.name} has an unclosed file block {files.files[-1].path}")

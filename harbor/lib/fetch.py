@@ -407,10 +407,6 @@ def _raw_url(target: GithubTarget, sha: str, *extra: str) -> str:
 
 def _download_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
   """Download a single-file `.happ.md` into a scratch directory.
-
-  One blob, so there is no tree listing to vet: the stream cap enforces the
-  markdown size limit, and the caller's parse (`load_happ`) is the content
-  check, exactly as it is for a local `.happ.md`.
   """
   sha = resolve_ref(target)
   app_id = target.app_id
@@ -437,9 +433,6 @@ def _download_md_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
 
 def download_happ(target: GithubTarget, apps_root: Path) -> FetchedHapp:
   """Download the happ into a scratch directory beside its final home.
-
-  Not harbor "staging" -- nothing touches `run/` here. The bundle only lands
-  in the catalog when `commit_happ` moves it into `apps/`.
   """
   if target.is_single_file:
     return _download_md_happ(target, apps_root)

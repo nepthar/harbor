@@ -52,7 +52,7 @@ def _status(observation: AppObservation, ctx: HarborCtx) -> str:
 
   try:
     stack = AppStack.from_file(
-      ctx.manifest_path(observation.app_id), observation.app_id
+      ctx.staged_paths(observation.app_id).manifest_path, observation.app_id
     )
   except ValueError:
     # A missing or unparseable staged manifest -- the app could not be loaded

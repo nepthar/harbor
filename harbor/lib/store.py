@@ -1,11 +1,3 @@
-"""Keyed state, on top of logtab.
-
-:class:`HarborStore` holds harbor-wide state -- route allocations, system
-secrets, tokens. :class:`AppStore` holds one app's config, secrets, binds and
-metadata, in a logtab under its own run directory. Both are the only supported
-way to read or write those tables: nothing else should open the logtab itself.
-"""
-
 import json
 import logging
 import time
@@ -42,6 +34,7 @@ class ConfigStore(Protocol):
 
 
 class JsonLogtabStore(ConfigStore):
+  """ Json-based ConfigStore on top of a Logtab """
   def __init__(self, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     self._table = LogTab(path)

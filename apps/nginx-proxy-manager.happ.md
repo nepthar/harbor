@@ -1,6 +1,6 @@
 # Nginx Proxy Manager
 
-A real app, not a demo: reverse proxy with a web UI and letsencrypt certs.
+A reverse proxy with a web UI and letsencrypt cert handling.
 Runs with `network_mode = "host"` so it can bind ports 80/443 directly; two
 data volumes hold its config and certs.
 

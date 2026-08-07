@@ -34,31 +34,31 @@ def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
 
 def start(
   app: AppID,
+  bundle: Path,
   ctx: HarborCtx,
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
-  bundle: Path | None = None,
 ) -> StageSuccess:
   """Stage if needed, then bring the app up and publish its web routes.
 
   `--set` and `--bind` re-stage, because config and binds are inputs to the
-  volume links and compose file that staging generates. `bundle` names what
-  to stage; without one the id has to resolve to exactly one bundle, and only
-  if there is anything to stage at all -- an app already installed runs its
-  own copy, whatever became of the bundle it came from.
+  volume links and compose file that staging generates. `bundle` is always
+  required (same as ``stage``); an already-installed app still names where it
+  came from, even when start skips restaging.
   """
+  paths = ctx.staged_paths(app)
+
   if sets or binds or not ctx.is_staged(app):
-    result = stage(app, bundle or ctx.bundle_path(app), ctx, sets=sets, binds=binds)
+    result = stage(app, bundle, ctx, sets=sets, binds=binds)
   else:
-    stack = AppStack.from_file(ctx.manifest_path(app), app)
+    stack = AppStack.from_file(paths.manifest_path, app)
     result = StageSuccess(stack, load_run_data(stack, ctx))
 
   stack, run_data = result.stack, result.run_data
   if run_data.start_blockers:
     raise ValueError("\n".join(recovery_lines(app, run_data.start_blockers)))
 
-  paths = ctx.staged_app_paths(app)
   if not paths.compose_path.is_file():
     raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
 
@@ -101,8 +101,8 @@ def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
   effort -- a broken or half-removed app must still be stoppable, so a stack
   that will not parse falls back to no env rather than blocking teardown.
   """
-  try:
-    stack = AppStack.from_file(ctx.manifest_path(app_id), app_id)
+  try:  
+    stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
     return load_run_data(stack, ctx).config_env()
   except ValueError as e:
     logger.debug("no config env for %s: %s", app_id, e)

@@ -32,7 +32,7 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
     raise ValueError(container_recovery_message(app_id, ctx))
 
   ext_paths: tuple[Path, ...] = ()
-  paths = ctx.staged_app_paths(app_id)
+  paths = ctx.staged_paths(app_id)
   if paths.config_path.is_file():
     ext_paths = tuple(
       Path(entry["host_path"]) for entry in ctx.app_store(app_id).list_binds().values()

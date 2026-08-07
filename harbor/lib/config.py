@@ -150,11 +150,7 @@ def _nonempty_str(value) -> bool:
 
 def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:
   """The `[[app_source]]` blocks that add app directories beyond `apps/`.
-
-  Names and locations must both be unique: two sources sharing a location
-  would make every app in it resolve to two places. A problem with any of
-  them drops all of them -- every harbor command loads this file, and a typo
-  in an optional section should not be able to stop the user working.
+  Names and locations must both be unique
   """
 
   def refuse(problem: str) -> dict[str, Path]:
@@ -170,8 +166,10 @@ def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:
   names_by_path = {apps_root: DEFAULT_APP_SOURCE}
 
   for entry in entries:
-    name = entry.get("name") if isinstance(entry, dict) else None
-    location = entry.get("location") if isinstance(entry, dict) else None
+    name = location = None
+    if isinstance(entry, dict):
+      name = entry.get("name")
+      location = entry.get("location")
     if not _nonempty_str(name) or not _nonempty_str(location):
       return refuse(
         'each [[app_source]] needs a name and a location, e.g. name = "dev", '

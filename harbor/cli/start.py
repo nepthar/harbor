@@ -43,7 +43,14 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
 
   sets = [parse_kv(item, "--set") for item in args.sets]
   binds = [parse_kv(item, "--bind") for item in args.binds]
-  result = start(target.app_id, ctx, sets=sets, binds=binds, bundle=target.bundle)
+  if target.bundle is not None:
+    bundle = target.bundle
+  elif sets or binds or not ctx.is_staged(target.app_id):
+    bundle = ctx.bundle_path(target.app_id)
+  else:
+    # Catalog may be gone; start will use the run copy as-is.
+    bundle = ctx.config.app_run_path(target.app_id)
+  result = start(target.app_id, bundle, ctx, sets=sets, binds=binds)
 
   compact = capability_receipt(result.stack, result.run_data, ctx, compact=True)
   if compact.strip():

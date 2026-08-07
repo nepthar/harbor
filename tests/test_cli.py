@@ -661,7 +661,7 @@ def test_duplicate_fqdn_is_rejected_before_compose_up(
 
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
   with pytest.raises(ValueError, match="already owned"):
-    lifecycle.start(app, start_ctx)
+    lifecycle.start(app, start_ctx.bundle_path(app), start_ctx)
   assert provider.registered == []
   assert ["compose", "up", "-d"] not in docker_calls
 
@@ -678,7 +678,7 @@ def test_stop_uses_staged_manifest_when_bundle_is_missing(
   app = stage_ctx.resolve_app("routes-demo")
   lifecycle.stage(app, stage_ctx.bundle_path(app), stage_ctx)
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
-  lifecycle.start(app, start_ctx)
+  lifecycle.start(app, start_ctx.bundle_path(app), start_ctx)
   shutil.rmtree(harbor_env.root / "apps" / "routes-demo.happ")
 
   fresh_ctx = HarborCtx(load_config_file(harbor_env.config))
