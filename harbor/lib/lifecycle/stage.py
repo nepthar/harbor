@@ -138,8 +138,18 @@ def _existing_volume_kinds(volumes_root: Path) -> dict[str, str]:
   return found
 
 
+def _make_link(destination: Path, target: Path) -> None:
+  destination.parent.mkdir(parents=True, exist_ok=True)
+  destination.symlink_to(target)
+
+
 def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
   """Point `volumes/<kind>/<name>` at the current manifest's volumes.
+
+  Everything but `ext/`, which belongs to the run: `start` builds it from the
+  binds and `stop` takes it away. Staging has no business there -- a bind can
+  change without restaging, and a staged app that never started should not be
+  holding links to somebody's data.
 
   Returns the names the manifest no longer declares. Their links go; their data
   never does -- a manifest edit must not be able to delete bytes.
@@ -162,15 +172,39 @@ def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, .
     shutil.rmtree(volumes_root)
 
   for volume_name, link in run_data.volume_links.items():
+    if stack.volumes[volume_name].kind == "ext":
+      continue
     logger.debug("volume %s: %s -> %s", volume_name, link.destination, link.target)
     if link.mkdir:
       link.source.mkdir(parents=True, exist_ok=True)
     if not link.source.exists():
       raise ValueError(f"volume {volume_name} source does not exist: {link.source}")
-    link.destination.parent.mkdir(parents=True, exist_ok=True)
-    link.destination.symlink_to(link.target)
+    _make_link(link.destination, link.target)
 
   return tuple(sorted(name for name in existing if name not in stack.volumes))
+
+
+def link_ext_volumes(stack: AppStack, run_data: AppRunData) -> None:
+  """Build `volumes/ext/` from the binds on file.
+
+  The whole directory is dropped first and rebuilt from scratch, so it does not
+  matter what was there: a link to somewhere the bind no longer points, or the
+  empty directory docker creates when it mounts a bind source that was missing.
+  Run at every start, which is the only time these links mean anything.
+  """
+  unlink_ext_volumes(run_data.run_path)
+  for volume_name, link in run_data.volume_links.items():
+    if stack.volumes[volume_name].kind != "ext":
+      continue
+    logger.debug("ext volume %s: %s -> %s", volume_name, link.destination, link.target)
+    _make_link(link.destination, link.target)
+
+
+def unlink_ext_volumes(run_path: Path) -> None:
+  """Drop `volumes/ext/`. Only links are in there; `start` rebuilds them."""
+  ext_root = run_path / "volumes" / "ext"
+  if ext_root.exists():
+    shutil.rmtree(ext_root)
 
 
 @dataclass(frozen=True)
@@ -260,7 +294,11 @@ def apply_config_sets(
 
 
 def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> None:
-  """Record an external volume bind against the staged happ."""
+  """Record an external volume bind against the staged happ.
+
+  Recording is all it does; `start` turns the binds on file into the links
+  under `volumes/ext/`.
+  """
   app = stack.app
 
   if volname not in stack.volumes:

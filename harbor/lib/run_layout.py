@@ -195,22 +195,29 @@ def _load_volume_links(
 
     mkdir = volume.kind not in ("app", "ext")
 
+    bind_cmd = f"`harbor config {app_id} --bind {volume_name}=<host path>`"
+
     if not resolved:
       issues.append(
         ConfigIssue(
           f"volume {volume_name}: not bound to a host path",
-          "Bind with `harbor config <app_id> --bind`",
+          f"Bind with {bind_cmd}",
         )
       )
       continue
 
     source, target = resolved
+    # A bound path that has since gone is the common one: `bind` checks the
+    # path exists, so this is a share that stopped being mounted, or bytes
+    # someone moved. Starting anyway would let docker recreate it as an empty
+    # directory and hand the app a volume with nothing in it.
     if not source.exists() and not mkdir:
+      if volume.kind == "ext":
+        fix = f"Make {source} available again, or re-bind with {bind_cmd}"
+      else:
+        fix = f"The happ does not provide it; re-stage with `harbor stage {app_id}`"
       issues.append(
-        ConfigIssue(
-          f"volume {volume_name}: host path does not exist: {source}",
-          "Bind with `harbor config <app_id> --bind`",
-        )
+        ConfigIssue(f"volume {volume_name}: host path does not exist: {source}", fix)
       )
       continue
 
