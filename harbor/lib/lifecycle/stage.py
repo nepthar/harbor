@@ -76,12 +76,7 @@ def _discard_incoming(run_path: Path) -> None:
 
 
 def _generate_missing_config(stack: AppStack, ctx: HarborCtx) -> None:
-  """Fill in defaults and `auto` secrets, for keys that have no value yet.
-
-  Only the missing ones. Re-staging must never mint a new secret over one the
-  app's existing data already depends on, which fails as an authentication
-  error that nothing in the app explains (docs/run-layout.md §5 step 5).
-  """
+  """Fill in defaults and generate secrets for all keys possible"""
   store = ctx.app_store(stack.app)
   for config_name, config in stack.config.items():
     if config.default is None or store.has_config(config_name):
@@ -146,10 +141,8 @@ def _make_link(destination: Path, target: Path) -> None:
 def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
   """Point `volumes/<kind>/<name>` at the current manifest's volumes.
 
-  Everything but `ext/`, which belongs to the run: `start` builds it from the
-  binds and `stop` takes it away. Staging has no business there -- a bind can
-  change without restaging, and a staged app that never started should not be
-  holding links to somebody's data.
+  Note: ext/ volumes are linked in at run time as they may change between stage/run
+  like configuration parameters or secrets.
 
   Returns the names the manifest no longer declares. Their links go; their data
   never does -- a manifest edit must not be able to delete bytes.
@@ -185,13 +178,7 @@ def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, .
 
 
 def link_ext_volumes(stack: AppStack, run_data: AppRunData) -> None:
-  """Build `volumes/ext/` from the binds on file.
-
-  The whole directory is dropped first and rebuilt from scratch, so it does not
-  matter what was there: a link to somewhere the bind no longer points, or the
-  empty directory docker creates when it mounts a bind source that was missing.
-  Run at every start, which is the only time these links mean anything.
-  """
+  """Build `volumes/ext/` from the binds on file. Clobber existing links."""
   unlink_ext_volumes(run_data.run_path)
   for volume_name, link in run_data.volume_links.items():
     if stack.volumes[volume_name].kind != "ext":
@@ -201,7 +188,7 @@ def link_ext_volumes(stack: AppStack, run_data: AppRunData) -> None:
 
 
 def unlink_ext_volumes(run_path: Path) -> None:
-  """Drop `volumes/ext/`. Only links are in there; `start` rebuilds them."""
+  """Drop `volumes/ext/`. Only links are in there. I mean, unless YOU added something that you shouldn't."""
   ext_root = run_path / "volumes" / "ext"
   if ext_root.exists():
     shutil.rmtree(ext_root)
@@ -369,6 +356,9 @@ def stage(
     raise
   _commit_incoming(paths, incoming)
 
+  store = ctx.app_store(app)
+  store.set_meta("origin", str(bundle))
+
   # Apply configuration sets if we're given them
   if sets:
     apply_config_sets(stack, sets, ctx)
@@ -386,8 +376,7 @@ def stage(
     record_app_action("stage-failed", app, ctx.config)
     raise
 
-  store = ctx.app_store(app)
-  store.set_meta("origin", str(bundle))
+
   store.set_meta("staged_at", LogTab.ts())
   record_app_action("staged", app, ctx.config)
   return StageSuccess(stack, run_data, dropped)

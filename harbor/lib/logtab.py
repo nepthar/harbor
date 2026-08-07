@@ -33,7 +33,7 @@ class LogTab:
   - Each `read` loops through the whole file. If you're looking up lots of keys, consider calling `load` instead.
   """
 
-  @dataclass(frozen=True)
+  @dataclass(frozen=True, slots=True)
   class Entry:
     ts: str
     value: str

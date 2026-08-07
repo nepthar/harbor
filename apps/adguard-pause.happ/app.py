@@ -35,7 +35,7 @@ PORT = int(os.environ.get("PORT", "8099"))
 
 
 def log(msg):
-    print(msg, file=sys.stderr, flush=True)
+  print(msg, file=sys.stderr, flush=True)
 
 
 # AdGuard Home authenticates the /control API with a session cookie from
@@ -46,71 +46,72 @@ _session = {"cookie": None}
 
 
 def _login():
-    data = json.dumps({"name": AGH_USER, "password": AGH_PASS}).encode()
-    req = urllib.request.Request(
-        f"{AGH_URL}/control/login",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=8) as r:
-        raw = r.headers.get("Set-Cookie", "")
-    cookie = raw.split(";", 1)[0] if raw else ""
-    if not cookie:
-        raise RuntimeError("AdGuard accepted the login but returned no session cookie")
-    log(f"logged in to {AGH_URL} as {AGH_USER}")
-    _session["cookie"] = cookie
-    return cookie
+  data = json.dumps({"name": AGH_USER, "password": AGH_PASS}).encode()
+  req = urllib.request.Request(
+    f"{AGH_URL}/control/login",
+    data=data,
+    headers={"Content-Type": "application/json"},
+  )
+  with urllib.request.urlopen(req, timeout=8) as r:
+    raw = r.headers.get("Set-Cookie", "")
+  cookie = raw.split(";", 1)[0] if raw else ""
+  if not cookie:
+    raise RuntimeError("AdGuard accepted the login but returned no session cookie")
+  log(f"logged in to {AGH_URL} as {AGH_USER}")
+  _session["cookie"] = cookie
+  return cookie
 
 
 def _call(path, payload=None, retry=True):
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(
-        f"{AGH_URL}{path}",
-        data=data,
-        method="POST" if data else "GET",
-        headers={
-            "Cookie": _session["cookie"] or _login(),
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=8) as r:
-            body = r.read()
-    except urllib.error.HTTPError as e:
-        # Sessions expire. One silent re-login, then give up so a wrong
-        # password cannot turn into a login loop.
-        if e.code == 401 and retry:
-            _session["cookie"] = None
-            return _call(path, payload, retry=False)
-        raise
-    if not body.strip():
-        return {}
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError:
-        # AdGuard's /control/protection replies with plain "OK".
-        return {}
+  data = json.dumps(payload).encode() if payload is not None else None
+  req = urllib.request.Request(
+    f"{AGH_URL}{path}",
+    data=data,
+    method="POST" if data else "GET",
+    headers={
+      "Cookie": _session["cookie"] or _login(),
+      "Content-Type": "application/json",
+    },
+  )
+  try:
+    with urllib.request.urlopen(req, timeout=8) as r:
+      body = r.read()
+  except urllib.error.HTTPError as e:
+    # Sessions expire. One silent re-login, then give up so a wrong
+    # password cannot turn into a login loop.
+    if e.code == 401 and retry:
+      _session["cookie"] = None
+      return _call(path, payload, retry=False)
+    raise
+  if not body.strip():
+    return {}
+  try:
+    return json.loads(body)
+  except json.JSONDecodeError:
+    # AdGuard's /control/protection replies with plain "OK".
+    return {}
 
 
 def state():
-    """Ask AdGuard Home what's actually true right now."""
-    s = _call("/control/status")
-    if s.get("protection_enabled", True):
-        return {"paused": False, "seconds_left": 0}
-    # AdGuard reports remaining disable time in milliseconds.
-    left = int((s.get("protection_disabled_duration") or 0) / 1000)
-    return {"paused": left > 0, "seconds_left": max(left, 0)}
+  """Ask AdGuard Home what's actually true right now."""
+  s = _call("/control/status")
+  if s.get("protection_enabled", True):
+    return {"paused": False, "seconds_left": 0}
+  # AdGuard reports remaining disable time in milliseconds.
+  left = int((s.get("protection_disabled_duration") or 0) / 1000)
+  return {"paused": left > 0, "seconds_left": max(left, 0)}
 
 
 def pause():
-    _call("/control/protection",
-          {"enabled": False, "duration": PAUSE_MINUTES * 60 * 1000})
-    log(f"paused for {PAUSE_MINUTES} min")
+  _call(
+    "/control/protection", {"enabled": False, "duration": PAUSE_MINUTES * 60 * 1000}
+  )
+  log(f"paused for {PAUSE_MINUTES} min")
 
 
 def resume():
-    _call("/control/protection", {"enabled": True})
-    log("resumed")
+  _call("/control/protection", {"enabled": True})
+  log("resumed")
 
 
 PAGE = """<!doctype html>
@@ -209,54 +210,56 @@ sync();
 
 
 class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+  protocol_version = "HTTP/1.1"
 
-    def _send(self, code, body, ctype):
-        body = body.encode() if isinstance(body, str) else body
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+  def _send(self, code, body, ctype):
+    body = body.encode() if isinstance(body, str) else body
+    self.send_response(code)
+    self.send_header("Content-Type", ctype)
+    self.send_header("Content-Length", str(len(body)))
+    self.send_header("Cache-Control", "no-store")
+    self.end_headers()
+    self.wfile.write(body)
 
-    def do_GET(self):
-        try:
-            if self.path == "/":
-                self._send(200, PAGE.replace("MINUTES", str(PAUSE_MINUTES)), "text/html; charset=utf-8")
-            elif self.path == "/state":
-                self._send(200, json.dumps(state()), "application/json")
-            elif self.path == "/go":  # physical button
-                pause()
-                self._send(200, f"ads allowed for {PAUSE_MINUTES} min\n", "text/plain")
-            else:
-                self._send(404, "no\n", "text/plain")
-        except Exception as e:
-            log(f"GET {self.path} failed: {type(e).__name__}: {e}")
-            self._send(502, f"adguard unreachable: {e}\n", "text/plain")
+  def do_GET(self):
+    try:
+      if self.path == "/":
+        self._send(
+          200, PAGE.replace("MINUTES", str(PAUSE_MINUTES)), "text/html; charset=utf-8"
+        )
+      elif self.path == "/state":
+        self._send(200, json.dumps(state()), "application/json")
+      elif self.path == "/go":  # physical button
+        pause()
+        self._send(200, f"ads allowed for {PAUSE_MINUTES} min\n", "text/plain")
+      else:
+        self._send(404, "no\n", "text/plain")
+    except Exception as e:
+      log(f"GET {self.path} failed: {type(e).__name__}: {e}")
+      self._send(502, f"adguard unreachable: {e}\n", "text/plain")
 
-    def do_POST(self):
-        try:
-            if self.path == "/pause":
-                pause()
-            elif self.path == "/resume":
-                resume()
-            else:
-                return self._send(404, "no\n", "text/plain")
-            self._send(200, json.dumps(state()), "application/json")
-        except Exception as e:
-            log(f"POST {self.path} failed: {type(e).__name__}: {e}")
-            self._send(502, json.dumps({"error": str(e)}), "application/json")
+  def do_POST(self):
+    try:
+      if self.path == "/pause":
+        pause()
+      elif self.path == "/resume":
+        resume()
+      else:
+        return self._send(404, "no\n", "text/plain")
+      self._send(200, json.dumps(state()), "application/json")
+    except Exception as e:
+      log(f"POST {self.path} failed: {type(e).__name__}: {e}")
+      self._send(502, json.dumps({"error": str(e)}), "application/json")
 
-    def log_message(self, format: str, *args: object) -> None:
-        # /state is polled every 10s per open page; logging it drowns out
-        # everything worth reading. Everything else is rare and interesting.
-        if self.path != "/state":
-            log(f"{self.command} {self.path}")
+  def log_message(self, format: str, *args: object) -> None:
+    # /state is polled every 10s per open page; logging it drowns out
+    # everything worth reading. Everything else is rare and interesting.
+    if self.path != "/state":
+      log(f"{self.command} {self.path}")
 
 
 if __name__ == "__main__":
-    if not AGH_PASS:
-        raise SystemExit("Set AGH_PASS to your AdGuard Home web password.")
-    log(f"adpause on :{PORT} -> {AGH_URL} as {AGH_USER} ({PAUSE_MINUTES} min)")
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+  if not AGH_PASS:
+    raise SystemExit("Set AGH_PASS to your AdGuard Home web password.")
+  log(f"adpause on :{PORT} -> {AGH_URL} as {AGH_USER} ({PAUSE_MINUTES} min)")
+  ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

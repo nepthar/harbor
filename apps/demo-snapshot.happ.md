@@ -75,97 +75,97 @@ TICKS = STATE_DIR / "ticks.log"
 
 
 def log(msg):
-    print(msg, file=sys.stderr, flush=True)
+  print(msg, file=sys.stderr, flush=True)
 
 
 def read_ticks():
-    """Every timestamp recorded so far, oldest first."""
-    if not TICKS.is_file():
-        return []
-    return [line for line in TICKS.read_text().splitlines() if line]
+  """Every timestamp recorded so far, oldest first."""
+  if not TICKS.is_file():
+    return []
+  return [line for line in TICKS.read_text().splitlines() if line]
 
 
 def append_tick():
-    stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%SZ")
-    # Append rather than rewrite: a torn write can then cost at most the one
-    # line being added, not the whole history the demo is about.
-    with TICKS.open("a") as f:
-        f.write(stamp + "\n")
-    return stamp
+  stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%SZ")
+  # Append rather than rewrite: a torn write can then cost at most the one
+  # line being added, not the whole history the demo is about.
+  with TICKS.open("a") as f:
+    f.write(stamp + "\n")
+  return stamp
 
 
 def summary():
-    ticks = read_ticks()
-    return {
-        "label": LABEL,
-        "last_ticks": ticks[-10:],
-        "first_tick": ticks[0] if ticks else None,
-        "tick_count": len(ticks),
-        "state_file": str(TICKS),
-    }
+  ticks = read_ticks()
+  return {
+    "label": LABEL,
+    "last_ticks": ticks[-10:],
+    "first_tick": ticks[0] if ticks else None,
+    "tick_count": len(ticks),
+    "state_file": str(TICKS),
+  }
 
 
 def ticker():
-    while True:
-        try:
-            log(f"tick {append_tick()}")
-        except OSError as e:
-            log(f"could not write {TICKS}: {e}")
-        threading.Event().wait(TICK_SECONDS)
+  while True:
+    try:
+      log(f"tick {append_tick()}")
+    except OSError as e:
+      log(f"could not write {TICKS}: {e}")
+    threading.Event().wait(TICK_SECONDS)
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        data = summary()
+  def do_GET(self):
+    data = summary()
 
-        if self.path.rstrip("/") == "/state":
-            body = json.dumps(data, indent=2) + "\n"
-            content_type = "application/json"
-        else:
-            recent = "\n".join(f"  {stamp}" for stamp in reversed(data["last_ticks"]))
-            body = (
-                f"Your config param was: {LABEL}\n"
-                f"\n"
-                f"last {len(data['last_ticks'])} tick(s), newest first:\n"
-                f"{recent or '  (nothing recorded yet)'}\n"
-                f"\n"
-                f"ticks recorded: {data['tick_count']}\n"
-                f"first tick:     {data['first_tick'] or '(none)'}\n"
-                f"state file:     {data['state_file']}\n"
-                f"tick interval:  {TICK_SECONDS}s\n"
-            )
-            content_type = "text/plain; charset=utf-8"
+    if self.path.rstrip("/") == "/state":
+      body = json.dumps(data, indent=2) + "\n"
+      content_type = "application/json"
+    else:
+      recent = "\n".join(f"  {stamp}" for stamp in reversed(data["last_ticks"]))
+      body = (
+        f"Your config param was: {LABEL}\n"
+        f"\n"
+        f"last {len(data['last_ticks'])} tick(s), newest first:\n"
+        f"{recent or '  (nothing recorded yet)'}\n"
+        f"\n"
+        f"ticks recorded: {data['tick_count']}\n"
+        f"first tick:     {data['first_tick'] or '(none)'}\n"
+        f"state file:     {data['state_file']}\n"
+        f"tick interval:  {TICK_SECONDS}s\n"
+      )
+      content_type = "text/plain; charset=utf-8"
 
-        raw = body.encode()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(raw)))
-        # The whole point is to see state change, so never let a browser or a
-        # proxy answer from cache.
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(raw)
+    raw = body.encode()
+    self.send_response(200)
+    self.send_header("Content-Type", content_type)
+    self.send_header("Content-Length", str(len(raw)))
+    # The whole point is to see state change, so never let a browser or a
+    # proxy answer from cache.
+    self.send_header("Cache-Control", "no-store")
+    self.end_headers()
+    self.wfile.write(raw)
 
-    def log_message(self, fmt, *args):
-        log(f"{self.address_string()} {fmt % args}")
+  def log_message(self, fmt, *args):
+    log(f"{self.address_string()} {fmt % args}")
 
 
 def main():
-    if not LABEL:
-        sys.exit("LABEL is not set; run `harbor config demo-snapshot --set label=...`")
+  if not LABEL:
+    sys.exit("LABEL is not set; run `harbor config demo-snapshot --set label=...`")
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    existing = read_ticks()
-    log(f"state at {TICKS}: {len(existing)} tick(s) already recorded")
-    if existing:
-        log(f"most recent was {existing[-1]}")
+  STATE_DIR.mkdir(parents=True, exist_ok=True)
+  existing = read_ticks()
+  log(f"state at {TICKS}: {len(existing)} tick(s) already recorded")
+  if existing:
+    log(f"most recent was {existing[-1]}")
 
-    threading.Thread(target=ticker, daemon=True).start()
+  threading.Thread(target=ticker, daemon=True).start()
 
-    log(f"listening on :{PORT} with label {LABEL!r}")
-    ThreadingHTTPServer(("", PORT), Handler).serve_forever()
+  log(f"listening on :{PORT} with label {LABEL!r}")
+  ThreadingHTTPServer(("", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":
-    main()
+  main()
 ```
