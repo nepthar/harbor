@@ -44,8 +44,12 @@ apps_root = "apps"
 run_root = "run"
 volume_root = "volumes"
 master_keyfile = "master.key"
-domain = "harbor.localhost"
 port_base = 41000
+default_route_provider = "web"
+
+[route_provider.web]
+kind = "noop"
+domain = "harbor.localhost"
 """
 
 FAKE_DOCKER = """#!/usr/bin/env python3

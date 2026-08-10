@@ -193,6 +193,23 @@ class AppStore:
   def list_binds(self) -> dict[str, Any]:
     return self._store.scan("binds/")
 
+  def set_route_assignment(self, route_name: str, provider_tag: str) -> None:
+    """Record which route-provider tag publishes ``route_name``."""
+    self._store.write(f"routes/{route_name}", provider_tag)
+
+  def get_route_assignment(self, route_name: str) -> str | None:
+    """Return the assigned provider tag, or None if never set."""
+    value = self._store.read(f"routes/{route_name}")
+    return value if isinstance(value, str) else None
+
+  def has_route_assignment(self, route_name: str) -> bool:
+    return self._store.read(f"routes/{route_name}") is not None
+
+  def list_route_assignments(self) -> dict[str, str]:
+    """route name -> provider tag for every assignment on file."""
+    raw = self._store.scan("routes/")
+    return {name: tag for name, tag in raw.items() if isinstance(tag, str)}
+
   def set_meta(self, name: str, value: Any) -> None:
     self._store.write(f"meta/{name}", value)
 

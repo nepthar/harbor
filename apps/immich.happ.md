@@ -36,7 +36,7 @@ image   = "ghcr.io/immich-app/immich-server:v3.1.0"
 volumes = { photos = "/data" }
 
 [run.main.routes]
-main = { port = "2283", publish = "web" }
+main = { port = "2283", public = true }
 
 [run.main.compose]
 depends_on = ["redis", "database"]

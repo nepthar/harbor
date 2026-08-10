@@ -5,6 +5,7 @@ version      = "0.1.0"
 display_name = "Ports Demo"
 description  = "Port allocation fixture"
 runtime      = "image"
+subdomain    = "ports"
 
 [run.main]
 image  = "alpine:latest"

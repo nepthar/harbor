@@ -14,6 +14,11 @@ VOLUME_KINDS = ("data", "temp", "bulk", "logs")
 # `stage <path>` leaves behind).
 DEFAULT_APP_SOURCE = "apps"
 
+# Built-in noop provider tag. Always present; operators may not redefine it.
+NONE_ROUTE_PROVIDER_TAG = "none"
+# Domain used for route URLs when a route is unassigned or assigned to none.
+PLACEHOLDER_DOMAIN = "harbor.localhost"
+
 
 logger = logging.getLogger("harbor.config")
 
@@ -42,9 +47,9 @@ class Config:
   run_root: Path
   master_key: str
   master_keyfile: Path
-  domain: str
   port_base: int
-  route_provider: dict
+  default_route_provider: str
+  route_providers: dict[str, dict]
 
   def __init__(
     self,
@@ -55,9 +60,9 @@ class Config:
     snapshot_root: Path,
     master_key: str,
     master_keyfile: Path,
-    domain: str,
     port_base: int = 41000,
-    route_provider: dict | None = None,
+    default_route_provider: str = NONE_ROUTE_PROVIDER_TAG,
+    route_providers: dict[str, dict] | None = None,
     extra_app_sources: dict[str, Path] | None = None,
   ) -> None:
     self.harbor_root = harbor_root
@@ -68,9 +73,11 @@ class Config:
     self.snapshot_root = snapshot_root
     self.master_key = master_key
     self.master_keyfile = master_keyfile
-    self.domain = domain
     self.port_base = port_base
-    self.route_provider = route_provider or {}
+    self.default_route_provider = default_route_provider
+    self.route_providers = route_providers or {
+      NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN}
+    }
 
   @property
   def harbor_lockfile_path(self) -> Path:
@@ -87,6 +94,15 @@ class Config:
   def app_run_path(self, app_id: AppID) -> Path:
     return self.run_root / app_id
 
+  def provider_domain(self, tag: str) -> str:
+    """Domain for a route-provider tag; placeholder when unassigned/none."""
+    if not tag or tag == NONE_ROUTE_PROVIDER_TAG:
+      return PLACEHOLDER_DOMAIN
+    conf = self.route_providers.get(tag)
+    if conf is None:
+      return PLACEHOLDER_DOMAIN
+    return conf.get("domain", PLACEHOLDER_DOMAIN)
+
 
 def load_config_file(config_file: str | Path) -> Config:
   config_path = Path(config_file).resolve()
@@ -95,6 +111,12 @@ def load_config_file(config_file: str | Path) -> Config:
 
   with open(config_path, "rb") as f:
     data = tomllib.load(f)
+
+  if "domain" in data:
+    raise ValueError(
+      "top-level 'domain' is no longer valid; set domain on each "
+      "[route_provider.<tag>] instead"
+    )
 
   if "volume_root" in data and "volume_roots" in data:
     raise ValueError(
@@ -126,9 +148,8 @@ def load_config_file(config_file: str | Path) -> Config:
   extra_app_sources = _parse_app_sources(data.get("app_source", []), apps_root, ep)
   run_root = ep(data.get("run_root", "run"))
   snapshot_root = ep(data.get("snapshot_root", "snapshots"))
-  domain = data.get("domain", "harbor.localhost")
   port_base = data.get("port_base", 41000)
-  route_provider = data.get("route_provider", {})
+  default_route_provider, route_providers = _parse_route_providers(data)
 
   return Config(
     harbor_root=harbor_root,
@@ -138,11 +159,77 @@ def load_config_file(config_file: str | Path) -> Config:
     snapshot_root=snapshot_root,
     master_key=master_key,
     master_keyfile=master_keyfile,
-    domain=domain,
     port_base=port_base,
-    route_provider=route_provider,
+    default_route_provider=default_route_provider,
+    route_providers=route_providers,
     extra_app_sources=extra_app_sources,
   )
+
+
+def _parse_route_providers(data: dict) -> tuple[str, dict[str, dict]]:
+  """Parse `[route_provider.<tag>]` tables and `default_route_provider`.
+
+  Always injects the reserved `none` noop provider. A user-defined `none` tag
+  is a configuration error.
+  """
+  raw = data.get("route_provider", {})
+  if raw is None:
+    raw = {}
+  if not isinstance(raw, dict):
+    raise ValueError("route_provider must be a table of [route_provider.<tag>] entries")
+
+  if NONE_ROUTE_PROVIDER_TAG in raw:
+    raise ValueError(
+      f"route_provider tag {NONE_ROUTE_PROVIDER_TAG!r} is reserved; "
+      f"remove [route_provider.{NONE_ROUTE_PROVIDER_TAG}] from config.toml"
+    )
+
+  providers: dict[str, dict] = {
+    NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN},
+  }
+
+  for tag, conf in raw.items():
+    try:
+      validate_identifier(tag)
+    except ValueError as e:
+      raise ValueError(f"route_provider tag {tag!r} is not a valid name: {e}") from e
+    if not isinstance(conf, dict):
+      raise ValueError(
+        f"route_provider.{tag}: expected a table, e.g. "
+        f'[route_provider.{tag}] with kind = "nginx_proxy_manager"'
+      )
+    kind = conf.get("kind")
+    if not _nonempty_str(kind):
+      raise ValueError(
+        f'route_provider.{tag}: missing required key "kind" '
+        f'(e.g. kind = "nginx_proxy_manager")'
+      )
+    if kind not in ("nginx_proxy_manager", "noop"):
+      raise ValueError(
+        f"route_provider.{tag}: unknown kind {kind!r}; "
+        f'expected "nginx_proxy_manager" or "noop"'
+      )
+    domain = conf.get("domain")
+    if kind != "noop" and not _nonempty_str(domain):
+      raise ValueError(f'route_provider.{tag}: missing required key "domain"')
+    entry = dict(conf)
+    if not _nonempty_str(entry.get("domain")):
+      entry["domain"] = PLACEHOLDER_DOMAIN
+    providers[tag] = entry
+
+  default = data.get("default_route_provider", NONE_ROUTE_PROVIDER_TAG)
+  if not _nonempty_str(default):
+    raise ValueError(
+      "default_route_provider must be a non-empty string tag "
+      f"(or omit it for {NONE_ROUTE_PROVIDER_TAG!r})"
+    )
+  if default not in providers:
+    raise ValueError(
+      f"default_route_provider {default!r} is not a configured route_provider; "
+      f"add [route_provider.{default}] or set default_route_provider to a known tag"
+    )
+
+  return default, providers
 
 
 def _nonempty_str(value) -> bool:

@@ -88,7 +88,6 @@ apps_root = "apps"
 run_root = "run"
 volume_root = "volumes"
 master_keyfile = "master.key"
-domain = "harbor.localhost"
 port_base = 41000
 """
   )

@@ -29,7 +29,7 @@ volumes = { app_config = "/config" }
 env     = { MONGO_HOST = "unifi-db", MONGO_PASS = "${mongo_pass}", ... }
 
 [run.main.routes]
-main = { port = "8443", publish = "web", scheme = "https" }
+main = { port = "8443", public = true, scheme = "https" }
 ```
 
 

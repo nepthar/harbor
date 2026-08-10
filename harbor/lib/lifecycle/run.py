@@ -45,7 +45,7 @@ def start(
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
 ) -> StageSuccess:
-  """Stage if needed, then bring the app up and publish its web routes.
+  """Stage if needed, then bring the app up and register assigned routes.
 
   `--set` re-stages, because config values are inputs to what staging
   generates. `--bind` re-stages only to record the bind against a validated

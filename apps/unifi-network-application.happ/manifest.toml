@@ -36,7 +36,7 @@ image = "lscr.io/linuxserver/unifi-network-application:10.0.162"
 volumes = { app_data = "/config/data", app_logs = "/config/logs" }
 
 [run.main.routes]
-admin        = { port = "8443:8443", publish = "web", scheme = "https" }
+admin        = { port = "8443:8443", public = true, scheme = "https" }
 stun         = { port = "3478:3478" }
 ap_discovery = { port = "10001:10001/udp" }
 device_comm  = { port = "8080:8080" }

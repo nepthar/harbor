@@ -43,9 +43,9 @@ def test_start_materializes_compose_and_port_state(harbor_env):
   web = db["routes"]["ports-demo"]["web"]
   admin = db["routes"]["ports-demo"]["admin"]
   assert web["host_port"] == 41000
-  assert web["publish"] == "lan"
+  assert web["scheme"] == "http"
   assert admin["host_port"] == 9000
-  assert admin["publish"] == "lan"
+  assert "publish" not in admin
 
 
 def test_start_ps_stop_tracks_docker_reality(harbor_env):
@@ -60,7 +60,7 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
   started = harbor_env.run("start", "ports-demo")
   assert started.returncode == 0, started.stderr
   assert "Running ports-demo" in started.stdout
-  assert "LAN:" in started.stdout
+  assert "Host:" in started.stdout
   assert "harbor logs -f ports-demo" in started.stdout
 
   concise = harbor_env.run("ps")
@@ -120,7 +120,7 @@ def test_status_and_inspect(harbor_env):
   status = harbor_env.run("status", "ports-demo")
   assert status.returncode == 0, status.stderr
   assert "running" in status.stdout
-  assert "LAN:" in status.stdout
+  assert "Host:" in status.stdout
   assert "harbor logs -f ports-demo" in status.stdout
 
   inspected = harbor_env.run("inspect", "ports-demo")
@@ -684,7 +684,6 @@ def test_doctor_reports_orphaned_routes(harbor_env):
         "host_port": 41000,
         "container_port": 8080,
         "proto": "tcp",
-        "publish": "lan",
         "scheme": "http",
       }
     }
@@ -750,7 +749,7 @@ def stub_provider(monkeypatch):
     provider = _RecordingRouteProvider(owners)
     monkeypatch.setattr(
       "harbor.lib.lifecycle.routes.get_route_provider",
-      lambda db, config: provider,
+      lambda db, config, tag: provider,
     )
     monkeypatch.setattr("harbor.lib.harbor.load_harbor_run_unit_status", lambda: {})
     return provider
@@ -877,7 +876,7 @@ def test_readme_quickstart_from_repo_apps(harbor_env):
   started = harbor_env.run("start", str(happ))
   assert started.returncode == 0, started.stderr
   assert "Running demo-routes" in started.stdout
-  assert "LAN:" in started.stdout
+  assert "Host:" in started.stdout
 
   ps = harbor_env.run("ps")
   assert ps.returncode == 0, ps.stderr

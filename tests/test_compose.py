@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from harbor.lib.apps import AppID
+from harbor.lib.config import PLACEHOLDER_DOMAIN
 from harbor.lib.manifest import ConfigError, parse_manifest
 from harbor.lib.run_layout import (
   LOCALTIME_PATH,
@@ -38,6 +39,7 @@ def run_data(
   config_values: dict[str, ConfigValue] | None = None,
   host_mounts: tuple[str, ...] = (),
   issues: tuple[ConfigIssue, ...] = (),
+  assignments: dict[str, str] | None = None,
 ) -> AppRunData:
   """An `AppRunData` for `stack`, with every route allocated.
 
@@ -53,11 +55,21 @@ def run_data(
       host_port=host_ports.get(name, route.host_port),
       container_port=route.container_port,
       proto=route.proto,
-      publish=route.publish,
       scheme=route.scheme,
     )
     for name, route in stack.routes.items()
   }
+  if assignments is None:
+    assignments = {name: "web" for name, route in stack.routes.items() if route.public}
+  config = type(
+    "Cfg",
+    (),
+    {
+      "provider_domain": lambda self, tag: (
+        domain if tag and tag != "none" else PLACEHOLDER_DOMAIN
+      )
+    },
+  )()
   return AppRunData(
     app=stack.app,
     run_path=Path("/harbor/run") / stack.app,
@@ -65,7 +77,7 @@ def run_data(
     volume_links={},
     config_values=config_values or {},
     routes=routes,
-    route_urls=_route_urls(routes, domain),
+    route_urls=_route_urls(routes, assignments, config),
     host_mounts=host_mounts,
     issues=issues,
   )
@@ -171,7 +183,7 @@ subdomain = "photos"
 image = "alpine"
 
 [run.main.routes]
-main  = { port = "8080", publish = "web" }
+main  = { port = "8080", public = true }
 admin = { port = "9000:80" }
 dns   = { port = "53/udp" }
 """,
@@ -342,17 +354,17 @@ image = "alpine"
 env = { BASE_URL = "${routes.main}", API = "${routes.api}/v1" }
 
 [run.main.routes]
-main = { port = "9000", publish = "web" }
-api  = { port = "9001", publish = "web" }
+main = { port = "9000", public = true }
+api  = { port = "9001", public = true }
 """,
   )
 
   env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
 
-  # The reverse proxy terminates TLS, so a published route is always https --
-  # and "main" is the one route that gets the bare app subdomain.
-  assert env["BASE_URL"] == "https://mealie.home.example"
-  assert env["API"] == "https://api-mealie.home.example/v1"
+  # Assigned public routes use the provider domain and the route scheme.
+  # "main" is the one route that gets the bare app subdomain.
+  assert env["BASE_URL"] == "http://mealie.home.example"
+  assert env["API"] == "http://api-mealie.home.example/v1"
 
 
 def test_a_route_reference_survives_alongside_a_config_reference(tmp_path):
@@ -372,15 +384,13 @@ image = "alpine"
 env = { GREETING = "${timezone} at ${routes.main}" }
 
 [run.main.routes]
-main = { port = "9000", publish = "web" }
+main = { port = "9000", public = true }
 """,
   )
 
   env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
 
-  assert (
-    env["GREETING"] == "${__HARBOR_CONFIG__timezone} at https://mealie.home.example"
-  )
+  assert env["GREETING"] == "${__HARBOR_CONFIG__timezone} at http://mealie.home.example"
 
 
 def test_host_network_mode_is_set_per_service(tmp_path):

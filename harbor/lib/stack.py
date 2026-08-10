@@ -73,8 +73,9 @@ class AppRoute:
   host_port: int
   container_port: int
   proto: str
-  publish: Literal["web", "lan"]
+  public: bool
   scheme: Literal["http", "https"]
+  desc: str = ""
 
   def subdomain(self, app_subdomain: str) -> str:
     prefix = "" if self.route_name == PRIMARY_ROUTE_NAME else f"{self.route_name}-"
@@ -212,8 +213,9 @@ def _resolve_run_units(
           host_port=route.port_spec.host_port,
           container_port=route.port_spec.container_port,
           proto=route.port_spec.proto,
-          publish=route.publish,
+          public=route.public,
           scheme=route.scheme,
+          desc=route.desc,
         )
         for name, route in run_entry.routes.items()
       },

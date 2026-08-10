@@ -100,22 +100,24 @@ def _port_number(value: str, text: str) -> int:
 
 
 class RouteEntry(BaseModel):
-  """A named port a run unit publishes, declared in [run.<unit>.routes].
+  """A named port a run unit exposes, declared in [run.<unit>.routes].
 
   port    — "[host:]container[/proto]"; omit the host side so harbor assigns
             the lowest free port at/above port_base. Pin a host port only when
             absolutely necessary (see PortSpec).
-  publish — "lan" (default): publish the host port only; "web": additionally
-            register a reverse-proxy route. The route name is the subdomain
-            label (the reserved name "main" → the bare app subdomain).
-  scheme  — "http" (default) or "https": how the reverse proxy dials the
-            backend. Only meaningful for publish = "web".
+  public  — when true, staging auto-assigns this route to the configured
+            default_route_provider (like a config default). The operator can
+            reassign later with `harbor config --route`.
+  scheme  — "http" (default) or "https": what the app listens with (how a
+            reverse proxy should dial the backend).
+  desc    — optional human description shown in config/status output.
   """
 
   model_config = ConfigDict(extra="forbid")
   port: str
-  publish: Literal["web", "lan"] = "lan"
+  public: bool = False
   scheme: Literal["http", "https"] = "http"
+  desc: str = ""
 
   @model_validator(mode="after")
   def check_port(self) -> Self:
@@ -252,16 +254,12 @@ def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
 
 
 def _validate_env_refs(manifest: Manifest) -> list[str]:
-  """`${routes.<name>}` in [run.*.env] must name a route that has a URL.
+  """`${routes.<name>}` in [run.*.env] must name a declared route.
 
-  Only web routes do: a lan route is a host port on a machine whose name
-  harbor does not know, so there is nothing honest to substitute.
+  Every route gets a URL at compose time (provider domain when assigned,
+  otherwise a harbor.localhost placeholder).
   """
-  routes = {
-    name: route
-    for run_entry in manifest.run.values()
-    for name, route in run_entry.routes.items()
-  }
+  routes = {name for run_entry in manifest.run.values() for name in run_entry.routes}
 
   errors: list[str] = []
   for unit_name, run_entry in manifest.run.items():
@@ -275,11 +273,6 @@ def _validate_env_refs(manifest: Manifest) -> list[str]:
           errors.append(f"{where}, but {namespace!r} is not a known namespace")
         elif route_name not in routes:
           errors.append(f"{where}, which is not declared in [run.*.routes]")
-        elif routes[route_name].publish != "web":
-          errors.append(
-            f'{where}, which is not web-facing; set publish = "web" on route '
-            f"{route_name!r} to give it a URL"
-          )
   return errors
 
 
@@ -315,11 +308,11 @@ def _validate_run_volumes(manifest: Manifest) -> list[str]:
 
 
 def _validate_routes(manifest: Manifest) -> list[str]:
-  """Structural checks for [run.*.routes] (see docs/ingress.md §2)."""
+  """Structural checks for [run.*.routes]."""
   errors: list[str] = []
 
   # Route names are app-level identifiers, globally unique across run units:
-  # each names a published port and (for web routes) a subdomain label.
+  # each names a published port and a subdomain label.
   route_owners: dict[str, list[str]] = {}
   for unit_name, run_entry in manifest.run.items():
     for route_name in run_entry.routes:
@@ -331,23 +324,15 @@ def _validate_routes(manifest: Manifest) -> list[str]:
         + ", ".join(owners)
       )
 
-  web_routes = [
-    route_name
-    for run_entry in manifest.run.values()
-    for route_name, route in run_entry.routes.items()
-    if route.publish == "web"
-  ]
+  has_routes = any(run_entry.routes for run_entry in manifest.run.values())
 
   # network_mode = "host" cannot publish ports or attach routes.
   if manifest.app.network_mode == "host":
-    if any(run_entry.routes for run_entry in manifest.run.values()):
+    if has_routes:
       errors.append("[run]: network_mode 'host' forbids [run.*.routes]")
 
-  # web routes are published under the app subdomain; it must be set.
-  if web_routes and not manifest.app.subdomain:
-    errors.append(
-      "[run.*.routes]: web routes require [app].subdomain; "
-      "these are web-facing: " + ", ".join(sorted(web_routes))
-    )
+  # Routes use [app].subdomain as the DNS label base; it must be set.
+  if has_routes and not manifest.app.subdomain:
+    errors.append("[run.*.routes]: routes require [app].subdomain")
 
   return errors
