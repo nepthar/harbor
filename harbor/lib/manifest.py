@@ -105,9 +105,9 @@ class RouteEntry(BaseModel):
   port    — "[host:]container[/proto]"; omit the host side so harbor assigns
             the lowest free port at/above port_base. Pin a host port only when
             absolutely necessary (see PortSpec).
-  public  — when true, staging auto-assigns this route to the configured
-            default_route_provider (like a config default). The operator can
-            reassign later with `harbor config --route`.
+  private — when true, staging does not auto-assign a route provider; the
+            operator may still publish it later with `harbor config --route`.
+            Default false: auto-assign to default_route_provider on first stage.
   scheme  — "http" (default) or "https": what the app listens with (how a
             reverse proxy should dial the backend).
   desc    — optional human description shown in config/status output.
@@ -115,7 +115,7 @@ class RouteEntry(BaseModel):
 
   model_config = ConfigDict(extra="forbid")
   port: str
-  public: bool = False
+  private: bool = False
   scheme: Literal["http", "https"] = "http"
   desc: str = ""
 

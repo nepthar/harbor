@@ -211,14 +211,14 @@ def _list(app: AppID, stack: AppStack, store: AppStore, conn) -> None:
         display = "(unassigned)"
       else:
         display = tag
-      public = "yes" if route.public else ""
-      route_rows.append([name, display, public, route.desc or ""])
+      private = "yes" if route.private else ""
+      route_rows.append([name, display, private, route.desc or ""])
     conn.out("")
     conn.out("Route assignments:")
     conn.out(
       tabulate(
         route_rows,
-        headers=["route", "provider", "public", "description"],
+        headers=["route", "provider", "private", "description"],
         tablefmt="simple",
       )
     )

@@ -23,4 +23,4 @@ env = { AGH_USER = "${ag_user}", AGH_PASS = "${ag_pass}", AGH_URL = "${ag_host}"
 volumes = { script = "/app/app.py" }
 
 [run.main.routes]
-main = { port = "8099", public = true }
+main = { port = "8099" }

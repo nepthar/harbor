@@ -27,9 +27,9 @@ port_base = 41000
 # name     = "dev"
 # location = "~/code/happs"
 
-# Routes marked public=true in a manifest are auto-assigned to this provider
-# tag on first stage (like a config default). The reserved tag "none" is a
-# built-in noop and is the default when this key is omitted.
+# Routes are auto-assigned to this provider tag on first stage (like a config
+# default), unless marked private=true in the manifest. The reserved tag
+# "none" is a built-in noop and is the default when this key is omitted.
 # default_route_provider = "web"
 
 # Optional: reverse-proxy (or other) providers that publish app routes.

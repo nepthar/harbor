@@ -29,7 +29,7 @@ volumes = { config = "/config", metadata = "/metadata", cache = "/cache", media 
 [run.main.routes]
 # Pinned rather than harbor-allocated: TVs and phones already point at :8096,
 # and jellyfin's own autodiscovery advertises that port.
-main = { port = "8096:8096", public = true }
+main = { port = "8096:8096" }
 
 [run.main.compose]
 # Run as the owner of the media share rather than root.

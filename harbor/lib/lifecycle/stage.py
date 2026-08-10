@@ -119,16 +119,17 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
 
 
 def _apply_default_route_assignments(stack: AppStack, ctx: HarborCtx) -> None:
-  """Write default_route_provider for public routes that have no assignment yet.
+  """Write default_route_provider for non-private routes with no assignment yet.
 
   Same shape as config defaults: once written, it is as if the operator set it.
+  Private routes stay unassigned until `harbor config --route`.
   """
   store = ctx.app_store(stack.app)
   default = ctx.config.default_route_provider
   for route_name, route in stack.routes.items():
     if store.has_route_assignment(route_name):
       continue
-    if route.public:
+    if not route.private:
       store.set_route_assignment(route_name, default)
 
 

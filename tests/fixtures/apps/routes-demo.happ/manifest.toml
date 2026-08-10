@@ -13,8 +13,8 @@ image = "alpine:latest"
 cmd   = ["/bin/sh", "-c", "sleep infinity"]
 
 # The reserved name "main" -> photos.<domain>; "api" -> api-photos.<domain>;
-# "admin" is not public (host port only until the operator assigns a provider).
+# "admin" is private (host port only until the operator assigns a provider).
 [run.main.routes]
-main  = { port = "8080", public = true }
-api   = { port = "8081", public = true }
-admin = { port = "8082" }
+main  = { port = "8080" }
+api   = { port = "8081" }
+admin = { port = "8082", private = true }

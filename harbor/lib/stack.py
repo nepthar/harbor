@@ -73,7 +73,7 @@ class AppRoute:
   host_port: int
   container_port: int
   proto: str
-  public: bool
+  private: bool
   scheme: Literal["http", "https"]
   desc: str = ""
 
@@ -213,7 +213,7 @@ def _resolve_run_units(
           host_port=route.port_spec.host_port,
           container_port=route.port_spec.container_port,
           proto=route.port_spec.proto,
-          public=route.public,
+          private=route.private,
           scheme=route.scheme,
           desc=route.desc,
         )

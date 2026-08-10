@@ -320,7 +320,7 @@ class NoopRouteProvider(RouteProvider):
 
   def unregister_route(self, subdomain: str, domain: str):
     route = f"{subdomain}.{domain}"
-    logger.warning(f"Noop route provider - Attempting to unregister {route}")
+    logger.debug(f"Noop route provider - Attempting to unregister {route}")
     self.routes.pop(subdomain, None)
     self.owners.pop(subdomain, None)
 

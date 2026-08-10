@@ -9,7 +9,7 @@ the tick log visibly jumps back to what the snapshot held.
 version      = "0.1.0"
 display_name = "Snapshot Demo"
 description  = "Appends a timestamp to a data volume every 30s and serves it back"
-subdomain    = "snapshot"
+subdomain    = "demo_snapshot"
 
 [config]
 label = { desc = "Anything you like. Echoed back by the endpoint, and captured in snapshots along with the rest of the config." }

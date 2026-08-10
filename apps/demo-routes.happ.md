@@ -21,12 +21,12 @@ image  = "nginx:alpine"
 volumes = { app = "/etc/nginx/templates" }
 
 [run.main.routes]
-# "main" is the bare [app] subdomain; public routes auto-assign to default_route_provider
-main     = { port = "8081", public = true }
+# "main" is the bare [app] subdomain; non-private routes auto-assign to default_route_provider
+main     = { port = "8081" }
 # "sub1" will be "sub1-routes.<provider_domain>" when assigned
-sub1     = { port = "8082", public = true }
-# Not public: host port only until the operator assigns a provider
-host_only = { port = "8083" }
+sub1     = { port = "8082" }
+# private: available to publish, but not auto-assigned
+host_only = { port = "8083", private = true }
 ```
 
 One nginx server per route. nginx:alpine runs envsubst over `*.template`

@@ -1,4 +1,4 @@
-"""Tests for the [run.<unit>.routes] model: port specs, public, and the
+"""Tests for the [run.<unit>.routes] model: port specs, private, and the
 route-name -> subdomain mapping (reserved "main" = the bare app subdomain).
 """
 
@@ -41,25 +41,25 @@ subdomain = "photos"
 image = "alpine:latest"
 
 [run.main.routes]
-main    = { port = "8080", public = true }
-api     = { port = "8081", public = true }
-admin   = { port = "8082" }
-default = { port = "8083" }
-metrics = { port = "9090:9091/udp" }
+main    = { port = "8080" }
+api     = { port = "8081" }
+admin   = { port = "8082", private = true }
+default = { port = "8083", private = true }
+metrics = { port = "9090:9091/udp", private = true }
 """
 
 
 # ── resolution ────────────────────────────────────────────────────────────
-def test_public_defaults_to_false():
+def test_private_defaults_to_false():
   stack = _stack(ROUTES)
-  assert stack.routes["default"].public is False
-  assert stack.routes["admin"].public is False
+  assert stack.routes["main"].private is False
+  assert stack.routes["api"].private is False
 
 
-def test_public_true_resolved():
+def test_private_true_resolved():
   stack = _stack(ROUTES)
-  assert stack.routes["main"].public is True
-  assert stack.routes["api"].public is True
+  assert stack.routes["default"].private is True
+  assert stack.routes["admin"].private is True
 
 
 def test_scheme_defaults_to_http():
@@ -79,8 +79,8 @@ subdomain = "photos"
 image = "alpine:latest"
 
 [run.main.routes]
-main  = { port = "8080", public = true }
-admin = { port = "8443:8443", public = true, scheme = "https" }
+main  = { port = "8080" }
+admin = { port = "8443:8443", scheme = "https" }
 """
   )
   assert stack.routes["main"].scheme == "http"
@@ -91,7 +91,7 @@ def test_primary_route_subdomain_is_bare_app_subdomain():
   stack = _stack(ROUTES)
   main = stack.routes["main"]
   assert main.subdomain("photos") == "photos"
-  assert main.public is True
+  assert main.private is False
 
 
 def test_named_route_subdomain_is_prefixed():
@@ -140,7 +140,7 @@ main = "web"
 [run.web]
 image = "alpine:latest"
 [run.web.routes]
-main = { port = "8080", public = true }
+main = { port = "8080" }
 
 [run.worker]
 image = "alpine:latest"
@@ -223,7 +223,7 @@ main = "web"
 [run.web]
 image = "alpine:latest"
 [run.web.routes]
-dash = { port = "8080", public = true }
+dash = { port = "8080" }
 
 [run.worker]
 image = "alpine:latest"
@@ -280,7 +280,7 @@ subdomain = "photos"
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-bad = { port = "8080", public = true, scheme = "ftp" }
+bad = { port = "8080", scheme = "ftp" }
 """
     )
 
@@ -312,7 +312,7 @@ subdomain = "photos"
 image = "alpine:latest"
 env = { BASE_URL = "${routes.main}", ADMIN = "${routes.admin}" }
 [run.main.routes]
-main = { port = "8080", public = true }
+main = { port = "8080" }
 admin = { port = "8082" }
 """
   )
@@ -335,7 +335,7 @@ env = { PEER = "${routes.api}" }
 [run.api]
 image = "alpine:latest"
 [run.api.routes]
-api = { port = "8080", public = true }
+api = { port = "8080" }
 """
   )
   assert stack.run_units["main"].environment["PEER"] == "${routes.api}"
@@ -563,7 +563,9 @@ def _run_data(stack, host_ports: dict[str, int] | None = None) -> AppRunData:
       "home.example" if tag and tag != "none" else PLACEHOLDER_DOMAIN
     )
   )
-  assignments = {name: "web" for name, route in stack.routes.items() if route.public}
+  assignments = {
+    name: "web" for name, route in stack.routes.items() if not route.private
+  }
   return AppRunData(
     app=stack.app,
     run_path=Path("/tmp/unused"),
@@ -587,7 +589,7 @@ subdomain = "{subdomain}"
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-main = {{ port = "8080", public = true }}
+main = {{ port = "8080" }}
 """,
     app_id,
   )

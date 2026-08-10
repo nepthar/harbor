@@ -131,8 +131,8 @@ def capability_receipt(
         else:
           spec = f"{port.host_port}:{port.container_port}/{port.proto}"
         route = stack.routes.get(port_name)
-        public = ", public" if route and route.public else ""
-        declared_ports.append(f"{unit_name}.{port_name}: {spec}{public}")
+        private = ", private" if route and route.private else ""
+        declared_ports.append(f"{unit_name}.{port_name}: {spec}{private}")
     if declared_ports:
       lines.append(f"  Ports:   {declared_ports[0]}")
       for extra in declared_ports[1:]:

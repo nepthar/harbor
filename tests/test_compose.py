@@ -60,7 +60,9 @@ def run_data(
     for name, route in stack.routes.items()
   }
   if assignments is None:
-    assignments = {name: "web" for name, route in stack.routes.items() if route.public}
+    assignments = {
+      name: "web" for name, route in stack.routes.items() if not route.private
+    }
   config = type(
     "Cfg",
     (),
@@ -183,7 +185,7 @@ subdomain = "photos"
 image = "alpine"
 
 [run.main.routes]
-main  = { port = "8080", public = true }
+main  = { port = "8080" }
 admin = { port = "9000:80" }
 dns   = { port = "53/udp" }
 """,
@@ -354,14 +356,14 @@ image = "alpine"
 env = { BASE_URL = "${routes.main}", API = "${routes.api}/v1" }
 
 [run.main.routes]
-main = { port = "9000", public = true }
-api  = { port = "9001", public = true }
+main = { port = "9000" }
+api  = { port = "9001" }
 """,
   )
 
   env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
 
-  # Assigned public routes use the provider domain and the route scheme.
+  # Assigned non-private routes use the provider domain and the route scheme.
   # "main" is the one route that gets the bare app subdomain.
   assert env["BASE_URL"] == "http://mealie.home.example"
   assert env["API"] == "http://api-mealie.home.example/v1"
@@ -384,7 +386,7 @@ image = "alpine"
 env = { GREETING = "${timezone} at ${routes.main}" }
 
 [run.main.routes]
-main = { port = "9000", public = true }
+main = { port = "9000" }
 """,
   )
 

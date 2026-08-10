@@ -128,11 +128,18 @@ def sync_route_assignment(
   new_tag: str,
   ctx: HarborCtx,
 ) -> None:
-  """Push an assignment change to the old/new providers when a host port exists."""
+  """Push an assignment change to the old/new providers.
+
+  The AppStore assignment is already written by the caller; this only talks to
+  providers, which need the allocated host port from harbordb.
+  """
   hdb_routes = ctx.harbor_db().list_routes(app)
   entry = hdb_routes.get(route_name)
   if entry is None:
-    return
+    raise ValueError(
+      f"route {route_name!r} has no allocated host port for {app}; "
+      f"run `harbor stage {app}` first"
+    )
 
   subdomain = entry["subdomain"]
   host_port = entry["host_port"]
@@ -147,8 +154,9 @@ def sync_route_assignment(
 
   if new_tag != NONE_ROUTE_PROVIDER_TAG:
     if host_port < 0:
-      raise RouteProviderError(
-        f"route {route_name!r} has no allocated host port; run `harbor stage` first"
+      raise ValueError(
+        f"route {route_name!r} has no allocated host port for {app}; "
+        f"run `harbor stage {app}` first"
       )
     new = get_route_provider(ctx.harbor_db(), ctx.config, new_tag)
     new.register_route(

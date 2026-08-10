@@ -161,10 +161,10 @@ subdomain = "photos"
 image = "alpine"
 
 [run.main.routes]
-main   = { port = "8080", public = true }
+main   = { port = "8080" }
 admin  = { port = "9000:80" }
 dns    = { port = "53/udp" }
-secure = { port = "8443", public = true, scheme = "https" }
+secure = { port = "8443", scheme = "https" }
 """,
   )
 
@@ -174,7 +174,7 @@ secure = { port = "8443", public = true, scheme = "https" }
   assert primary.needs_allocation is True
   assert primary.container_port == 8080
   assert primary.proto == "tcp"
-  assert primary.public is True
+  assert primary.private is False
   assert primary.scheme == "http"
   assert primary.run_unit_name == "main"
 
@@ -182,7 +182,7 @@ secure = { port = "8443", public = true, scheme = "https" }
   admin = stack.routes["admin"]
   assert (admin.host_port, admin.container_port) == (9000, 80)
   assert admin.needs_allocation is False
-  assert admin.public is False
+  assert admin.private is False
 
   assert stack.routes["dns"].container_port == 53
   assert stack.routes["dns"].proto == "udp"
