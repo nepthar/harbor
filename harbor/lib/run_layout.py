@@ -224,23 +224,43 @@ def _load_volume_links(
         )
         continue
       source = target = host_vol.path
+      # Docker would create an empty directory at a missing bind source.
+      # Files are allowed — a host volume may be a single file.
+      if not source.exists():
+        issues.append(
+          ConfigIssue(
+            f"volume {volume_name}: host volume {tag!r} path does not exist: {source}",
+            f"Make {source} available again, or re-bind with {bind_cmd}",
+            stage_blocking=True,
+          )
+        )
+        continue
+      if host_vol.require_mount and not source.is_mount():
+        issues.append(
+          ConfigIssue(
+            f"volume {volume_name}: host volume {tag!r} is not mounted at {source}",
+            f"Mount the share at {source}, or clear require_mount on "
+            f"[host_volume.{tag}]",
+            stage_blocking=True,
+          )
+        )
+        continue
     else:
       resolved = _volume_paths(run_path, app_id, volume, found_binds, ctx.config)
       if not resolved:
         continue
       source, target = resolved
 
-    # Prevent a bound path that doesn't exist at runtime.
-    # Docker would create a folder there otherwise.
-    if not source.exists() and not mkdir:
-      if volume.kind == "host":
-        fix = f"Make {source} available again, or re-bind with {bind_cmd}"
-      else:
-        fix = f"re-stage with `harbor stage {app_id}` or this might be a bug."
-      issues.append(
-        ConfigIssue(f"volume {volume_name}: host path does not exist: {source}", fix)
-      )
-      continue
+      # Prevent a bound path that doesn't exist at runtime.
+      # Docker would create a folder there otherwise.
+      if not source.exists() and not mkdir:
+        issues.append(
+          ConfigIssue(
+            f"volume {volume_name}: host path does not exist: {source}",
+            f"re-stage with `harbor stage {app_id}` or this might be a bug.",
+          )
+        )
+        continue
 
     destination = run_path / volume.run_rel_path
     volume_links[volume_name] = VolumeLink(source, target, destination, mkdir)

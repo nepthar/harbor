@@ -47,6 +47,9 @@ class HostVolume:
   tag: str
   path: Path
   readonly: bool = False
+  # When true, refuse unless `path` is an active mount point (NFS, etc.).
+  # The bare path can exist as an empty directory when the mount is down.
+  require_mount: bool = False
 
 
 class Config:
@@ -279,7 +282,12 @@ def _parse_host_volumes(data: dict, ep) -> dict[str, HostVolume]:
     readonly = conf.get("readonly", False)
     if not isinstance(readonly, bool):
       raise ValueError(f"host_volume.{tag}: readonly must be a boolean")
-    volumes[tag] = HostVolume(tag=tag, path=ep(path), readonly=readonly)
+    require_mount = conf.get("require_mount", False)
+    if not isinstance(require_mount, bool):
+      raise ValueError(f"host_volume.{tag}: require_mount must be a boolean")
+    volumes[tag] = HostVolume(
+      tag=tag, path=ep(path), readonly=readonly, require_mount=require_mount
+    )
 
   return volumes
 

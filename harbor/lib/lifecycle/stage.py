@@ -329,6 +329,13 @@ def bind(stack: AppStack, volname: str, host_volume_tag: str, ctx: HarborCtx) ->
       f"{host_vol.path}"
     )
 
+  if host_vol.require_mount and not host_vol.path.is_mount():
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} is not mounted at "
+      f"{host_vol.path}; mount the share, or clear require_mount on "
+      f"[host_volume.{host_volume_tag}]"
+    )
+
   ctx.app_store(app).set_bind(volname, host_volume_tag)
 
 

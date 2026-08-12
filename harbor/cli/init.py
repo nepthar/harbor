@@ -50,10 +50,13 @@ port_base = 41000
 # Optional: tagged host paths that apps with kind = "host" volumes can bind to.
 # Paths must exist before `harbor config|start --bind`. Assign with
 # `harbor config <app> --bind media=media`.
+# Set require_mount = true for network shares or external drives so an empty
+# mount-point directory is refused when the share is not mounted.
 #
 # [host_volume.media]
-# path     = "/mnt/media"
-# readonly = true
+# path          = "/mnt/media"
+# readonly      = true
+# require_mount = true
 """
 
 

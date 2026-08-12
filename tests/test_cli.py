@@ -502,13 +502,80 @@ def test_start_refuses_when_a_bound_path_has_gone(harbor_env):
 
   blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1
-  assert "host path does not exist" in blocked.stderr
+  assert "path does not exist" in blocked.stderr
   assert str(host_path) in blocked.stderr
   assert not host_path.exists(), "a failed start must not recreate the host path"
 
   # The bind is still on file, so putting the path back is the whole fix.
   host_path.mkdir()
   assert harbor_env.run("start", app_id).returncode == 0
+
+
+def test_missing_host_volume_path_blocks_stage(harbor_env):
+  """A bound host volume whose path is gone must refuse restaging."""
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
+
+  shutil.rmtree(host_path)
+  blocked = harbor_env.run("stage", app_id)
+  assert blocked.returncode == 1
+  assert "path does not exist" in blocked.stderr
+  assert str(host_path) in blocked.stderr
+
+
+def test_host_volume_may_be_a_file(harbor_env):
+  """A host volume can point at a single file, not only a directory."""
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.write_text("just a file")
+
+  started = harbor_env.run("start", app_id, "--bind", "hostvol1=media")
+  assert started.returncode == 0, started.stderr
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
+  assert link.is_symlink()
+  assert link.resolve() == host_path
+  assert link.resolve().is_file()
+
+
+def test_require_mount_refuses_unmounted_path(harbor_env):
+  """require_mount catches an empty mount-point directory."""
+  with open(harbor_env.config, "a") as f:
+    f.write('\n[host_volume.nfs]\npath = "external-data"\nrequire_mount = true\n')
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  refused = harbor_env.run("config", "host-volumes", "--bind", "hostvol1=nfs")
+  assert refused.returncode == 1
+  assert "not mounted" in refused.stderr
+
+
+def test_require_mount_blocks_stage_when_unmounted(harbor_env):
+  """A previously bound require_mount volume blocks restaging if unmounted."""
+  # Bind against a real mount first (/), then retarget the tag at an ordinary
+  # directory so restaging sees require_mount fail through ConfigIssue.
+  with open(harbor_env.config, "a") as f:
+    f.write('\n[host_volume.rootfs]\npath = "/"\nrequire_mount = true\n')
+
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  assert (
+    harbor_env.run("config", "host-volumes", "--bind", "hostvol1=rootfs").returncode
+    == 0
+  )
+
+  # Rewrite the same tag to a non-mount path without clearing the bind.
+  config_text = harbor_env.config.read_text()
+  harbor_env.config.write_text(
+    config_text.replace('path = "/"', 'path = "external-data"')
+  )
+  (harbor_env.root / "external-data").mkdir(exist_ok=True)
+
+  blocked = harbor_env.run("stage", "host-volumes")
+  assert blocked.returncode == 1
+  assert "not mounted" in blocked.stderr
 
 
 def test_readonly_host_volume_refuses_writable_app_volume(harbor_env):
