@@ -51,9 +51,6 @@ def _expand_path(
   return (relative_base / p).resolve()
 
 
-# --- config.toml schema -----------------------------------------------------
-
-
 class AppSourceEntry(BaseModel):
   model_config = ConfigDict(extra="forbid")
 
@@ -71,7 +68,7 @@ class RouteProviderEntry(BaseModel):
   model_config = ConfigDict(extra="forbid")
 
   kind: RouteProviderKind
-  domain: str = PLACEHOLDER_DOMAIN
+  domain: str
   args: dict[str, str] = Field(default_factory=dict)
 
 
@@ -119,9 +116,6 @@ class ConfigFile(BaseModel):
     if self.volume_root is None and self.volume_roots is None:
       raise ValueError("Specify 'volume_root' or individual 'volume_roots'")
     return self
-
-
-# --- runtime config ---------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -253,7 +247,7 @@ def load_config_file(config_file: str | Path) -> Config:
   snapshot_root = ep(parsed.snapshot_root)
 
   route_providers: dict[str, RouteProviderEntry] = {
-    NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(kind="noop"),
+    NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(kind="noop", domain=PLACEHOLDER_DOMAIN),
     **parsed.route_provider,
   }
 

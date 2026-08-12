@@ -406,7 +406,9 @@ def test_documented_route_provider_config_constructs():
     port_base=41000,
     default_route_provider="web",
     route_providers={
-      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(kind="noop"),
+      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
+        kind="noop", domain=PLACEHOLDER_DOMAIN
+      ),
       "web": RouteProviderEntry(
         kind="nginx_proxy_manager",
         domain="home.example",
