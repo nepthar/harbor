@@ -34,14 +34,15 @@ port_base = 41000
 
 # Optional: reverse-proxy (or other) providers that publish app routes.
 # Each block is tagged by you ("web", "lan", "homelab", …); `kind` selects
-# the implementation. Store the password with
-# `harbor config-sys --stdin route_provider.web.password`, then verify with
-# `harbor routes check web`. Assign routes with
+# the implementation. Kind-specific settings go under `args`. Store the
+# password with `harbor config-sys --stdin route_provider.web.password`,
+# then verify with `harbor routes check web`. Assign routes with
 # `harbor config <app> --route main=web`.
 #
 # [route_provider.web]
-# kind            = "nginx_proxy_manager"
-# domain          = "example.com"
+# kind   = "nginx_proxy_manager"
+# domain = "example.com"
+# [route_provider.web.args]
 # endpoint        = "http://npm-host:81"
 # email           = "admin@example.com"
 # password_secret = "route_provider.web.password"

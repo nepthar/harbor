@@ -358,19 +358,19 @@ def get_route_provider(
       f"Add [route_provider.{tag}] to config.toml or pick an existing tag"
     )
 
-  kind = conf.get("kind", "")
-  domain = conf.get("domain", "")
+  if conf.kind == "noop":
+    return NoopRouteProvider(domain=conf.domain)
 
-  if kind == "noop":
-    return NoopRouteProvider(domain=domain)
-
-  if kind == "nginx_proxy_manager":
-    reqd = ("endpoint", "email", "password_secret", "forward_host", "domain")
-    missing = [r for r in reqd if r not in conf]
+  if conf.kind == "nginx_proxy_manager":
+    required = ("endpoint", "email", "password_secret", "forward_host")
+    missing = [name for name in required if not conf.args.get(name)]
     if missing:
-      raise RouteProviderError(f"route_provider.{tag}: missing {missing}; needs {reqd}")
+      raise RouteProviderError(
+        f"route_provider.{tag}.args: missing {missing}; needs {required}"
+      )
 
-    pw_ref = conf["password_secret"]
+    args = dict(conf.args)
+    pw_ref = args.pop("password_secret")
     password = harbor_db.get_secret(pw_ref)
     if not password:
       raise RouteProviderError(
@@ -380,17 +380,15 @@ def get_route_provider(
     tok, exp = harbor_db.get_token(NginxProxyManagerRouteProvider._TOKEN_KEY)
 
     return NginxProxyManagerRouteProvider(
-      endpoint=conf["endpoint"],
-      email=conf["email"],
       password=password,
-      harbor_domain=domain,
-      forward_host=conf["forward_host"],
+      harbor_domain=conf.domain,
       harbor_db=harbor_db,
       token=tok,
       token_expire=exp,
+      **args,
     )
 
   raise RouteProviderError(
-    f"route_provider.{tag}: unknown kind {kind!r}; "
+    f"route_provider.{tag}: unknown kind {conf.kind!r}; "
     f'expected "nginx_proxy_manager" or "noop"'
   )

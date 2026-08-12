@@ -3,6 +3,15 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal, Self
+
+from pydantic import (
+  BaseModel,
+  ConfigDict,
+  Field,
+  ValidationError,
+  model_validator,
+)
 
 from harbor.lib.apps import AppID
 from harbor.lib.logtab import LogTab
@@ -19,6 +28,8 @@ DEFAULT_APP_SOURCE = "apps"
 NONE_ROUTE_PROVIDER_TAG = "none"
 # Domain used for route URLs when a route is unassigned or assigned to none.
 PLACEHOLDER_DOMAIN = "harbor.localhost"
+
+RouteProviderKind = Literal["nginx_proxy_manager", "noop"]
 
 
 logger = logging.getLogger("harbor.config")
@@ -38,6 +49,73 @@ def _expand_path(
     return p.resolve()
 
   return (relative_base / p).resolve()
+
+
+class AppSourceEntry(BaseModel):
+  model_config = ConfigDict(extra="forbid")
+
+  name: str
+  location: str
+
+
+class RouteProviderEntry(BaseModel):
+  """One `[route_provider.<tag>]` table.
+
+  ``args`` are kind-specific and passed through to that provider's constructor
+  (after resolving any secrets the kind requires).
+  """
+
+  model_config = ConfigDict(extra="forbid")
+
+  kind: RouteProviderKind
+  domain: str
+  args: dict[str, str] = Field(default_factory=dict)
+
+
+class HostVolumeEntry(BaseModel):
+  """One `[host_volume.<tag>]` table (path still a string; expanded later)."""
+
+  model_config = ConfigDict(extra="forbid")
+
+  path: str
+  readonly: bool = False
+  require_mount: bool = False
+
+
+class VolumeRootsEntry(BaseModel):
+  model_config = ConfigDict(extra="forbid")
+
+  data: str
+  temp: str
+  bulk: str
+  logs: str
+
+
+class ConfigFile(BaseModel):
+  """Shape of config.toml. Cross-cutting checks live in `_validate_config`."""
+
+  model_config = ConfigDict(extra="forbid")
+
+  apps_root: str = "apps"
+  run_root: str = "run"
+  snapshot_root: str = "snapshots"
+  master_keyfile: str = "master.key"
+  port_base: int = 41000
+  volume_root: str | None = None
+  volume_roots: VolumeRootsEntry | None = None
+  default_route_provider: str = NONE_ROUTE_PROVIDER_TAG
+  route_provider: dict[str, RouteProviderEntry] = Field(default_factory=dict)
+  host_volume: dict[str, HostVolumeEntry] = Field(default_factory=dict)
+
+  @model_validator(mode="after")
+  def volume_root_xor(self) -> Self:
+    if self.volume_root is not None and self.volume_roots is not None:
+      raise ValueError(
+        "Specify either 'volume_root' or individual 'volume_roots', not both"
+      )
+    if self.volume_root is None and self.volume_roots is None:
+      raise ValueError("Specify 'volume_root' or individual 'volume_roots'")
+    return self
 
 
 @dataclass(frozen=True)
@@ -62,7 +140,7 @@ class Config:
   master_keyfile: Path
   port_base: int
   default_route_provider: str
-  route_providers: dict[str, dict]
+  route_providers: dict[str, RouteProviderEntry]
   host_volumes: dict[str, HostVolume]
 
   def __init__(
@@ -74,9 +152,9 @@ class Config:
     snapshot_root: Path,
     master_key: str,
     master_keyfile: Path,
-    port_base: int = 41000,
-    default_route_provider: str = NONE_ROUTE_PROVIDER_TAG,
-    route_providers: dict[str, dict] | None = None,
+    port_base: int,
+    default_route_provider: str,
+    route_providers: dict[str, RouteProviderEntry],
     extra_app_sources: dict[str, Path] | None = None,
     host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
@@ -90,9 +168,7 @@ class Config:
     self.master_keyfile = master_keyfile
     self.port_base = port_base
     self.default_route_provider = default_route_provider
-    self.route_providers = route_providers or {
-      NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN}
-    }
+    self.route_providers = route_providers
     self.host_volumes = host_volumes or {}
 
   @property
@@ -117,7 +193,7 @@ class Config:
     conf = self.route_providers.get(tag)
     if conf is None:
       return PLACEHOLDER_DOMAIN
-    return conf.get("domain", PLACEHOLDER_DOMAIN)
+    return conf.domain
 
 
 def load_config_file(config_file: str | Path) -> Config:
@@ -128,28 +204,33 @@ def load_config_file(config_file: str | Path) -> Config:
   with open(config_path, "rb") as f:
     data = tomllib.load(f)
 
-  if "domain" in data:
-    raise ValueError(
-      "top-level 'domain' is no longer valid; set domain on each "
-      "[route_provider.<tag>] instead"
-    )
+  # Soft-fail section: validated after the hard schema so a typo here cannot
+  # take down every harbor command (see `_resolve_app_sources`).
+  app_source_raw = data.get("app_source", [])
+  parse_data = {k: v for k, v in data.items() if k != "app_source"}
 
-  if "volume_root" in data and "volume_roots" in data:
-    raise ValueError(
-      "Specify either 'volume_root' or individual 'volume_roots', not both"
-    )
+  try:
+    parsed = ConfigFile.model_validate(parse_data)
+  except ValidationError as e:
+    raise ValueError(_fmt_validation_error(e, config_path)) from e
+
+  errors = _validate_config(parsed)
+  if errors:
+    raise ValueError(f"config {config_path}: not valid\n  " + "\n  ".join(errors))
 
   def ep(p: str) -> Path:
     return _expand_path(p, config_dir, harbor_root)
 
-  if "volume_root" in data:
-    vr = ep(data["volume_root"])
+  if parsed.volume_root is not None:
+    vr = ep(parsed.volume_root)
     volume_roots = {kind: vr / kind for kind in VOLUME_KINDS}
   else:
-    vrs = data["volume_roots"]
-    volume_roots = {kind: ep(vrs[kind]) for kind in VOLUME_KINDS}
+    assert parsed.volume_roots is not None
+    volume_roots = {
+      kind: ep(getattr(parsed.volume_roots, kind)) for kind in VOLUME_KINDS
+    }
 
-  master_keyfile = ep(data.get("master_keyfile", "master.key"))
+  master_keyfile = ep(parsed.master_keyfile)
 
   # NB: Should we technically hold the lock here? Eh.
   master_key_entry = LogTab(master_keyfile).read("master_key")
@@ -160,13 +241,25 @@ def load_config_file(config_file: str | Path) -> Config:
   else:
     logger.warning("Using empty master key")
 
-  apps_root = ep(data.get("apps_root", "apps"))
-  extra_app_sources = _parse_app_sources(data.get("app_source", []), apps_root, ep)
-  run_root = ep(data.get("run_root", "run"))
-  snapshot_root = ep(data.get("snapshot_root", "snapshots"))
-  port_base = data.get("port_base", 41000)
-  default_route_provider, route_providers = _parse_route_providers(data)
-  host_volumes = _parse_host_volumes(data, ep)
+  apps_root = ep(parsed.apps_root)
+  extra_app_sources = _resolve_app_sources(app_source_raw, apps_root, ep)
+  run_root = ep(parsed.run_root)
+  snapshot_root = ep(parsed.snapshot_root)
+
+  route_providers: dict[str, RouteProviderEntry] = {
+    NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(kind="noop", domain=PLACEHOLDER_DOMAIN),
+    **parsed.route_provider,
+  }
+
+  host_volumes = {
+    tag: HostVolume(
+      tag=tag,
+      path=ep(entry.path),
+      readonly=entry.readonly,
+      require_mount=entry.require_mount,
+    )
+    for tag, entry in parsed.host_volume.items()
+  }
 
   return Config(
     harbor_root=harbor_root,
@@ -176,125 +269,69 @@ def load_config_file(config_file: str | Path) -> Config:
     snapshot_root=snapshot_root,
     master_key=master_key,
     master_keyfile=master_keyfile,
-    port_base=port_base,
-    default_route_provider=default_route_provider,
+    port_base=parsed.port_base,
+    default_route_provider=parsed.default_route_provider,
     route_providers=route_providers,
     extra_app_sources=extra_app_sources,
     host_volumes=host_volumes,
   )
 
 
-def _parse_route_providers(data: dict) -> tuple[str, dict[str, dict]]:
-  """Parse `[route_provider.<tag>]` tables and `default_route_provider`.
+def _fmt_validation_error(e: ValidationError, source: Path) -> str:
+  lines = [f"config {source}: {e.error_count()} validation error(s)"]
+  for err in e.errors():
+    loc = ".".join(str(p) for p in err["loc"]) or "<root>"
+    msg = err["msg"]
+    got = err.get("input")
+    got_str = f" (got: {got!r})" if got is not None else ""
+    lines.append(f"  {loc}: {msg}{got_str}")
+  return "\n".join(lines)
 
-  Always injects the reserved `none` noop provider. A user-defined `none` tag
-  is a configuration error.
-  """
-  raw = data.get("route_provider", {})
-  if raw is None:
-    raw = {}
-  if not isinstance(raw, dict):
-    raise ValueError("route_provider must be a table of [route_provider.<tag>] entries")
 
-  if NONE_ROUTE_PROVIDER_TAG in raw:
-    raise ValueError(
+def _validate_config(parsed: ConfigFile) -> list[str]:
+  """Cross-cutting checks the per-section models cannot make alone."""
+  errors: list[str] = []
+
+  if NONE_ROUTE_PROVIDER_TAG in parsed.route_provider:
+    errors.append(
       f"route_provider tag {NONE_ROUTE_PROVIDER_TAG!r} is reserved; "
       f"remove [route_provider.{NONE_ROUTE_PROVIDER_TAG}] from config.toml"
     )
 
-  providers: dict[str, dict] = {
-    NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN},
-  }
-
-  for tag, conf in raw.items():
+  for tag in parsed.route_provider:
     try:
       validate_identifier(tag)
     except ValueError as e:
-      raise ValueError(f"route_provider tag {tag!r} is not a valid name: {e}") from e
-    if not isinstance(conf, dict):
-      raise ValueError(
-        f"route_provider.{tag}: expected a table, e.g. "
-        f'[route_provider.{tag}] with kind = "nginx_proxy_manager"'
-      )
-    kind = conf.get("kind")
-    if not _nonempty_str(kind):
-      raise ValueError(
-        f'route_provider.{tag}: missing required key "kind" '
-        f'(e.g. kind = "nginx_proxy_manager")'
-      )
-    if kind not in ("nginx_proxy_manager", "noop"):
-      raise ValueError(
-        f"route_provider.{tag}: unknown kind {kind!r}; "
-        f'expected "nginx_proxy_manager" or "noop"'
-      )
-    domain = conf.get("domain")
-    if kind != "noop" and not _nonempty_str(domain):
-      raise ValueError(f'route_provider.{tag}: missing required key "domain"')
-    entry = dict(conf)
-    if not _nonempty_str(entry.get("domain")):
-      entry["domain"] = PLACEHOLDER_DOMAIN
-    providers[tag] = entry
+      errors.append(f"route_provider tag {tag!r} is not a valid name: {e}")
 
-  default = data.get("default_route_provider", NONE_ROUTE_PROVIDER_TAG)
-  if not _nonempty_str(default):
-    raise ValueError(
+  for tag in parsed.host_volume:
+    try:
+      validate_identifier(tag)
+    except ValueError as e:
+      errors.append(f"host_volume tag {tag!r} is not a valid name: {e}")
+
+  default = parsed.default_route_provider
+  if not (isinstance(default, str) and default):
+    errors.append(
       "default_route_provider must be a non-empty string tag "
       f"(or omit it for {NONE_ROUTE_PROVIDER_TAG!r})"
     )
-  if default not in providers:
-    raise ValueError(
-      f"default_route_provider {default!r} is not a configured route_provider; "
-      f"add [route_provider.{default}] or set default_route_provider to a known tag"
-    )
-
-  return default, providers
-
-
-def _nonempty_str(value) -> bool:
-  return isinstance(value, str) and bool(value)
-
-
-def _parse_host_volumes(data: dict, ep) -> dict[str, HostVolume]:
-  """Parse `[host_volume.<tag>]` tables into tagged host paths."""
-  raw = data.get("host_volume", {})
-  if raw is None:
-    return {}
-  if not isinstance(raw, dict):
-    raise ValueError(
-      "host_volume must be a table of [host_volume.<tag>] entries, e.g. "
-      '[host_volume.media] with path = "/mnt/media"'
-    )
-
-  volumes: dict[str, HostVolume] = {}
-  for tag, conf in raw.items():
-    try:
-      validate_identifier(tag)
-    except ValueError as e:
-      raise ValueError(f"host_volume tag {tag!r} is not a valid name: {e}") from e
-    if not isinstance(conf, dict):
-      raise ValueError(
-        f"host_volume.{tag}: expected a table, e.g. "
-        f'[host_volume.{tag}] with path = "/mnt/{tag}"'
+  else:
+    known = {NONE_ROUTE_PROVIDER_TAG, *parsed.route_provider}
+    if default not in known:
+      errors.append(
+        f"default_route_provider {default!r} is not a configured route_provider; "
+        f"add [route_provider.{default}] or set default_route_provider to a known tag"
       )
-    path = conf.get("path")
-    if not _nonempty_str(path):
-      raise ValueError(f'host_volume.{tag}: missing required key "path"')
-    readonly = conf.get("readonly", False)
-    if not isinstance(readonly, bool):
-      raise ValueError(f"host_volume.{tag}: readonly must be a boolean")
-    require_mount = conf.get("require_mount", False)
-    if not isinstance(require_mount, bool):
-      raise ValueError(f"host_volume.{tag}: require_mount must be a boolean")
-    volumes[tag] = HostVolume(
-      tag=tag, path=ep(path), readonly=readonly, require_mount=require_mount
-    )
 
-  return volumes
+  return errors
 
 
-def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:
+def _resolve_app_sources(entries: Any, apps_root: Path, ep) -> dict[str, Path]:
   """The `[[app_source]]` blocks that add app directories beyond `apps/`.
-  Names and locations must both be unique
+
+  Names and locations must both be unique. Errors soft-fail: a typo in this
+  optional section must not stop every harbor command.
   """
 
   def refuse(problem: str) -> dict[str, Path]:
@@ -310,37 +347,35 @@ def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:
   names_by_path = {apps_root: DEFAULT_APP_SOURCE}
 
   for entry in entries:
-    name = ""
-    location = ""
-    if isinstance(entry, dict):
-      name = entry.get("name", "")
-      location = entry.get("location", "")
-    if not _nonempty_str(name) or not _nonempty_str(location):
+    try:
+      parsed = AppSourceEntry.model_validate(entry)
+    except ValidationError:
       return refuse(
         'each [[app_source]] needs a name and a location, e.g. name = "dev", '
         'location = "~/code/happs"'
       )
 
     try:
-      validate_identifier(name)
+      validate_identifier(parsed.name)
     except ValueError as e:
-      return refuse(f"app_source name {name!r} is not a valid name: {e}")
+      return refuse(f"app_source name {parsed.name!r} is not a valid name: {e}")
 
-    if name == DEFAULT_APP_SOURCE or name in sources:
+    if parsed.name == DEFAULT_APP_SOURCE or parsed.name in sources:
       return refuse(
-        f"app_source {name!r} is defined twice (or collides with the built-in "
-        f"{DEFAULT_APP_SOURCE!r} source at {apps_root}); give it another name"
+        f"app_source {parsed.name!r} is defined twice (or collides with the "
+        f"built-in {DEFAULT_APP_SOURCE!r} source at {apps_root}); give it "
+        f"another name"
       )
 
-    path = ep(location)
+    path = ep(parsed.location)
     if path in names_by_path:
       return refuse(
-        f"app_source {name!r} points at {path}, which is already the "
+        f"app_source {parsed.name!r} points at {path}, which is already the "
         f"{names_by_path[path]!r} source; every app there would resolve twice"
       )
 
-    names_by_path[path] = name
-    sources[name] = path
+    names_by_path[path] = parsed.name
+    sources[parsed.name] = path
 
   return sources
 
