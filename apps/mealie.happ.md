@@ -29,7 +29,7 @@ image   = "ghcr.io/mealie-recipes/mealie:v3.22.0"
 volumes = { data = "/app/data" }
 
 [run.main.routes]
-main = { port = "9000", publish = "web" }
+main = { port = "9000" }
 
 [run.main.compose]
 # Upstream's compose asks for this; mealie's importer is memory hungry.

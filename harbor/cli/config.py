@@ -1,11 +1,14 @@
 import argparse
 
+import yaml
 from tabulate import tabulate
 
 from harbor.cli.kv import parse_kv
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import apply_config_sets, bind
+from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
+from harbor.lib.routes import RouteProviderError
+from harbor.lib.run_layout import load_run_data, make_compose_dict
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore
 
@@ -13,7 +16,7 @@ from harbor.lib.store import AppStore
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "config",
-    help="List or set happ config and external volume binds",
+    help="List or set happ config, route assignments, and external volume binds",
   )
   parser.add_argument(
     "app",
@@ -27,6 +30,14 @@ def register(subparsers) -> None:
     dest="sets",
     metavar="KEY=VALUE",
     help="Set a config value (repeatable)",
+  )
+  parser.add_argument(
+    "--route",
+    action="append",
+    default=[],
+    dest="routes",
+    metavar="ROUTE=PROVIDER",
+    help="Assign a route to a route-provider tag (repeatable; use none to clear)",
   )
   parser.add_argument(
     "--bind",
@@ -58,16 +69,16 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
 
   if args.get_name is not None:
-    if args.sets or args.binds:
-      raise ValueError("--get cannot be combined with --set or --bind")
+    if args.sets or args.binds or args.routes:
+      raise ValueError("--get cannot be combined with --set, --route, or --bind")
     _get(stack, store, args.get_name, conn, show_secret=args.show_secret)
     return
 
   if args.show_secret:
     raise ValueError("--show-secret requires --get")
 
-  if args.sets or args.binds:
-    _apply(app, stack, args.sets, args.binds, ctx, conn)
+  if args.sets or args.binds or args.routes:
+    _apply(app, stack, args.sets, args.binds, args.routes, ctx, conn)
     return
 
   _list(app, stack, store, conn)
@@ -103,26 +114,75 @@ def _apply(
   stack: AppStack,
   sets_raw: list[str],
   binds_raw: list[str],
+  routes_raw: list[str],
   ctx: HarborCtx,
   conn,
 ) -> None:
   sets = [parse_kv(item, "--set") for item in sets_raw]
   binds = [parse_kv(item, "--bind") for item in binds_raw]
+  routes = [parse_kv(item, "--route") for item in routes_raw]
 
   if sets:
     apply_config_sets(stack, sets, ctx)
   for volname, host_path in binds:
     bind(stack, volname, host_path, ctx)
+  if routes:
+    _apply_routes(app, stack, routes, ctx, conn)
 
   try:
     state = ctx.run_state(app)
   except ValueError:
     state = None
   if state is not None and state.running_count:
-    conn.err(
-      f"App {app} is running; run `harbor stop {app}` "
-      f"&& `harbor start {app}` to apply new config"
-    )
+    if sets or binds:
+      conn.err(
+        f"App {app} is running; run `harbor stop {app}` "
+        f"&& `harbor start {app}` to apply new config"
+      )
+    if routes:
+      conn.err(
+        f"App {app} is running; route provider updates were applied, but "
+        f"containers still have the previous route URLs in their environment. "
+        f"Run `harbor stop {app}` && `harbor start {app}` to refresh them."
+      )
+
+
+def _apply_routes(
+  app: AppID,
+  stack: AppStack,
+  routes: list[tuple[str, str]],
+  ctx: HarborCtx,
+  conn,
+) -> None:
+  store = ctx.app_store(app)
+  for route_name, tag in routes:
+    if route_name not in stack.routes:
+      known = ", ".join(sorted(stack.routes)) or "(none)"
+      raise ValueError(
+        f"route {route_name!r} is not declared in {app}'s manifest; "
+        f"known routes: {known}"
+      )
+    if tag not in ctx.config.route_providers:
+      known = ", ".join(sorted(ctx.config.route_providers))
+      raise ValueError(
+        f"route provider {tag!r} is not configured; known tags: {known}. "
+        f"Add [route_provider.{tag}] to config.toml"
+      )
+
+    old_tag = store.get_route_assignment(route_name)
+    store.set_route_assignment(route_name, tag)
+    try:
+      sync_route_assignment(app, route_name, old_tag, tag, ctx)
+    except RouteProviderError as e:
+      raise ValueError(str(e)) from e
+    conn.out(f"route {route_name} -> {tag}")
+
+  # Rewrite compose so the next start picks up new ${routes.*} URLs.
+  if ctx.is_staged(app):
+    run_data = load_run_data(stack, ctx)
+    compose_path = ctx.staged_paths(app).compose_path
+    with open(compose_path, "w") as f:
+      yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
 
 
 def _list(app: AppID, stack: AppStack, store: AppStore, conn) -> None:
@@ -141,6 +201,27 @@ def _list(app: AppID, stack: AppStack, store: AppStore, conn) -> None:
     rows.append([name, display, entry.desc or ""])
   conn.out(f"Configuration parameters for: {app}")
   conn.out(tabulate(rows, headers=["name", "value", "description"]))
+
+  if stack.routes:
+    assignments = store.list_route_assignments()
+    route_rows = []
+    for name, route in stack.routes.items():
+      tag = assignments.get(name)
+      if tag is None:
+        display = "(unassigned)"
+      else:
+        display = tag
+      private = "yes" if route.private else ""
+      route_rows.append([name, display, private, route.desc or ""])
+    conn.out("")
+    conn.out("Route assignments:")
+    conn.out(
+      tabulate(
+        route_rows,
+        headers=["route", "provider", "private", "description"],
+        tablefmt="simple",
+      )
+    )
 
   ext = [(n, v) for n, v in stack.volumes.items() if v.kind == "ext"]
   if not ext:

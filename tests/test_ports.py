@@ -13,7 +13,6 @@ def _route(
   name: str,
   host_port: int,
   *,
-  publish: str = "lan",
   container_port: int = 80,
 ) -> dict:
   return AssignedRoute(
@@ -23,7 +22,6 @@ def _route(
     host_port=host_port,
     container_port=container_port,
     proto="tcp",
-    publish=publish,  # type: ignore[arg-type]
     scheme="http",
   ).__dict__
 
@@ -46,10 +44,10 @@ def test_next_free_port_skips_occupied(db: HarborStore):
 
 
 def test_list_app_routes_returns_records(db: HarborStore):
-  db._store.write("routes/app-a/main", _route("main", 41000, publish="web"))
+  db._store.write("routes/app-a/main", _route("main", 41000))
   db._store.write("routes/app-a/api", _route("api", 41001))
   assert db.list_routes("app-a") == {
-    "main": _route("main", 41000, publish="web"),
+    "main": _route("main", 41000),
     "api": _route("api", 41001),
   }
 

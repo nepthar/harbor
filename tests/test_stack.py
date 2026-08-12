@@ -161,10 +161,10 @@ subdomain = "photos"
 image = "alpine"
 
 [run.main.routes]
-main   = { port = "8080", publish = "web" }
+main   = { port = "8080" }
 admin  = { port = "9000:80" }
 dns    = { port = "53/udp" }
-secure = { port = "8443", publish = "web", scheme = "https" }
+secure = { port = "8443", scheme = "https" }
 """,
   )
 
@@ -174,7 +174,7 @@ secure = { port = "8443", publish = "web", scheme = "https" }
   assert primary.needs_allocation is True
   assert primary.container_port == 8080
   assert primary.proto == "tcp"
-  assert primary.publish == "web"
+  assert primary.private is False
   assert primary.scheme == "http"
   assert primary.run_unit_name == "main"
 
@@ -182,7 +182,7 @@ secure = { port = "8443", publish = "web", scheme = "https" }
   admin = stack.routes["admin"]
   assert (admin.host_port, admin.container_port) == (9000, 80)
   assert admin.needs_allocation is False
-  assert admin.publish == "lan"
+  assert admin.private is False
 
   assert stack.routes["dns"].container_port == 53
   assert stack.routes["dns"].proto == "udp"
@@ -201,6 +201,7 @@ def test_multiple_run_units_share_one_route_namespace(tmp_path):
 [app]
 version = "2"
 main = "web"
+subdomain = "demo"
 
 [run.web]
 image = "nginx:1.27"

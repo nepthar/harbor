@@ -5,7 +5,7 @@ from time import time
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import Config
+from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, Config
 from harbor.lib.store import HarborStore
 
 logger = logging.getLogger("harbor.routes")
@@ -291,9 +291,14 @@ class NginxProxyManagerRouteProvider(RouteProvider):
 
 
 class NoopRouteProvider(RouteProvider):
-  """The "unconfigured" route provider - just loggs that a route provider is not configured."""
+  """A route provider that records intent but does not configure any proxy.
 
-  def __init__(self):
+  Used for the reserved ``none`` tag, and for any ``kind = "noop"`` provider
+  the operator defines (e.g. to mint URLs on a domain without a reverse proxy).
+  """
+
+  def __init__(self, domain: str = ""):
+    self.domain = domain
     self.routes: dict[str, str] = {}
     self.owners: dict[str, str] = {}
 
@@ -311,11 +316,11 @@ class NoopRouteProvider(RouteProvider):
       raise refuse_foreign_route(route, owner)
     self.routes[subdomain] = f":{port}"
     self.owners[subdomain] = app
-    logger.warning(f"No route provider configured - {app} has requested {route}")
+    logger.warning(f"Noop route provider - {app} has requested {route}")
 
   def unregister_route(self, subdomain: str, domain: str):
     route = f"{subdomain}.{domain}"
-    logger.warning(f"No route provider configured - Attempting to unregister {route}")
+    logger.debug(f"Noop route provider - Attempting to unregister {route}")
     self.routes.pop(subdomain, None)
     self.owners.pop(subdomain, None)
 
@@ -334,32 +339,39 @@ class PangolinRouteProvider(RouteProvider):
   pass
 
 
-def get_route_provider(harbor_db: HarborStore, config: Config) -> RouteProvider:
-  """Build the configured route provider, or a no-op provider when unconfigured.
+def get_route_provider(
+  harbor_db: HarborStore, config: Config, tag: str
+) -> RouteProvider:
+  """Build the route provider for ``tag``.
 
-  Reads ``[route_provider.<kind>]`` from the Harbor config.
-  ``password_secret`` names an encrypted secret in the harbordb system section.
+  ``none`` (and any ``kind = "noop"``) yields a NoopRouteProvider. Unknown
+  tags refuse with a named fix.
   """
+  if tag == NONE_ROUTE_PROVIDER_TAG:
+    return NoopRouteProvider(domain=config.provider_domain(tag))
 
-  providers = config.route_provider
-  if len(providers) != 1:
-    logger.warning(
-      "Exactly one route provider should be configured, there are %d. "
-      "Using dummy provider",
-      len(providers),
+  conf = config.route_providers.get(tag)
+  if conf is None:
+    known = ", ".join(sorted(config.route_providers))
+    raise RouteProviderError(
+      f"No route provider tagged {tag!r}; known tags: {known}. "
+      f"Add [route_provider.{tag}] to config.toml or pick an existing tag"
     )
-    return NoopRouteProvider()
 
-  name, conf = list(providers.items())[0]
+  kind = conf.get("kind", "")
+  domain = conf.get("domain", "")
 
-  if name == "nginx_proxy_manager":
-    reqd = ("endpoint", "email", "password_secret", "forward_host")
+  if kind == "noop":
+    return NoopRouteProvider(domain=domain)
 
-    if any(r not in conf for r in reqd):
-      raise RouteProviderError(f"Missing configuration in route_provider. Needs {reqd}")
+  if kind == "nginx_proxy_manager":
+    reqd = ("endpoint", "email", "password_secret", "forward_host", "domain")
+    missing = [r for r in reqd if r not in conf]
+    if missing:
+      raise RouteProviderError(f"route_provider.{tag}: missing {missing}; needs {reqd}")
 
     pw_ref = conf["password_secret"]
-    password = harbor_db.get_secret(conf["password_secret"])
+    password = harbor_db.get_secret(pw_ref)
     if not password:
       raise RouteProviderError(
         f"Missing password secret {pw_ref!r}. Run: harbor config-sys --stdin {pw_ref}"
@@ -371,12 +383,14 @@ def get_route_provider(harbor_db: HarborStore, config: Config) -> RouteProvider:
       endpoint=conf["endpoint"],
       email=conf["email"],
       password=password,
-      harbor_domain=config.domain,
+      harbor_domain=domain,
       forward_host=conf["forward_host"],
       harbor_db=harbor_db,
       token=tok,
       token_expire=exp,
     )
 
-  logger.warning(f"Unable to find a route provider for {name}. Using dummy provider.")
-  return NoopRouteProvider()
+  raise RouteProviderError(
+    f"route_provider.{tag}: unknown kind {kind!r}; "
+    f'expected "nginx_proxy_manager" or "noop"'
+  )

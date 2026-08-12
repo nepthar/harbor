@@ -12,6 +12,7 @@ from harbor.lib.config import Config
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.stack import (
   HARBOR_SUBDOMAIN_LABEL,
+  PRIMARY_ROUTE_NAME,
   AppConfig,
   AppRoute,
   AppStack,
@@ -105,7 +106,6 @@ class AssignedRoute:
   host_port: int
   container_port: int
   proto: str
-  publish: Literal["web", "lan"]
   scheme: Literal["http", "https"]
 
 
@@ -121,8 +121,9 @@ class AppRunData:
   volume_links: Mapping[str, VolumeLink]
   config_values: Mapping[str, ConfigValue]
   routes: Mapping[str, AssignedRoute]
-  # The public URL of each web route, by route name; what `${routes.<name>}`
-  # in [run.*.env] resolves to. Lan routes have none -- see `_route_urls`.
+  # URL of each route by name; what `${routes.<name>}` in [run.*.env]
+  # resolves to. Assigned non-none providers use that provider's domain;
+  # otherwise a harbor.localhost placeholder -- see `_route_urls`.
   route_urls: Mapping[str, str]
   # Harbor-managed bind mounts every run unit gets; see `_host_mounts`. Held
   # here rather than read at compose time so that what a host happens to have
@@ -260,8 +261,6 @@ def _compare_route(
     mismatch("container port", stack_route.container_port, conf_route.container_port)
   if stack_route.proto != conf_route.proto:
     mismatch("proto", stack_route.proto, conf_route.proto)
-  if stack_route.publish != conf_route.publish:
-    mismatch("publish mode", stack_route.publish, conf_route.publish)
   if stack_route.scheme != conf_route.scheme:
     mismatch("scheme", stack_route.scheme, conf_route.scheme)
 
@@ -318,13 +317,29 @@ def _host_mounts() -> tuple[str, ...]:
   return (f"{LOCALTIME_PATH}:{LOCALTIME_PATH}:ro",)
 
 
-def _route_urls(routes: Mapping[str, AssignedRoute], domain: str) -> dict[str, str]:
-  """Where each web route answers from outside: `https://<subdomain>.<domain>`."""
-  return {
-    name: f"https://{route.subdomain}.{domain}"
-    for name, route in routes.items()
-    if route.publish == "web" and route.subdomain
-  }
+def _route_urls(
+  routes: Mapping[str, AssignedRoute],
+  assignments: Mapping[str, str],
+  config: Config,
+) -> dict[str, str]:
+  """Where each route answers: provider domain, or harbor.localhost placeholder."""
+  urls: dict[str, str] = {}
+  for name, route in routes.items():
+    if not route.subdomain:
+      continue
+    tag = assignments.get(name)
+    domain = config.provider_domain(tag or "")
+    urls[name] = f"{route.scheme}://{route.subdomain}.{domain}"
+  return urls
+
+
+def _app_domain(
+  stack: AppStack, assignments: Mapping[str, str], config: Config
+) -> str | None:
+  if stack.subdomain is None:
+    return None
+  tag = assignments.get(PRIMARY_ROUTE_NAME) or ""
+  return f"{stack.subdomain}.{config.provider_domain(tag)}"
 
 
 def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
@@ -334,8 +349,9 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
   services: dict[str, Any] = {}
   for run_name, run_unit in stack.run_units.items():
     # The manifest validator has already checked that every `${routes.x}` here
-    # names a web route, so the only way one survives unsubstituted is a route
-    # that was never allocated -- and `materialize` allocates before it writes.
+    # names a declared route, so the only way one survives unsubstituted is a
+    # route that was never allocated -- and `materialize` allocates before it
+    # writes.
     environment = {
       str(k): EnvTemplate(str(v)).safe_substitute(route_vars)
       for k, v in run_unit.environment.items()
@@ -410,17 +426,15 @@ def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
   config_values = _load_config_values(stack, issues, ctx)
   routes = _load_routes(stack, issues, ctx)
   vol_links = _load_volume_links(stack, issues, ctx)
-  app_domain = (
-    f"{stack.subdomain}.{ctx.config.domain}" if stack.subdomain is not None else None
-  )
+  assignments = ctx.app_store(stack.app).list_route_assignments()
   return AppRunData(
     app=stack.app,
     run_path=run_path,
-    app_domain=app_domain,
+    app_domain=_app_domain(stack, assignments, ctx.config),
     volume_links=vol_links,
     config_values=config_values,
     routes=routes,
-    route_urls=_route_urls(routes, ctx.config.domain),
+    route_urls=_route_urls(routes, assignments, ctx.config),
     host_mounts=_host_mounts(),
     issues=tuple(issues),
   )

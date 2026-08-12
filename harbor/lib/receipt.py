@@ -2,26 +2,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.run_layout import AppRunData
 from harbor.lib.stack import AppStack
 
 
-def web_fqdns(stack: AppStack, domain: str) -> list[str]:
-  """HTTPS FQDNs for web-facing routes, in declaration order."""
-  fqdns: list[str] = []
-  for _route_name, route in stack.routes.items():
-    if route.publish != "web":
+def published_urls(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -> list[str]:
+  """URLs for routes assigned to a non-none provider, in declaration order."""
+  assignments = ctx.app_store(stack.app).list_route_assignments()
+  urls: list[str] = []
+  for route_name, route in stack.routes.items():
+    tag = assignments.get(route_name)
+    if not tag or tag == NONE_ROUTE_PROVIDER_TAG:
+      continue
+    if route_name in run_data.route_urls:
+      urls.append(run_data.route_urls[route_name])
       continue
     if not stack.subdomain:
       continue
+    domain = ctx.config.provider_domain(tag)
+    urls.append(f"{route.scheme}://{route.subdomain(stack.subdomain)}.{domain}")
+  return urls
 
-    fqdn = f"https://{route.subdomain(stack.subdomain)}.{domain}"
-    fqdns.append(fqdn)
-  return fqdns
 
-
-def lan_lines(stack: AppStack, run_data: AppRunData | None) -> list[str]:
+def host_port_lines(stack: AppStack, run_data: AppRunData | None) -> list[str]:
   """Host port mappings as ``:<host> → <unit>:<container>/<proto>``."""
   lines: list[str] = []
 
@@ -73,19 +78,19 @@ def location_receipt(
   *,
   heading: str | None = None,
 ) -> str:
-  """Post-up / status location block (Web, LAN, Data, Logs)."""
+  """Post-up / status location block (Routes, Host, Data, Logs)."""
   app_id = stack.app
   title = heading if heading is not None else f"Running {app_id}"
   rows: list[tuple[str, str]] = []
 
-  webs = web_fqdns(stack, ctx.config.domain)
-  if webs:
-    rows.append(("Web:", ", ".join(webs)))
+  pubs = published_urls(stack, run_data, ctx)
+  if pubs:
+    rows.append(("Routes:", ", ".join(pubs)))
 
-  lans = lan_lines(stack, run_data)
-  if lans:
-    rows.append(("LAN:", lans[0]))
-    for extra in lans[1:]:
+  hosts = host_port_lines(stack, run_data)
+  if hosts:
+    rows.append(("Host:", hosts[0]))
+    for extra in hosts[1:]:
       rows.append(("", extra))
 
   vols = volume_lines(stack, run_data, ctx)
@@ -126,18 +131,18 @@ def capability_receipt(
         else:
           spec = f"{port.host_port}:{port.container_port}/{port.proto}"
         route = stack.routes.get(port_name)
-        publish = f", {route.publish}" if route else ""
-        declared_ports.append(f"{unit_name}.{port_name}: {spec}{publish}")
+        private = ", private" if route and route.private else ""
+        declared_ports.append(f"{unit_name}.{port_name}: {spec}{private}")
     if declared_ports:
       lines.append(f"  Ports:   {declared_ports[0]}")
       for extra in declared_ports[1:]:
         lines.append(f"           {extra}")
 
-    if stack.subdomain:
-      webs = web_fqdns(stack, ctx.config.domain)
-      if webs:
-        lines.append(f"  Routes:  {webs[0]}")
-        for extra in webs[1:]:
+    if stack.subdomain and run_data is not None:
+      pubs = published_urls(stack, run_data, ctx)
+      if pubs:
+        lines.append(f"  Routes:  {pubs[0]}")
+        for extra in pubs[1:]:
           lines.append(f"           {extra}")
     elif stack.subdomain:
       lines.append(f"  Routes:  subdomain={stack.subdomain}")
@@ -160,7 +165,7 @@ def capability_receipt(
         parts.append(f"required={','.join(required)}")
       if secrets:
         parts.append(f"secrets={','.join(secrets)}")
-      lines.append(f"  Config:  {'; '.join(parts)}")
+      lines.append(f"  Config:  {' '.join(parts)}")
 
   dangers = danger_callouts(stack)
   for danger in dangers:
@@ -201,14 +206,14 @@ def status_receipt(
     ("Source:", str(source)),
   ]
 
-  webs = web_fqdns(stack, ctx.config.domain)
-  if webs:
-    rows.append(("Web:", ", ".join(webs)))
+  pubs = published_urls(stack, run_data, ctx)
+  if pubs:
+    rows.append(("Routes:", ", ".join(pubs)))
 
-  lans = lan_lines(stack, run_data)
-  if lans:
-    rows.append(("LAN:", lans[0]))
-    for extra in lans[1:]:
+  hosts = host_port_lines(stack, run_data)
+  if hosts:
+    rows.append(("Host:", hosts[0]))
+    for extra in hosts[1:]:
       rows.append(("", extra))
 
   if run_data.start_blockers:
@@ -242,9 +247,9 @@ def _format_labeled(title: str, rows: list[tuple[str, str]]) -> str:
 __all__ = [
   "capability_receipt",
   "danger_callouts",
-  "lan_lines",
+  "host_port_lines",
   "location_receipt",
+  "published_urls",
   "status_receipt",
   "volume_lines",
-  "web_fqdns",
 ]

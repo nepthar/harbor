@@ -1,14 +1,14 @@
 # Routes Demo
 
-Three routes: `main` (published at the bare `[app]` subdomain), `sub1`
-(published as `sub1-routes.<domain>`), and `lan_only` (plain docker port
-forwarding, no subdomain).
+Three routes: `main` (bare `[app]` subdomain), `sub1` (`sub1-routes.<domain>`
+when assigned), and `host_only` (host port until the operator assigns a
+provider).
 
 ```toml happ_path="manifest.toml"
 [app]
 version      = "0.1.0"
 display_name = "Routes Demo"
-description  = "Publishes primary, secondary, and LAN-only routes"
+description  = "Publishes primary, secondary, and host-only routes"
 subdomain    = "routes"
 
 [volumes]
@@ -21,12 +21,12 @@ image  = "nginx:alpine"
 volumes = { app = "/etc/nginx/templates" }
 
 [run.main.routes]
-# "main" is always published under the raw, unprefixed subdomain as defined in [app]
-main     = { port = "8081", publish = "web" }
-# "sub1" will be published as "sub1-routes.<harbor_domain>".
-sub1     = { port = "8082", publish = "web" }
-# This will not receive a subdomain. "lan" is just regular docker port forwarding.
-lan_only = { port = "8083", publish = "lan" }
+# "main" is the bare [app] subdomain; non-private routes auto-assign to default_route_provider
+main     = { port = "8081" }
+# "sub1" will be "sub1-routes.<provider_domain>" when assigned
+sub1     = { port = "8082" }
+# private: available to publish, but not auto-assigned
+host_only = { port = "8083", private = true }
 ```
 
 One nginx server per route. nginx:alpine runs envsubst over `*.template`
@@ -53,7 +53,7 @@ server {
     listen 8083;
     location / {
         default_type text/plain;
-        return 200 'Hello from the route only accessable via lan\n';
+        return 200 'Hello from the route only accessable via host port\n';
     }
 }
 ```

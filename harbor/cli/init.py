@@ -16,7 +16,6 @@ apps_root = "apps"
 run_root = "run"
 volume_root = "volumes"
 master_keyfile = "master.key"
-domain = "harbor.localhost"
 port_base = 41000
 
 # Optional: extra directories to look for happs in, on top of apps_root above
@@ -28,16 +27,24 @@ port_base = 41000
 # name     = "dev"
 # location = "~/code/happs"
 
-# Optional: attach HTTP routes for happs with web routes (publish = "web")
-# through an external reverse proxy. Without this section, routing is skipped
-# and ports are still published to the LAN. Store the password with
-# `harbor config-sys --stdin route_provider.nginx_proxy_manager.password`, then
-# verify with `harbor routes check`.
+# Routes are auto-assigned to this provider tag on first stage (like a config
+# default), unless marked private=true in the manifest. The reserved tag
+# "none" is a built-in noop and is the default when this key is omitted.
+# default_route_provider = "web"
+
+# Optional: reverse-proxy (or other) providers that publish app routes.
+# Each block is tagged by you ("web", "lan", "homelab", …); `kind` selects
+# the implementation. Store the password with
+# `harbor config-sys --stdin route_provider.web.password`, then verify with
+# `harbor routes check web`. Assign routes with
+# `harbor config <app> --route main=web`.
 #
-# [route_provider.nginx_proxy_manager]
+# [route_provider.web]
+# kind            = "nginx_proxy_manager"
+# domain          = "example.com"
 # endpoint        = "http://npm-host:81"
 # email           = "admin@example.com"
-# password_secret = "route_provider.nginx_proxy_manager.password"
+# password_secret = "route_provider.web.password"
 # forward_host    = "10.0.0.5"
 """
 

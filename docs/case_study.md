@@ -233,7 +233,7 @@ volumes = { app_config = "/config" }
 
 [run.main.routes]
 # This is the only route we need to pubslih
-main        = { port = "8443:8443", publish = "web", scheme = "https" }
+main        = { port = "8443:8443", scheme = "https" }
 stun         = { port = "3478:3478" }
 ap_discovery = { port = "10001:10001/udp" }
 device_comm  = { port = "8080:8080" }

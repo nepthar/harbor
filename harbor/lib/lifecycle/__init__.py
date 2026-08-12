@@ -7,10 +7,11 @@ from harbor.lib.lifecycle.restore import (
 )
 from harbor.lib.lifecycle.rm import RemovalPlan, removal_plan, rm
 from harbor.lib.lifecycle.routes import (
+  assigned_routes,
   preflight_app_routes,
   register_app_routes,
+  sync_route_assignment,
   unregister_app_routes,
-  web_routes,
 )
 from harbor.lib.lifecycle.run import logs, recovery_lines, start, stop
 from harbor.lib.lifecycle.snapshot import snapshot
@@ -36,6 +37,7 @@ __all__ = [
   "link_ext_volumes",
   "logs",
   "materialize",
+  "assigned_routes",
   "preflight_app_routes",
   "recovery_lines",
   "register_app_routes",
@@ -50,7 +52,7 @@ __all__ = [
   "staging_target",
   "start",
   "stop",
+  "sync_route_assignment",
   "unlink_ext_volumes",
   "unregister_app_routes",
-  "web_routes",
 ]

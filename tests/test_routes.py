@@ -1,4 +1,4 @@
-"""Tests for the [run.<unit>.routes] model: port specs, publish, and the
+"""Tests for the [run.<unit>.routes] model: port specs, private, and the
 route-name -> subdomain mapping (reserved "main" = the bare app subdomain).
 """
 
@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from harbor.lib.apps import AppID
-from harbor.lib.lifecycle.routes import preflight_app_routes, web_routes
+from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, PLACEHOLDER_DOMAIN, Config
+from harbor.lib.lifecycle.routes import assigned_routes, preflight_app_routes
 from harbor.lib.manifest import ConfigError, Manifest, _validate_routes
 from harbor.lib.routes import (
   NginxProxyManagerRouteProvider,
@@ -40,18 +41,25 @@ subdomain = "photos"
 image = "alpine:latest"
 
 [run.main.routes]
-main    = { port = "8080", publish = "web" }
-api     = { port = "8081", publish = "web" }
-admin   = { port = "8082", publish = "lan" }
-default = { port = "8083" }
-metrics = { port = "9090:9091/udp", publish = "lan" }
+main    = { port = "8080" }
+api     = { port = "8081" }
+admin   = { port = "8082", private = true }
+default = { port = "8083", private = true }
+metrics = { port = "9090:9091/udp", private = true }
 """
 
 
 # ── resolution ────────────────────────────────────────────────────────────
-def test_publish_defaults_to_lan():
+def test_private_defaults_to_false():
   stack = _stack(ROUTES)
-  assert stack.routes["default"].publish == "lan"
+  assert stack.routes["main"].private is False
+  assert stack.routes["api"].private is False
+
+
+def test_private_true_resolved():
+  stack = _stack(ROUTES)
+  assert stack.routes["default"].private is True
+  assert stack.routes["admin"].private is True
 
 
 def test_scheme_defaults_to_http():
@@ -71,8 +79,8 @@ subdomain = "photos"
 image = "alpine:latest"
 
 [run.main.routes]
-main  = { port = "8080", publish = "web" }
-admin = { port = "8443:8443", publish = "web", scheme = "https" }
+main  = { port = "8080" }
+admin = { port = "8443:8443", scheme = "https" }
 """
   )
   assert stack.routes["main"].scheme == "http"
@@ -83,7 +91,7 @@ def test_primary_route_subdomain_is_bare_app_subdomain():
   stack = _stack(ROUTES)
   main = stack.routes["main"]
   assert main.subdomain("photos") == "photos"
-  assert main.publish == "web"
+  assert main.private is False
 
 
 def test_named_route_subdomain_is_prefixed():
@@ -132,27 +140,32 @@ main = "web"
 [run.web]
 image = "alpine:latest"
 [run.web.routes]
-main = { port = "8080", publish = "web" }
+main = { port = "8080" }
 
 [run.worker]
 image = "alpine:latest"
 [run.worker.routes]
-metrics = { port = "9090", publish = "lan" }
+metrics = { port = "9090" }
 """
   )
   assert stack.routes["main"].run_unit_name == "web"
   assert stack.routes["metrics"].run_unit_name == "worker"
 
 
-# ── web-route filtering (lifecycle) ───────────────────────────────────────
-def test_web_routes_filters_out_lan():
-  run_data = _run_data(_stack(ROUTES))
-  web = {name for name, _ in web_routes(run_data)}
-  assert web == {"main", "api"}
+# ── assigned-route filtering (lifecycle) ───────────────────────────────────
+def test_assigned_routes_skips_none_and_unassigned():
+  stack = _stack(ROUTES)
+  run_data = _run_data(stack)
+  store = SimpleNamespace(
+    list_route_assignments=lambda: {"main": "web", "api": NONE_ROUTE_PROVIDER_TAG}
+  )
+  ctx = SimpleNamespace(app_store=lambda _app: store)
+  names = {name for name, _, _ in assigned_routes(run_data, ctx)}
+  assert names == {"main"}
 
 
 # ── validation ────────────────────────────────────────────────────────────
-def test_web_route_requires_app_subdomain():
+def test_any_route_requires_app_subdomain():
   errors = _validate_routes(
     _model(
       """
@@ -162,28 +175,11 @@ version = "0.1.0"
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-main = { port = "8080", publish = "web" }
+admin = { port = "8082" }
 """
     )
   )
   assert any("subdomain" in e for e in errors)
-
-
-def test_lan_route_does_not_require_subdomain():
-  errors = _validate_routes(
-    _model(
-      """
-[app]
-version = "0.1.0"
-
-[run.main]
-image = "alpine:latest"
-[run.main.routes]
-admin = { port = "8082", publish = "lan" }
-"""
-    )
-  )
-  assert errors == []
 
 
 def test_duplicate_route_name_across_units_is_rejected():
@@ -197,12 +193,12 @@ subdomain = "photos"
 [run.a]
 image = "alpine:latest"
 [run.a.routes]
-dash = { port = "8080", publish = "lan" }
+dash = { port = "8080" }
 
 [run.b]
 image = "alpine:latest"
 [run.b.routes]
-dash = { port = "8081", publish = "lan" }
+dash = { port = "8081" }
 """
     )
   )
@@ -227,12 +223,12 @@ main = "web"
 [run.web]
 image = "alpine:latest"
 [run.web.routes]
-dash = { port = "8080", publish = "web" }
+dash = { port = "8080" }
 
 [run.worker]
 image = "alpine:latest"
 [run.worker.routes]
-dash = { port = "8081", publish = "lan" }
+dash = { port = "8081" }
 """
     )
 
@@ -244,11 +240,12 @@ def test_host_network_mode_forbids_routes():
 [app]
 version = "0.1.0"
 network_mode = "host"
+subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-admin = { port = "8082", publish = "lan" }
+admin = { port = "8082" }
 """
     )
   )
@@ -262,26 +259,12 @@ def test_invalid_port_spec_rejected():
       """
 [app]
 version = "0.1.0"
+subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-bad = { port = "not-a-port", publish = "lan" }
-"""
-    )
-
-
-def test_unknown_publish_value_rejected():
-  with pytest.raises(ConfigError):
-    _stack(
-      """
-[app]
-version = "0.1.0"
-
-[run.main]
-image = "alpine:latest"
-[run.main.routes]
-bad = { port = "8080", publish = "internet" }
+bad = { port = "not-a-port" }
 """
     )
 
@@ -292,11 +275,12 @@ def test_unknown_scheme_value_rejected():
       """
 [app]
 version = "0.1.0"
+subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-bad = { port = "8080", publish = "web", scheme = "ftp" }
+bad = { port = "8080", scheme = "ftp" }
 """
     )
 
@@ -316,7 +300,7 @@ site = { audience = "web" }
 
 
 # ── ${routes.<name>} references in [run.*.env] ────────────────────────────
-def test_env_may_reference_a_web_route():
+def test_env_may_reference_any_declared_route():
   # Resolving it needs an allocated route; see test_compose.py for the value.
   stack = _stack(
     """
@@ -326,15 +310,17 @@ subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
-env = { BASE_URL = "${routes.main}" }
+env = { BASE_URL = "${routes.main}", ADMIN = "${routes.admin}" }
 [run.main.routes]
-main = { port = "8080", publish = "web" }
+main = { port = "8080" }
+admin = { port = "8082" }
 """
   )
   assert stack.run_units["main"].environment["BASE_URL"] == "${routes.main}"
+  assert stack.run_units["main"].environment["ADMIN"] == "${routes.admin}"
 
 
-def test_env_may_reference_a_web_route_on_another_run_unit():
+def test_env_may_reference_a_route_on_another_run_unit():
   """Routes are app-level, so a unit can name one it does not itself publish."""
   stack = _stack(
     """
@@ -349,7 +335,7 @@ env = { PEER = "${routes.api}" }
 [run.api]
 image = "alpine:latest"
 [run.api.routes]
-api = { port = "8080", publish = "web" }
+api = { port = "8080" }
 """
   )
   assert stack.run_units["main"].environment["PEER"] == "${routes.api}"
@@ -361,27 +347,11 @@ def test_env_reference_to_an_undeclared_route_is_rejected():
       """
 [app]
 version = "0.1.0"
+subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
 env = { BASE_URL = "${routes.nope}" }
-"""
-    )
-
-
-def test_env_reference_to_a_lan_route_is_rejected():
-  """A lan route is a port on a host harbor cannot name, so it has no URL."""
-  with pytest.raises(ConfigError, match="not web-facing"):
-    _stack(
-      """
-[app]
-version = "0.1.0"
-
-[run.main]
-image = "alpine:latest"
-env = { BASE_URL = "${routes.main}" }
-[run.main.routes]
-main = { port = "8080", publish = "lan" }
 """
     )
 
@@ -392,6 +362,7 @@ def test_env_reference_to_an_unknown_namespace_is_rejected():
       """
 [app]
 version = "0.1.0"
+subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
@@ -419,23 +390,34 @@ def _npm_provider():
 
 
 def test_documented_route_provider_config_constructs():
-  config = SimpleNamespace(
-    domain="home.example",
-    route_provider={
-      "nginx_proxy_manager": {
+  config = Config(
+    harbor_root=Path("/tmp"),
+    volume_roots={},
+    apps_root=Path("/tmp/apps"),
+    run_root=Path("/tmp/run"),
+    snapshot_root=Path("/tmp/snapshots"),
+    master_key="",
+    master_keyfile=Path("/tmp/master.key"),
+    default_route_provider="web",
+    route_providers={
+      NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN},
+      "web": {
+        "kind": "nginx_proxy_manager",
+        "domain": "home.example",
         "endpoint": "http://npm.example",
         "email": "admin@example.com",
         "password_secret": "npm.password",
         "forward_host": "192.168.1.10",
-      }
+      },
     },
   )
 
-  provider = get_route_provider(_RouteDB(), config)
+  provider = get_route_provider(_RouteDB(), config, "web")
 
   assert isinstance(provider, NginxProxyManagerRouteProvider)
   assert provider.email == "admin@example.com"
   assert provider.forward_host == "192.168.1.10"
+  assert provider.harbor_domain == "home.example"
 
 
 def test_register_route_requires_wildcard_certificate():
@@ -566,7 +548,6 @@ def _assigned(stack, route_name: str, host_port: int = 41000) -> AssignedRoute:
     host_port=host_port,
     container_port=route.container_port,
     proto=route.proto,
-    publish=route.publish,
     scheme=route.scheme,
   )
 
@@ -577,6 +558,14 @@ def _run_data(stack, host_ports: dict[str, int] | None = None) -> AppRunData:
     name: _assigned(stack, name, ports.get(name, 41000 + i))
     for i, name in enumerate(stack.routes)
   }
+  config = SimpleNamespace(
+    provider_domain=lambda tag: (
+      "home.example" if tag and tag != "none" else PLACEHOLDER_DOMAIN
+    )
+  )
+  assignments = {
+    name: "web" for name, route in stack.routes.items() if not route.private
+  }
   return AppRunData(
     app=stack.app,
     run_path=Path("/tmp/unused"),
@@ -584,7 +573,7 @@ def _run_data(stack, host_ports: dict[str, int] | None = None) -> AppRunData:
     volume_links={},
     config_values={},
     routes=assigned,
-    route_urls=_route_urls(assigned, "home.example"),
+    route_urls=_route_urls(assigned, assignments, config),
     host_mounts=(),
     issues=(),
   )
@@ -600,16 +589,23 @@ subdomain = "{subdomain}"
 [run.main]
 image = "alpine:latest"
 [run.main.routes]
-main = {{ port = "8080", publish = "web" }}
+main = {{ port = "8080" }}
 """,
     app_id,
   )
 
 
 def _preflight_with(provider, stack):
+  store = SimpleNamespace(
+    list_route_assignments=lambda: {"main": "web"},
+  )
   ctx = SimpleNamespace(
-    config=SimpleNamespace(domain="home.example"),
+    config=SimpleNamespace(
+      provider_domain=lambda tag: "home.example",
+      route_providers={"web": {"kind": "noop", "domain": "home.example"}},
+    ),
     harbor_db=lambda: None,
+    app_store=lambda _app: store,
   )
   with patch("harbor.lib.lifecycle.routes.get_route_provider", return_value=provider):
     preflight_app_routes(_run_data(stack), ctx)

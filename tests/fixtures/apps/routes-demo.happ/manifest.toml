@@ -1,4 +1,4 @@
-# Fixture happ: web + lan routes declared inline under the run unit.
+# Fixture happ: interesting routes for the operator to assign to providers.
 
 [app]
 version      = "0.1.0"
@@ -13,8 +13,8 @@ image = "alpine:latest"
 cmd   = ["/bin/sh", "-c", "sleep infinity"]
 
 # The reserved name "main" -> photos.<domain>; "api" -> api-photos.<domain>;
-# "admin" is lan-only (host port published, no reverse-proxy route).
+# "admin" is private (host port only until the operator assigns a provider).
 [run.main.routes]
-main  = { port = "8080", publish = "web" }
-api   = { port = "8081", publish = "web" }
-admin = { port = "8082", publish = "lan" }
+main  = { port = "8080" }
+api   = { port = "8081" }
+admin = { port = "8082", private = true }

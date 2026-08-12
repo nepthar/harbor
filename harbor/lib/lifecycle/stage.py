@@ -93,10 +93,9 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
   if stack.network_mode == "host" or not stack.routes:
     return
 
-  has_web = any(route.publish == "web" for route in stack.routes.values())
-  if has_web and not stack.subdomain:
-    raise ValueError(f"App {stack.app} declares web routes but has no [app].subdomain")
-  app_subdomain = stack.subdomain or ""
+  if not stack.subdomain:
+    raise ValueError(f"App {stack.app} declares routes but has no [app].subdomain")
+  app_subdomain = stack.subdomain
 
   hdb = ctx.harbor_db()
   hdb.clear_routes(stack.app)
@@ -108,16 +107,30 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
 
     assigned = AssignedRoute(
       name=route_name,
-      subdomain=route.subdomain(app_subdomain) if app_subdomain else "",
+      subdomain=route.subdomain(app_subdomain),
       run_unit_name=route.run_unit_name,
       host_port=host_port,
       container_port=route.container_port,
       proto=route.proto,
-      publish=route.publish,
       scheme=route.scheme,
     )
 
     hdb.set_route(stack.app, route_name, assigned.__dict__)
+
+
+def _apply_default_route_assignments(stack: AppStack, ctx: HarborCtx) -> None:
+  """Write default_route_provider for non-private routes with no assignment yet.
+
+  Same shape as config defaults: once written, it is as if the operator set it.
+  Private routes stay unassigned until `harbor config --route`.
+  """
+  store = ctx.app_store(stack.app)
+  default = ctx.config.default_route_provider
+  for route_name, route in stack.routes.items():
+    if store.has_route_assignment(route_name):
+      continue
+    if not route.private:
+      store.set_route_assignment(route_name, default)
 
 
 def _existing_volume_kinds(volumes_root: Path) -> dict[str, str]:
@@ -369,6 +382,7 @@ def stage(
       bind(stack, volname, host_path, ctx)
 
   _generate_missing_config(stack, ctx)
+  _apply_default_route_assignments(stack, ctx)
 
   try:
     run_data, dropped = materialize(stack, ctx)
