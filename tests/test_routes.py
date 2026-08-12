@@ -10,7 +10,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, PLACEHOLDER_DOMAIN, Config
+from harbor.lib.config import (
+  NONE_ROUTE_PROVIDER_TAG,
+  PLACEHOLDER_DOMAIN,
+  Config,
+  RouteProviderEntry,
+)
 from harbor.lib.lifecycle.routes import assigned_routes, preflight_app_routes
 from harbor.lib.manifest import ConfigError, Manifest, _validate_routes
 from harbor.lib.routes import (
@@ -400,15 +405,19 @@ def test_documented_route_provider_config_constructs():
     master_keyfile=Path("/tmp/master.key"),
     default_route_provider="web",
     route_providers={
-      NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN},
-      "web": {
-        "kind": "nginx_proxy_manager",
-        "domain": "home.example",
-        "endpoint": "http://npm.example",
-        "email": "admin@example.com",
-        "password_secret": "npm.password",
-        "forward_host": "192.168.1.10",
-      },
+      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
+        kind="noop", domain=PLACEHOLDER_DOMAIN
+      ),
+      "web": RouteProviderEntry(
+        kind="nginx_proxy_manager",
+        domain="home.example",
+        args={
+          "endpoint": "http://npm.example",
+          "email": "admin@example.com",
+          "password_secret": "npm.password",
+          "forward_host": "192.168.1.10",
+        },
+      ),
     },
   )
 
