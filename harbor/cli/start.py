@@ -30,8 +30,8 @@ def register(subparsers) -> None:
     action="append",
     default=[],
     dest="binds",
-    metavar="VOLUME=HOST_PATH",
-    help="Bind an external volume before starting (repeatable)",
+    metavar="VOLUME=HOST_VOLUME",
+    help="Bind an app volume to a host_volume tag before starting (repeatable)",
   )
   parser.set_defaults(func=run)
 

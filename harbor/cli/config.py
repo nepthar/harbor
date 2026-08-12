@@ -16,7 +16,7 @@ from harbor.lib.store import AppStore
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "config",
-    help="List or set happ config, route assignments, and external volume binds",
+    help="List or set happ config, route assignments, and host volume binds",
   )
   parser.add_argument(
     "app",
@@ -44,8 +44,8 @@ def register(subparsers) -> None:
     action="append",
     default=[],
     dest="binds",
-    metavar="VOLUME=HOST_PATH",
-    help="Bind an external volume to a host path (repeatable)",
+    metavar="VOLUME=HOST_VOLUME",
+    help="Bind an app volume to a host_volume tag from config.toml (repeatable)",
   )
   parser.add_argument(
     "--get",
@@ -124,8 +124,8 @@ def _apply(
 
   if sets:
     apply_config_sets(stack, sets, ctx)
-  for volname, host_path in binds:
-    bind(stack, volname, host_path, ctx)
+  for volname, host_volume_tag in binds:
+    bind(stack, volname, host_volume_tag, ctx)
   if routes:
     _apply_routes(app, stack, routes, ctx, conn)
 
@@ -223,16 +223,18 @@ def _list(app: AppID, stack: AppStack, store: AppStore, conn) -> None:
       )
     )
 
-  ext = [(n, v) for n, v in stack.volumes.items() if v.kind == "ext"]
-  if not ext:
+  host = [(n, v) for n, v in stack.volumes.items() if v.kind == "host"]
+  if not host:
     return
 
   binds = store.list_binds()
   bind_rows = []
-  for name, _volume in ext:
-    entry = binds.get(name)
-    host_path = entry["host_path"] if entry else "(not bound)"
-    bind_rows.append([name, host_path])
+  for name, _volume in host:
+    tag = binds.get(name)
+    display = tag if tag else "(not bound)"
+    bind_rows.append([name, display])
   conn.out("")
-  conn.out("External volume binds:")
-  conn.out(tabulate(bind_rows, headers=["volume_name", "host_path"], tablefmt="simple"))
+  conn.out("Host volume binds:")
+  conn.out(
+    tabulate(bind_rows, headers=["volume_name", "host_volume"], tablefmt="simple")
+  )

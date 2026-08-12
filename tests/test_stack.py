@@ -117,7 +117,7 @@ bin        = { kind = "app", src = "scripts" }
 app_config = { kind = "data" }
 cache      = { kind = "temp" }
 media      = { kind = "bulk", readonly = true }
-extvol     = { kind = "ext" }
+hostvol    = { kind = "host" }
 
 [run.main]
 image = "alpine"
@@ -135,11 +135,11 @@ volumes = { bin = "/opt/bin", app_config = "/config", media = "/media" }
   assert stack.volumes["app_config"].run_rel_path == "./volumes/data/app_config"
   assert stack.volumes["cache"].run_rel_path == "./volumes/temp/cache"
   assert stack.volumes["media"].readonly is True
-  assert stack.volumes["extvol"].run_rel_path == "./volumes/ext/extvol"
+  assert stack.volumes["hostvol"].run_rel_path == "./volumes/host/hostvol"
 
   # Declared but unmounted volumes still belong to the stack -- staging links
   # them regardless of whether a run unit asked for one.
-  assert set(stack.volumes) == {"bin", "app_config", "cache", "media", "extvol"}
+  assert set(stack.volumes) == {"bin", "app_config", "cache", "media", "hostvol"}
 
   mounts = stack.run_units["main"].volumes
   assert set(mounts) == {"bin", "app_config", "media"}

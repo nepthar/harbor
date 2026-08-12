@@ -139,11 +139,9 @@ def test_store_plain_round_trip_is_plaintext(tmp_path):
 
 def test_store_keeps_binds_and_meta(tmp_path):
   store = AppStore.from_path(tmp_path / "config.logtab", NoopCryptoEngine())
-  store.set_bind("media", "/mnt/nas/media", readonly=True)
+  store.set_bind("media", "nas_media")
   store.set_meta("origin", "/harbor/apps/io.test.example.happ")
 
-  assert store.list_binds() == {
-    "media": {"host_path": "/mnt/nas/media", "readonly": True}
-  }
+  assert store.list_binds() == {"media": "nas_media"}
   assert store.get_meta("origin") == "/harbor/apps/io.test.example.happ"
   assert store.get_meta("staged_at") is None

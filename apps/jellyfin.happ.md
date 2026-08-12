@@ -20,7 +20,7 @@ subdomain    = "jelly"
 config   = { kind = "data", desc = "Server config, users, playback state" }
 metadata = { kind = "bulk", desc = "Artwork, trickplay images, subtitles" }
 cache    = { kind = "temp", desc = "Transcode and image cache; safe to lose" }
-media    = { kind = "ext",  desc = "The library itself; bind to the media share", readonly = true }
+media    = { kind = "host",  desc = "The library itself; bind to the media share", readonly = true }
 
 [run.main]
 image   = "jellyfin/jellyfin"
@@ -45,10 +45,16 @@ JELLYFIN_PublishedServerUrl = "${routes.main}"
 
 The media share has to be mounted on the host first — harbor binds a directory,
 it does not speak NFS. Mount your media through fstab, autofs, or
-a systemd `.mount` unit, then point the volume at it:
+a systemd `.mount` unit, declare it in config.toml, then bind the app volume:
+
+```toml
+[host_volume.media]
+path = "/mnt/my-media"
+readonly = true
+```
 
 ```
-harbor config jellyfin --bind media=/mnt/my-media
+harbor config jellyfin --bind media=media
 harbor start jellyfin
 ```
 

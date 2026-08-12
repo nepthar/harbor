@@ -1,6 +1,7 @@
 import logging
 import os
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID
@@ -39,6 +40,15 @@ def _expand_path(
   return (relative_base / p).resolve()
 
 
+@dataclass(frozen=True)
+class HostVolume:
+  """A tagged host path apps may bind a `kind = "host"` volume to."""
+
+  tag: str
+  path: Path
+  readonly: bool = False
+
+
 class Config:
   harbor_root: Path
   volume_roots: dict[str, Path]
@@ -50,6 +60,7 @@ class Config:
   port_base: int
   default_route_provider: str
   route_providers: dict[str, dict]
+  host_volumes: dict[str, HostVolume]
 
   def __init__(
     self,
@@ -64,6 +75,7 @@ class Config:
     default_route_provider: str = NONE_ROUTE_PROVIDER_TAG,
     route_providers: dict[str, dict] | None = None,
     extra_app_sources: dict[str, Path] | None = None,
+    host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
     self.harbor_root = harbor_root
     self.volume_roots = volume_roots
@@ -78,6 +90,7 @@ class Config:
     self.route_providers = route_providers or {
       NONE_ROUTE_PROVIDER_TAG: {"kind": "noop", "domain": PLACEHOLDER_DOMAIN}
     }
+    self.host_volumes = host_volumes or {}
 
   @property
   def harbor_lockfile_path(self) -> Path:
@@ -150,6 +163,7 @@ def load_config_file(config_file: str | Path) -> Config:
   snapshot_root = ep(data.get("snapshot_root", "snapshots"))
   port_base = data.get("port_base", 41000)
   default_route_provider, route_providers = _parse_route_providers(data)
+  host_volumes = _parse_host_volumes(data, ep)
 
   return Config(
     harbor_root=harbor_root,
@@ -163,6 +177,7 @@ def load_config_file(config_file: str | Path) -> Config:
     default_route_provider=default_route_provider,
     route_providers=route_providers,
     extra_app_sources=extra_app_sources,
+    host_volumes=host_volumes,
   )
 
 
@@ -234,6 +249,39 @@ def _parse_route_providers(data: dict) -> tuple[str, dict[str, dict]]:
 
 def _nonempty_str(value) -> bool:
   return isinstance(value, str) and bool(value)
+
+
+def _parse_host_volumes(data: dict, ep) -> dict[str, HostVolume]:
+  """Parse `[host_volume.<tag>]` tables into tagged host paths."""
+  raw = data.get("host_volume", {})
+  if raw is None:
+    return {}
+  if not isinstance(raw, dict):
+    raise ValueError(
+      "host_volume must be a table of [host_volume.<tag>] entries, e.g. "
+      '[host_volume.media] with path = "/mnt/media"'
+    )
+
+  volumes: dict[str, HostVolume] = {}
+  for tag, conf in raw.items():
+    try:
+      validate_identifier(tag)
+    except ValueError as e:
+      raise ValueError(f"host_volume tag {tag!r} is not a valid name: {e}") from e
+    if not isinstance(conf, dict):
+      raise ValueError(
+        f"host_volume.{tag}: expected a table, e.g. "
+        f'[host_volume.{tag}] with path = "/mnt/{tag}"'
+      )
+    path = conf.get("path")
+    if not _nonempty_str(path):
+      raise ValueError(f'host_volume.{tag}: missing required key "path"')
+    readonly = conf.get("readonly", False)
+    if not isinstance(readonly, bool):
+      raise ValueError(f"host_volume.{tag}: readonly must be a boolean")
+    volumes[tag] = HostVolume(tag=tag, path=ep(path), readonly=readonly)
+
+  return volumes
 
 
 def _parse_app_sources(entries, apps_root: Path, ep) -> dict[str, Path]:

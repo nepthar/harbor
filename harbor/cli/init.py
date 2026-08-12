@@ -46,6 +46,14 @@ port_base = 41000
 # email           = "admin@example.com"
 # password_secret = "route_provider.web.password"
 # forward_host    = "10.0.0.5"
+
+# Optional: tagged host paths that apps with kind = "host" volumes can bind to.
+# Paths must exist before `harbor config|start --bind`. Assign with
+# `harbor config <app> --bind media=media`.
+#
+# [host_volume.media]
+# path     = "/mnt/media"
+# readonly = true
 """
 
 

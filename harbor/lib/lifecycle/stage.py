@@ -154,7 +154,7 @@ def _make_link(destination: Path, target: Path) -> None:
 def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
   """Point `volumes/<kind>/<name>` at the current manifest's volumes.
 
-  Note: ext/ volumes are linked in at run time as they may change between stage/run
+  Note: host/ volumes are linked in at run time as they may change between stage/run
   like configuration parameters or secrets.
 
   Returns the names the manifest no longer declares. Their links go; their data
@@ -178,7 +178,7 @@ def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, .
     shutil.rmtree(volumes_root)
 
   for volume_name, link in run_data.volume_links.items():
-    if stack.volumes[volume_name].kind == "ext":
+    if stack.volumes[volume_name].kind == "host":
       continue
     logger.debug("volume %s: %s -> %s", volume_name, link.destination, link.target)
     if link.mkdir:
@@ -190,21 +190,21 @@ def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, .
   return tuple(sorted(name for name in existing if name not in stack.volumes))
 
 
-def link_ext_volumes(stack: AppStack, run_data: AppRunData) -> None:
-  """Build `volumes/ext/` from the binds on file. Clobber existing links."""
-  unlink_ext_volumes(run_data.run_path)
+def link_host_volumes(stack: AppStack, run_data: AppRunData) -> None:
+  """Build `volumes/host/` from the binds on file. Clobber existing links."""
+  unlink_host_volumes(run_data.run_path)
   for volume_name, link in run_data.volume_links.items():
-    if stack.volumes[volume_name].kind != "ext":
+    if stack.volumes[volume_name].kind != "host":
       continue
-    logger.debug("ext volume %s: %s -> %s", volume_name, link.destination, link.target)
+    logger.debug("host volume %s: %s -> %s", volume_name, link.destination, link.target)
     _make_link(link.destination, link.target)
 
 
-def unlink_ext_volumes(run_path: Path) -> None:
-  """Drop `volumes/ext/`. Only links are in there. I mean, unless YOU added something that you shouldn't."""
-  ext_root = run_path / "volumes" / "ext"
-  if ext_root.exists():
-    shutil.rmtree(ext_root)
+def unlink_host_volumes(run_path: Path) -> None:
+  """Drop `volumes/host/`. Only links are in there."""
+  host_root = run_path / "volumes" / "host"
+  if host_root.exists():
+    shutil.rmtree(host_root)
 
 
 @dataclass(frozen=True)
@@ -291,11 +291,11 @@ def apply_config_sets(
     store.set_config(name, config.secret, value)
 
 
-def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> None:
-  """Record an external volume bind against the staged happ.
+def bind(stack: AppStack, volname: str, host_volume_tag: str, ctx: HarborCtx) -> None:
+  """Record a host-volume bind against the staged happ.
 
   Recording is all it does; `start` turns the binds on file into the links
-  under `volumes/ext/`.
+  under `volumes/host/`.
   """
   app = stack.app
 
@@ -303,16 +303,33 @@ def bind(stack: AppStack, volname: str, host_path_str: str, ctx: HarborCtx) -> N
     raise ValueError(f"App {app} - no such volume {volname}")
 
   vol = stack.volumes[volname]
-  if vol.kind != "ext":
+  if vol.kind != "host":
     raise ValueError(
-      f"App {app} - volume {volname}, kind={vol.kind}, only ext volumes can be bound"
+      f"App {app} - volume {volname}, kind={vol.kind}, only host volumes can be bound"
     )
 
-  host_path = Path(host_path_str).expanduser().resolve()
-  if not host_path.exists():
-    raise ValueError(f"App {app} - Path does not exist: {host_path_str}")
+  host_vol = ctx.config.host_volumes.get(host_volume_tag)
+  if host_vol is None:
+    known = ", ".join(sorted(ctx.config.host_volumes)) or "(none)"
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} is not configured; "
+      f"known tags: {known}. Add [host_volume.{host_volume_tag}] to config.toml"
+    )
 
-  ctx.app_store(app).set_bind(volname, str(host_path), readonly=vol.readonly)
+  if host_vol.readonly and not vol.readonly:
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} is readonly, but volume "
+      f"{volname} is writable; declare it with readonly = true, or bind to a "
+      f"writable host volume"
+    )
+
+  if not host_vol.path.exists():
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} path does not exist: "
+      f"{host_vol.path}"
+    )
+
+  ctx.app_store(app).set_bind(volname, host_volume_tag)
 
 
 def stage(
@@ -378,8 +395,8 @@ def stage(
 
   # Apply binds, if we're given them
   if binds:
-    for volname, host_path in binds:
-      bind(stack, volname, host_path, ctx)
+    for volname, host_volume_tag in binds:
+      bind(stack, volname, host_volume_tag, ctx)
 
   _generate_missing_config(stack, ctx)
   _apply_default_route_assignments(stack, ctx)

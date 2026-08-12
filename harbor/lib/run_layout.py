@@ -185,33 +185,55 @@ def _load_volume_links(
   app_id = stack.app
   run_path = ctx.config.run_root / app_id
 
-  found_binds = {
-    name: Path(entry["host_path"])
-    for name, entry in ctx.app_store(app_id).list_binds().items()
-  }
+  found_binds = ctx.app_store(app_id).list_binds()
 
   volume_links = {}
   for volume_name, volume in stack.volumes.items():
-    resolved = _volume_paths(run_path, app_id, volume, found_binds, ctx.config)
+    mkdir = volume.kind not in ("app", "host")
+    bind_cmd = f"`harbor config {app_id} --bind {volume_name}=<host_volume>`"
 
-    mkdir = volume.kind not in ("app", "ext")
-
-    bind_cmd = f"`harbor config {app_id} --bind {volume_name}=<host path>`"
-
-    if not resolved:
-      issues.append(
-        ConfigIssue(
-          f"volume {volume_name}: not bound to a host path",
-          f"Bind with {bind_cmd}",
+    if volume.kind == "host":
+      tag = found_binds.get(volume_name)
+      if tag is None:
+        issues.append(
+          ConfigIssue(
+            f"volume {volume_name}: not bound to a host volume",
+            f"Bind with {bind_cmd}",
+          )
         )
-      )
-      continue
+        continue
+      host_vol = ctx.config.host_volumes.get(tag)
+      if host_vol is None:
+        known = ", ".join(sorted(ctx.config.host_volumes)) or "(none)"
+        issues.append(
+          ConfigIssue(
+            f"volume {volume_name}: bound to unknown host volume {tag!r}",
+            f"Add [host_volume.{tag}] to config.toml, or re-bind with {bind_cmd}. "
+            f"Known host volumes: {known}",
+          )
+        )
+        continue
+      if host_vol.readonly and not volume.readonly:
+        issues.append(
+          ConfigIssue(
+            f"volume {volume_name}: host volume {tag!r} is readonly, but the "
+            f"app volume is writable",
+            f"Declare {volume_name} with readonly = true, or use a writable "
+            f"host volume",
+          )
+        )
+        continue
+      source = target = host_vol.path
+    else:
+      resolved = _volume_paths(run_path, app_id, volume, found_binds, ctx.config)
+      if not resolved:
+        continue
+      source, target = resolved
 
-    source, target = resolved
     # Prevent a bound path that doesn't exist at runtime.
     # Docker would create a folder there otherwise.
     if not source.exists() and not mkdir:
-      if volume.kind == "ext":
+      if volume.kind == "host":
         fix = f"Make {source} available again, or re-bind with {bind_cmd}"
       else:
         fix = f"re-stage with `harbor stage {app_id}` or this might be a bug."
@@ -441,22 +463,32 @@ def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
 
 
 def _volume_paths(
-  run_path: Path, app_id: str, volume: AppVolume, binds: dict[str, Path], config: Config
+  run_path: Path,
+  app_id: str,
+  volume: AppVolume,
+  binds: dict[str, str],
+  config: Config,
 ) -> tuple[Path, Path] | None:
   """The (host path, symlink target) for a volume, or None if unresolvable.
 
   `app` links are relative because they point inside the run dir, so they stay
-  correct wherever that directory is restored. Managed and `ext` links are
-  absolute: `volume_roots` is configurable precisely so it can live on another
-  disk, which makes those links meaningful only on the machine that made them.
+  correct wherever that directory is restored. Managed and `host` links are
+  absolute: `volume_roots` / host_volume paths are configurable precisely so
+  they can live on another disk, which makes those links meaningful only on
+  the machine that made them.
   """
   match volume.kind:
     case "app":
       src = volume.src if volume.src else volume.name
       return run_path / "happ" / src, Path("../../happ") / src
-    case "ext":
-      bound = binds.get(volume.name)
-      return (bound, bound) if bound else None
+    case "host":
+      tag = binds.get(volume.name)
+      if tag is None:
+        return None
+      host_vol = config.host_volumes.get(tag)
+      if host_vol is None:
+        return None
+      return host_vol.path, host_vol.path
     case other:
       path = config.volume_roots[other] / app_id / volume.name
       return path, path
