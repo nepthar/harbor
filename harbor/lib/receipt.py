@@ -53,14 +53,14 @@ def host_port_lines(stack: AppStack, run_data: AppRunData | None) -> list[str]:
 def volume_lines(
   stack: AppStack, run_data: AppRunData | None, ctx: HarborCtx
 ) -> list[str]:
-  """Managed volume dirs and external bind paths."""
+  """Managed volume dirs and host-volume bind paths."""
   lines: list[str] = []
   app_id = stack.app
   for name, volume in stack.volumes.items():
     if run_data is not None and name in run_data.volume_links:
       lines.append(f"{name}: {run_data.volume_links[name].source}")
       continue
-    if volume.kind == "ext":
+    if volume.kind == "host":
       lines.append(f"{name}: (unbound)")
     elif volume.kind == "app":
       continue
@@ -185,7 +185,7 @@ def danger_callouts(stack: AppStack) -> list[str]:
   if stack.network_mode == "host":
     callouts.append("host networking (no port isolation)")
   for name, volume in stack.volumes.items():
-    if volume.kind == "ext" and not volume.readonly:
+    if volume.kind == "host" and not volume.readonly:
       callouts.append(f"writable host bind '{name}'")
   return callouts
 

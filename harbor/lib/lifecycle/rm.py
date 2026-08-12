@@ -21,7 +21,7 @@ class RemovalPlan:
   app_id: AppID
   run_path: Path
   volume_paths: tuple[Path, ...]
-  ext_paths: tuple[Path, ...]
+  host_paths: tuple[Path, ...]
   stop_first: bool
 
 
@@ -31,18 +31,21 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
   if state.containers and not state.compose_exists:
     raise ValueError(container_recovery_message(app_id, ctx))
 
-  ext_paths: tuple[Path, ...] = ()
+  host_paths: tuple[Path, ...] = ()
   paths = ctx.staged_paths(app_id)
   if paths.config_path.is_file():
-    ext_paths = tuple(
-      Path(entry["host_path"]) for entry in ctx.app_store(app_id).list_binds().values()
+    binds = ctx.app_store(app_id).list_binds()
+    host_paths = tuple(
+      ctx.config.host_volumes[tag].path
+      for tag in binds.values()
+      if tag in ctx.config.host_volumes
     )
 
   return RemovalPlan(
     app_id=app_id,
     run_path=state.run_path,
     volume_paths=tuple(d for d in managed_volume_dirs(app_id, ctx) if d.is_dir()),
-    ext_paths=ext_paths,
+    host_paths=host_paths,
     stop_first=state.compose_exists,
   )
 
@@ -50,7 +53,7 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
 def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
   """Stop an app and delete its run dir, managed volumes and route claims.
 
-  The catalog entry and any `ext` volume contents survive, so
+  The catalog entry and any host-volume contents survive, so
   `harbor rm foo; harbor start foo` is a clean reinstall.
 
   TODO(docs/run-layout.md §8): capture a snapshot and verify its checksum

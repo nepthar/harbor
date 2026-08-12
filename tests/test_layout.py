@@ -335,18 +335,16 @@ def test_rm_needs_confirmation_and_says_it_cannot_be_undone(harbor_env):
   assert not (harbor_env.run_root / app_id).exists()
 
 
-def test_rm_reports_external_binds_it_leaves_alone(harbor_env):
-  app_id = "ext-volumes"
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
-  assert (
-    harbor_env.run("start", app_id, "--bind", f"extvol1={host_volume}").returncode == 0
-  )
+def test_rm_reports_host_volumes_it_leaves_alone(harbor_env):
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
 
   removed = harbor_env.run("rm", app_id, input="y\n")
   assert removed.returncode == 0, removed.stderr
-  assert str(host_volume) in removed.stdout
-  assert host_volume.is_dir()
+  assert str(host_path) in removed.stdout
+  assert host_path.is_dir()
 
 
 def test_rm_then_start_is_a_clean_reinstall(harbor_env):

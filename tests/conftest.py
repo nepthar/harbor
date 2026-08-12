@@ -50,6 +50,12 @@ default_route_provider = "web"
 [route_provider.web]
 kind = "noop"
 domain = "harbor.localhost"
+
+[host_volume.media]
+path = "external-data"
+
+[host_volume.other]
+path = "other-data"
 """
 
 FAKE_DOCKER = """#!/usr/bin/env python3

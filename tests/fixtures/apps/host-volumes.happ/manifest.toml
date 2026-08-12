@@ -1,0 +1,15 @@
+# Fixture happ: a single host volume that blocks start until it is bound.
+
+[app]
+version      = "0.1.0"
+display_name = "Host Volumes"
+description  = "Host volume bind fixture"
+runtime      = "image"
+
+[volumes]
+hostvol1 = { kind = "host", desc = "Where your extra stuff lives" }
+
+[run.main]
+image  = "alpine:latest"
+cmd    = ["/usr/bin/env", "ls", "-la", "/hostvol1"]
+volumes = { hostvol1 = "/hostvol1" }

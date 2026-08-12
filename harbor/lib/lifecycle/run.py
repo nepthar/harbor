@@ -13,9 +13,9 @@ from harbor.lib.lifecycle.routes import (
 )
 from harbor.lib.lifecycle.stage import (
   StageSuccess,
-  link_ext_volumes,
+  link_host_volumes,
   stage,
-  unlink_ext_volumes,
+  unlink_host_volumes,
 )
 from harbor.lib.routes import RouteProviderError
 from harbor.lib.run_layout import ConfigIssue, load_run_data
@@ -76,7 +76,7 @@ def start(
   # The binds only become links here, and only for as long as the app runs.
   # Rebuilt from scratch every time, so a bind recorded since the last start --
   # or since the last stage, which does not touch these -- takes effect now.
-  link_ext_volumes(stack, run_data)
+  link_host_volumes(stack, run_data)
 
   try:
     docker_run_command(
@@ -157,7 +157,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
     )
     # Nothing is mounting them now, and leaving them behind is how a stopped
     # app keeps looking like it is still bound to somebody's data.
-    unlink_ext_volumes(state.run_path)
+    unlink_host_volumes(state.run_path)
     record_app_action("stopped", app_id, ctx.config)
   except DockerError as e:
     record_app_action("stop-failed", app_id, ctx.config)

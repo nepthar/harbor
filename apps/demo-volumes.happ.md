@@ -1,8 +1,8 @@
 # Volume Showcase
 
 One volume of each kind: `app` (files shipped with the happ, read-only),
-`data` (persisted), `temp` (scratch), and `ext` (a host directory you must
-bind before starting). The script just lists what got mounted.
+`data` (persisted), `temp` (scratch), and `host` (a tagged host directory you
+must bind before starting). The script just lists what got mounted.
 
 ```toml happ_path="manifest.toml"
 [app]
@@ -14,7 +14,7 @@ description  = "Demonstrates volumes and binding of a host directory"
 app   = { kind = "app", desc = "The contents of the ./app folder" }
 state = { kind = "data", desc = "A data-type volume called state to store the state of this app" }
 temp  = { kind = "temp", desc = "scratch space - no guarantee it will be persisted run to run"}
-files = { kind = "ext", desc = "Host directory to inspect, must be set before running", readonly = true }
+files = { kind = "host", desc = "Host directory to inspect, must be set before running", readonly = true }
 
 [run.main]
 image   = "alpine:latest"

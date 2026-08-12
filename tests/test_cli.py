@@ -376,78 +376,76 @@ def test_system_config_is_encrypted_listed_and_unset(harbor_env):
   assert "invalid choice" in old_command.stderr
 
 
-def test_external_bind_one_shot_via_start(harbor_env):
-  app_id = "ext-volumes"
+def test_host_bind_one_shot_via_start(harbor_env):
+  app_id = "host-volumes"
   blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1
-  assert "Bind with `harbor config ext-volumes --bind extvol1=" in blocked.stderr
+  assert "Bind with `harbor config host-volumes --bind hostvol1=" in blocked.stderr
 
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
-  started = harbor_env.run("start", app_id, "--bind", f"extvol1={host_volume}")
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  started = harbor_env.run("start", app_id, "--bind", "hostvol1=media")
   assert started.returncode == 0, started.stderr
-  link = harbor_env.run_root / app_id / "volumes" / "ext" / "extvol1"
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
   assert link.is_symlink()
-  assert link.resolve() == host_volume
+  assert link.resolve() == host_path
 
 
-def test_ext_links_belong_to_the_run_not_the_stage(harbor_env):
+def test_host_links_belong_to_the_run_not_the_stage(harbor_env):
   """`bind` records; `start` links; `stop` unlinks.
 
   A bind that only ever reached the config store was the original bug: compose
-  mounts `volumes/ext/<name>` regardless, so docker created it as an empty
+  mounts `volumes/host/<name>` regardless, so docker created it as an empty
   directory and the app came up against that instead of the host path.
   """
-  app_id = "ext-volumes"
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
-  ext_root = harbor_env.run_root / app_id / "volumes" / "ext"
-  link = ext_root / "extvol1"
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  host_root = harbor_env.run_root / app_id / "volumes" / "host"
+  link = host_root / "hostvol1"
 
   assert harbor_env.run("stage", app_id).returncode == 0
-  assert not ext_root.exists(), "staging has no business linking somebody's data"
+  assert not host_root.exists(), "staging has no business linking somebody's data"
 
-  bound = harbor_env.run("config", app_id, "--bind", f"extvol1={host_volume}")
+  bound = harbor_env.run("config", app_id, "--bind", "hostvol1=media")
   assert bound.returncode == 0, bound.stderr
-  assert not ext_root.exists()
+  assert not host_root.exists()
 
   started = harbor_env.run("start", app_id)
   assert started.returncode == 0, started.stderr
   assert link.is_symlink()
-  assert link.resolve() == host_volume
+  assert link.resolve() == host_path
 
   assert harbor_env.run("stop", app_id).returncode == 0
-  assert not ext_root.exists()
-  assert host_volume.is_dir(), "unlinking must not touch what was linked to"
+  assert not host_root.exists()
+  assert host_path.is_dir(), "unlinking must not touch what was linked to"
 
 
 def test_restaging_leaves_the_binds_alone(harbor_env):
   """Staging rebuilds the run dir, but a bind survives it and still applies."""
-  app_id = "ext-volumes"
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
-  assert (
-    harbor_env.run("start", app_id, "--bind", f"extvol1={host_volume}").returncode == 0
-  )
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
 
   assert harbor_env.run("stage", app_id).returncode == 0
   assert harbor_env.run("start", app_id).returncode == 0
-  link = harbor_env.run_root / app_id / "volumes" / "ext" / "extvol1"
-  assert link.resolve() == host_volume
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
+  assert link.resolve() == host_path
 
 
 def test_rebinding_takes_effect_at_the_next_start(harbor_env):
   """A second bind moves the link; the old target is left alone."""
-  app_id = "ext-volumes"
+  app_id = "host-volumes"
   first = harbor_env.root / "external-data"
   second = harbor_env.root / "other-data"
   first.mkdir()
   second.mkdir()
-  assert harbor_env.run("start", app_id, "--bind", f"extvol1={first}").returncode == 0
+  assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
 
-  link = harbor_env.run_root / app_id / "volumes" / "ext" / "extvol1"
-  rebound = harbor_env.run("config", app_id, "--bind", f"extvol1={second}")
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
+  rebound = harbor_env.run("config", app_id, "--bind", "hostvol1=other")
   assert rebound.returncode == 0, rebound.stderr
   assert "is running" in rebound.stderr
   assert link.resolve() == first, "a running app's links must not move"
@@ -458,34 +456,32 @@ def test_rebinding_takes_effect_at_the_next_start(harbor_env):
   assert first.is_dir()
 
 
-def test_start_replaces_whatever_is_in_the_ext_directory(harbor_env):
-  """`ext/` is rebuilt from the binds, so nothing stale can survive a start.
+def test_start_replaces_whatever_is_in_the_host_directory(harbor_env):
+  """`host/` is rebuilt from the binds, so nothing stale can survive a start.
 
   Both cases at once: the empty directory docker leaves when it mounts a bind
   source that was not linked, and a link pointing somewhere the bind no longer
   says.
   """
-  app_id = "ext-volumes"
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
   assert harbor_env.run("stage", app_id).returncode == 0
-  assert (
-    harbor_env.run("config", app_id, "--bind", f"extvol1={host_volume}").returncode == 0
-  )
+  assert harbor_env.run("config", app_id, "--bind", "hostvol1=media").returncode == 0
 
-  link = harbor_env.run_root / app_id / "volumes" / "ext" / "extvol1"
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
   link.mkdir(parents=True)  # what docker left behind
 
   assert harbor_env.run("start", app_id).returncode == 0
   assert link.is_symlink()
-  assert link.resolve() == host_volume
+  assert link.resolve() == host_path
 
   assert harbor_env.run("stop", app_id).returncode == 0
   link.parent.mkdir(parents=True, exist_ok=True)
   link.symlink_to(harbor_env.root)  # a link from some earlier bind
 
   assert harbor_env.run("start", app_id).returncode == 0
-  assert link.resolve() == host_volume
+  assert link.resolve() == host_path
 
 
 def test_start_refuses_when_a_bound_path_has_gone(harbor_env):
@@ -496,25 +492,102 @@ def test_start_refuses_when_a_bound_path_has_gone(harbor_env):
   docker would recreate the path as an empty directory and the app would come
   up against an empty volume instead of failing.
   """
-  app_id = "ext-volumes"
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
-  assert (
-    harbor_env.run("start", app_id, "--bind", f"extvol1={host_volume}").returncode == 0
-  )
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
 
-  shutil.rmtree(host_volume)
+  shutil.rmtree(host_path)
 
   blocked = harbor_env.run("start", app_id)
   assert blocked.returncode == 1
-  assert "host path does not exist" in blocked.stderr
-  assert str(host_volume) in blocked.stderr
-  assert not host_volume.exists(), "a failed start must not recreate the host path"
+  assert "path does not exist" in blocked.stderr
+  assert str(host_path) in blocked.stderr
+  assert not host_path.exists(), "a failed start must not recreate the host path"
 
   # The bind is still on file, so putting the path back is the whole fix.
-  host_volume.mkdir()
+  host_path.mkdir()
   assert harbor_env.run("start", app_id).returncode == 0
+
+
+def test_missing_host_volume_path_blocks_stage(harbor_env):
+  """A bound host volume whose path is gone must refuse restaging."""
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+  assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
+  assert harbor_env.run("stop", app_id).returncode == 0
+
+  shutil.rmtree(host_path)
+  blocked = harbor_env.run("stage", app_id)
+  assert blocked.returncode == 1
+  assert "path does not exist" in blocked.stderr
+  assert str(host_path) in blocked.stderr
+
+
+def test_host_volume_may_be_a_file(harbor_env):
+  """A host volume can point at a single file, not only a directory."""
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.write_text("just a file")
+
+  started = harbor_env.run("start", app_id, "--bind", "hostvol1=media")
+  assert started.returncode == 0, started.stderr
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
+  assert link.is_symlink()
+  assert link.resolve() == host_path
+  assert link.resolve().is_file()
+
+
+def test_require_mount_refuses_unmounted_path(harbor_env):
+  """require_mount catches an empty mount-point directory."""
+  with open(harbor_env.config, "a") as f:
+    f.write('\n[host_volume.nfs]\npath = "external-data"\nrequire_mount = true\n')
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  refused = harbor_env.run("config", "host-volumes", "--bind", "hostvol1=nfs")
+  assert refused.returncode == 1
+  assert "not mounted" in refused.stderr
+
+
+def test_require_mount_blocks_stage_when_unmounted(harbor_env):
+  """A previously bound require_mount volume blocks restaging if unmounted."""
+  # Bind against a real mount first (/), then retarget the tag at an ordinary
+  # directory so restaging sees require_mount fail through ConfigIssue.
+  with open(harbor_env.config, "a") as f:
+    f.write('\n[host_volume.rootfs]\npath = "/"\nrequire_mount = true\n')
+
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  assert (
+    harbor_env.run("config", "host-volumes", "--bind", "hostvol1=rootfs").returncode
+    == 0
+  )
+
+  # Rewrite the same tag to a non-mount path without clearing the bind.
+  config_text = harbor_env.config.read_text()
+  harbor_env.config.write_text(
+    config_text.replace('path = "/"', 'path = "external-data"')
+  )
+  (harbor_env.root / "external-data").mkdir(exist_ok=True)
+
+  blocked = harbor_env.run("stage", "host-volumes")
+  assert blocked.returncode == 1
+  assert "not mounted" in blocked.stderr
+
+
+def test_readonly_host_volume_refuses_writable_app_volume(harbor_env):
+  """A readonly host volume may only be bound by a readonly app volume."""
+  with open(harbor_env.config, "a") as f:
+    f.write('\n[host_volume.ro_media]\npath = "ro-data"\nreadonly = true\n')
+  (harbor_env.root / "ro-data").mkdir()
+
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  refused = harbor_env.run("config", "host-volumes", "--bind", "hostvol1=ro_media")
+  assert refused.returncode == 1
+  assert "readonly" in refused.stderr
 
 
 # --- start blockers --------------------------------------------------------
@@ -631,20 +704,18 @@ def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
 def test_an_unmet_bind_is_still_reported_as_needing_config(harbor_env):
   """The label must keep working for the case it actually describes.
 
-  An ext volume whose host path has gone is the operator's to fix -- `start`
+  A host volume whose path has gone is the operator's to fix -- `start`
   cannot invent it -- so this one really does need `harbor config --bind`.
   """
-  app_id = "ext-volumes"
-  host_volume = harbor_env.root / "external-data"
-  host_volume.mkdir()
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
   assert harbor_env.run("stage", app_id).returncode == 0
-  assert (
-    harbor_env.run("config", app_id, "--bind", f"extvol1={host_volume}").returncode == 0
-  )
+  assert harbor_env.run("config", app_id, "--bind", "hostvol1=media").returncode == 0
   assert harbor_env.run("start", app_id).returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
 
-  shutil.rmtree(host_volume)
+  shutil.rmtree(host_path)
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr

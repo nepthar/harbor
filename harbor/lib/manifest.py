@@ -17,7 +17,7 @@ from harbor.lib.apps import AppID
 from harbor.lib.util import ROUTE_NAMESPACE, EnvTemplate, Identifier
 
 NetworkMode = Literal["normal", "host"]
-VolumeKind = Literal["app", "data", "temp", "bulk", "logs", "ext"]
+VolumeKind = Literal["app", "data", "temp", "bulk", "logs", "host"]
 
 
 class ConfigError(ValueError):

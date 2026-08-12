@@ -9,10 +9,15 @@ No hardware acceleration yet.
 
 The photo library has to be a directory on the host first — harbor binds a
 path, it does not speak NFS. Mount the share through fstab, autofs, or a
-systemd `.mount` unit, then point the volume at it:
+systemd `.mount` unit, declare it in config.toml, then bind:
+
+```toml
+[host_volume.photos]
+path = "/mnt/immich"
+```
 
 ```
-harbor start immich --bind photos=/mnt/immich
+harbor start immich --bind photos=photos
 ```
 
 ## manifest.toml
@@ -27,7 +32,7 @@ subdomain    = "immich"
 db_password = { desc = "Postgres password", secret = true, default = "{alnum:16}" }
 
 [volumes]
-photos = { kind = "ext",  desc = "Photo/video library location. bind to a media share" }
+photos = { kind = "host",  desc = "Photo/video library location. bind to a media share" }
 db     = { kind = "data", desc = "Postgres data. Note: this must be on a local disk" }
 models = { kind = "temp", desc = "ML model cache" }
 

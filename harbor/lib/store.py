@@ -185,13 +185,14 @@ class AppStore:
     """Whether a value is stored, without decrypting it."""
     return self._store.read(f"config/{name}") is not None
 
-  def set_bind(self, volume_name: str, host_path: str, readonly: bool = False) -> None:
-    self._store.write(
-      f"binds/{volume_name}", {"host_path": host_path, "readonly": readonly}
-    )
+  def set_bind(self, volume_name: str, host_volume: str) -> None:
+    """Record that app volume ``volume_name`` is bound to host volume tag."""
+    self._store.write(f"binds/{volume_name}", host_volume)
 
-  def list_binds(self) -> dict[str, Any]:
-    return self._store.scan("binds/")
+  def list_binds(self) -> dict[str, str]:
+    """app volume name -> host_volume tag."""
+    raw = self._store.scan("binds/")
+    return {name: tag for name, tag in raw.items() if isinstance(tag, str)}
 
   def set_route_assignment(self, route_name: str, provider_tag: str) -> None:
     """Record which route-provider tag publishes ``route_name``."""
