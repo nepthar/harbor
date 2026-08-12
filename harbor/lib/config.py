@@ -71,16 +71,8 @@ class RouteProviderEntry(BaseModel):
   model_config = ConfigDict(extra="forbid")
 
   kind: RouteProviderKind
-  domain: str | None = None
+  domain: str = PLACEHOLDER_DOMAIN
   args: dict[str, str] = Field(default_factory=dict)
-
-  @model_validator(mode="after")
-  def domain_for_kind(self) -> Self:
-    if self.kind != "noop" and not (isinstance(self.domain, str) and self.domain):
-      raise ValueError('missing required key "domain"')
-    if not self.domain:
-      return self.model_copy(update={"domain": PLACEHOLDER_DOMAIN})
-    return self
 
 
 class HostVolumeEntry(BaseModel):
@@ -166,9 +158,9 @@ class Config:
     snapshot_root: Path,
     master_key: str,
     master_keyfile: Path,
-    port_base: int = 41000,
-    default_route_provider: str = NONE_ROUTE_PROVIDER_TAG,
-    route_providers: dict[str, RouteProviderEntry] | None = None,
+    port_base: int,
+    default_route_provider: str,
+    route_providers: dict[str, RouteProviderEntry],
     extra_app_sources: dict[str, Path] | None = None,
     host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
@@ -182,11 +174,7 @@ class Config:
     self.master_keyfile = master_keyfile
     self.port_base = port_base
     self.default_route_provider = default_route_provider
-    self.route_providers = route_providers or {
-      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
-        kind="noop", domain=PLACEHOLDER_DOMAIN
-      )
-    }
+    self.route_providers = route_providers
     self.host_volumes = host_volumes or {}
 
   @property
@@ -209,7 +197,7 @@ class Config:
     if not tag or tag == NONE_ROUTE_PROVIDER_TAG:
       return PLACEHOLDER_DOMAIN
     conf = self.route_providers.get(tag)
-    if conf is None or not conf.domain:
+    if conf is None:
       return PLACEHOLDER_DOMAIN
     return conf.domain
 
@@ -265,7 +253,7 @@ def load_config_file(config_file: str | Path) -> Config:
   snapshot_root = ep(parsed.snapshot_root)
 
   route_providers: dict[str, RouteProviderEntry] = {
-    NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(kind="noop", domain=PLACEHOLDER_DOMAIN),
+    NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(kind="noop"),
     **parsed.route_provider,
   }
 

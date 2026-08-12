@@ -5,7 +5,7 @@ from time import time
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, PLACEHOLDER_DOMAIN, Config
+from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, Config
 from harbor.lib.store import HarborStore
 
 logger = logging.getLogger("harbor.routes")
@@ -359,7 +359,7 @@ def get_route_provider(
     )
 
   if conf.kind == "noop":
-    return NoopRouteProvider(domain=conf.domain or PLACEHOLDER_DOMAIN)
+    return NoopRouteProvider(domain=conf.domain)
 
   if conf.kind == "nginx_proxy_manager":
     required = ("endpoint", "email", "password_secret", "forward_host")
@@ -368,8 +368,6 @@ def get_route_provider(
       raise RouteProviderError(
         f"route_provider.{tag}.args: missing {missing}; needs {required}"
       )
-    if not conf.domain:
-      raise RouteProviderError(f'route_provider.{tag}: missing required key "domain"')
 
     args = dict(conf.args)
     pw_ref = args.pop("password_secret")
