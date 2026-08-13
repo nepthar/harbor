@@ -163,10 +163,14 @@ def run_command(
   argv = [*entry.argv, *args]
   env = _compose_env(app_id, ctx)
 
-  if entry.container in running:
-    return _compose_exit(
-      ["compose", "exec", entry.container, *argv], state.run_path, env
-    )
+  if entry.run_unit in running:
+    return docker_run_command(
+      ["compose", "exec", entry.run_unit, *argv],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=env,
+    ).returncode
 
   # Host binds are only linked while an app runs; restore them for the one-off
   # so compose mounts resolve, then tear them down again if nothing else is up.
@@ -174,20 +178,16 @@ def run_command(
   if was_fully_stopped:
     link_host_volumes(stack, load_run_data(stack, ctx))
   try:
-    return _compose_exit(
-      ["compose", "run", "--rm", "--no-deps", entry.container, *argv],
-      state.run_path,
-      env,
-    )
+    return docker_run_command(
+      ["compose", "run", "--rm", "--no-deps", entry.run_unit, *argv],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=env,
+    ).returncode
   finally:
     if was_fully_stopped:
       unlink_host_volumes(state.run_path)
-
-
-def _compose_exit(cmd: list[str], cwd: Path, env: dict[str, str]) -> int:
-  code = docker_run_command(cmd, cwd=cwd, json_output=False, check=False, env=env)
-  assert isinstance(code, int)
-  return code
 
 
 def stop(app_id: AppID, ctx: HarborCtx) -> None:

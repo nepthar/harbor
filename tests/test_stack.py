@@ -272,23 +272,23 @@ desc = "Reset the admin password"
 
 [commands.reindex]
 cmd = ["python", "manage.py", "reindex"]
-container = "worker"
+run_unit = "worker"
 desc = "Rebuild the search index"
 """,
   )
 
   reset = stack.commands["reset"]
-  assert reset.container == "main"
+  assert reset.run_unit == "main"
   assert reset.desc == "Reset the admin password"
   assert reset.argv == ("/bin/sh", "-c", 'python manage.py reset "$@"', "_")
 
   reindex = stack.commands["reindex"]
-  assert reindex.container == "worker"
+  assert reindex.run_unit == "worker"
   assert reindex.argv == ("python", "manage.py", "reindex")
 
 
-def test_command_targeting_unknown_container_is_rejected(tmp_path):
-  with pytest.raises(ConfigError, match="container 'missing' is not declared"):
+def test_command_targeting_unknown_run_unit_is_rejected(tmp_path):
+  with pytest.raises(ConfigError, match="run_unit 'missing' is not declared"):
     stack_of(
       tmp_path,
       """\
@@ -300,6 +300,6 @@ image = "alpine"
 
 [commands.bad]
 cmd = "true"
-container = "missing"
+run_unit = "missing"
 """,
     )

@@ -103,7 +103,7 @@ class AppRunUnit:
 class AppCommand:
   name: str
   argv: tuple[str, ...]
-  container: str
+  run_unit: str
   desc: str
 
 
@@ -167,7 +167,7 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
     name: AppCommand(
       name=name,
       argv=tuple(entry.argv()),
-      container=entry.container,
+      run_unit=entry.run_unit,
       desc=entry.desc,
     )
     for name, entry in manifest.commands.items()

@@ -52,9 +52,9 @@ def _list_commands(app, ctx: HarborCtx, conn) -> None:
     return
 
   rows = [
-    (name, entry.desc or "-", entry.container)
+    (name, entry.desc or "-", entry.run_unit)
     for name, entry in sorted(stack.commands.items())
   ]
   conn.out(
-    tabulate(rows, headers=["COMMAND", "DESCRIPTION", "CONTAINER"], tablefmt="simple")
+    tabulate(rows, headers=["COMMAND", "DESCRIPTION", "RUN_UNIT"], tablefmt="simple")
   )

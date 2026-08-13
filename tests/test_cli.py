@@ -186,7 +186,7 @@ desc = "List-form command"
   assert listed.stdout.splitlines()[0].split() == [
     "COMMAND",
     "DESCRIPTION",
-    "CONTAINER",
+    "RUN_UNIT",
   ]
   assert "ping" in listed.stdout
   assert "Print pong" in listed.stdout

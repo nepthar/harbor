@@ -175,7 +175,7 @@ class CommandEntry(BaseModel):
   model_config = ConfigDict(extra="forbid")
 
   cmd: str | list[str]
-  container: Identifier = "main"
+  run_unit: Identifier = "main"
   desc: str = ""
 
   def argv(self) -> list[str]:
@@ -267,9 +267,9 @@ def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
 def _validate_commands(manifest: Manifest) -> list[str]:
   errors: list[str] = []
   for name, entry in manifest.commands.items():
-    if entry.container not in manifest.run:
+    if entry.run_unit not in manifest.run:
       errors.append(
-        f"[commands.{name}]: container {entry.container!r} is not declared in [run]"
+        f"[commands.{name}]: run_unit {entry.run_unit!r} is not declared in [run]"
       )
   return errors
 
