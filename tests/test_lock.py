@@ -1,8 +1,8 @@
 """Harbor takes one lock per command invocation.
 
 `harbor/cli/main.py` wraps the whole command in `ctx.lock()`. Two commands opt
-out: `init`, which runs before there is a config to load, and `logs`, which
-streams until interrupted.
+out: `init`, which runs before there is a config to load, and `logs` / `cmd`,
+which stream until interrupted.
 
 Most of these run in-process -- `filelock` blocks a second acquire from the
 same process just as it does across processes. The one test that would be

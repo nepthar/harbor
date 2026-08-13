@@ -154,6 +154,102 @@ def test_logs_accepts_native_flags_before_app(harbor_env):
   assert ["compose", "logs", "--follow", "--tail", "10"] in calls
 
 
+# --- commands --------------------------------------------------------------
+
+
+def test_cmd_lists_and_runs_manifest_commands(harbor_env):
+  app = harbor_env.root / "apps" / "cmd-demo.happ"
+  app.mkdir()
+  (app / "manifest.toml").write_text(
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine:latest"
+cmd = ["/bin/sh", "-c", "sleep infinity"]
+
+[commands.ping]
+cmd = "echo pong"
+desc = "Print pong"
+
+[commands.argv]
+cmd = ["echo", "hello"]
+desc = "List-form command"
+"""
+  )
+
+  assert harbor_env.run("start", "cmd-demo").returncode == 0
+
+  listed = harbor_env.run("cmd", "cmd-demo")
+  assert listed.returncode == 0, listed.stderr
+  assert listed.stdout.splitlines()[0].split() == [
+    "COMMAND",
+    "DESCRIPTION",
+    "CONTAINER",
+  ]
+  assert "ping" in listed.stdout
+  assert "Print pong" in listed.stdout
+  assert "argv" in listed.stdout
+
+  ran = harbor_env.run("cmd", "cmd-demo", "ping", "extra")
+  assert ran.returncode == 0, ran.stderr
+  calls = [
+    json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
+  ]
+  assert [
+    "compose",
+    "exec",
+    "main",
+    "/bin/sh",
+    "-c",
+    'echo pong "$@"',
+    "_",
+    "extra",
+  ] in calls
+
+  list_form = harbor_env.run("cmd", "cmd-demo", "argv", "world")
+  assert list_form.returncode == 0, list_form.stderr
+  calls = [
+    json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
+  ]
+  assert ["compose", "exec", "main", "echo", "hello", "world"] in calls
+
+
+def test_cmd_refuses_unknown_and_stopped_apps(harbor_env):
+  app = harbor_env.root / "apps" / "cmd-demo.happ"
+  app.mkdir()
+  (app / "manifest.toml").write_text(
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine:latest"
+cmd = ["/bin/sh", "-c", "sleep infinity"]
+
+[commands.ping]
+cmd = "echo pong"
+"""
+  )
+
+  not_staged = harbor_env.run("cmd", "cmd-demo")
+  assert not_staged.returncode == 1
+  assert "not staged" in not_staged.stderr
+
+  assert harbor_env.run("stage", "cmd-demo").returncode == 0
+  stopped = harbor_env.run("cmd", "cmd-demo", "ping")
+  assert stopped.returncode == 1
+  assert "not running" in stopped.stderr
+  assert "harbor start cmd-demo" in stopped.stderr
+
+  assert harbor_env.run("start", "cmd-demo").returncode == 0
+  missing = harbor_env.run("cmd", "cmd-demo", "nope")
+  assert missing.returncode == 1
+  assert "Unknown command 'nope'" in missing.stderr
+  assert "harbor cmd cmd-demo" in missing.stderr
+
+
 # --- refusals --------------------------------------------------------------
 
 

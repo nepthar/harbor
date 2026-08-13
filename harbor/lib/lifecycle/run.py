@@ -134,6 +134,48 @@ def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
   )
 
 
+def run_command(
+  app_id: AppID,
+  cmd_name: str,
+  args: list[str],
+  ctx: HarborCtx,
+) -> int:
+  """Run a manifest `[commands]` entry via ``docker compose exec``.
+
+  The target unit must already be running — credentials and network state live
+  in that container, and harbor will not start it for you.
+  """
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
+
+  stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
+  entry = stack.commands.get(cmd_name)
+  if entry is None:
+    available = ", ".join(sorted(stack.commands)) or "(none)"
+    raise ValueError(
+      f"Unknown command {cmd_name!r} for {app_id}; "
+      f"available: {available}. List with `harbor cmd {app_id}`"
+    )
+
+  running = {c.run_unit for c in state.containers if c.state.lower() == "running"}
+  if entry.container not in running:
+    raise ValueError(
+      f"Container {entry.container!r} for {app_id} is not running; "
+      f"run `harbor start {app_id}` first"
+    )
+
+  code = docker_run_command(
+    ["compose", "exec", entry.container, *entry.argv, *args],
+    cwd=state.run_path,
+    json_output=False,
+    check=False,
+    env=_compose_env(app_id, ctx),
+  )
+  assert isinstance(code, int)
+  return code
+
+
 def stop(app_id: AppID, ctx: HarborCtx) -> None:
   """Tear down routes, then bring an app's containers down."""
   state = ctx.run_state(app_id)

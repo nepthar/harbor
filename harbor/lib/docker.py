@@ -101,7 +101,7 @@ def docker_run_command(
   json_output: bool = True,
   check: bool = True,
   env: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | int:
   """Run ``docker <cmd>``.
 
   Output handling follows one rule: **anything harbor is not itself parsing
@@ -111,7 +111,7 @@ def docker_run_command(
   So ``json_output`` decides both the format *and* who sees it. When True, the
   command is asked for JSON, its output is captured, and it is parsed into a
   ``list[dict]``. When False, the child inherits harbor's stdio and writes
-  straight to the terminal; there is nothing to return.
+  straight to the terminal; the child's exit code is returned.
 
   Args:
       cmd: arguments after ``docker`` (e.g. ``["compose", "ps"]``).
@@ -121,7 +121,7 @@ def docker_run_command(
       env: extra environment variables merged onto ``os.environ``.
 
   Returns:
-      Parsed objects when ``json_output`` is True, else an empty list.
+      Parsed objects when ``json_output`` is True, else the process exit code.
   """
   full = [DOCKER, *cmd]
   if json_output:
@@ -136,4 +136,4 @@ def docker_run_command(
   if check and result.returncode != 0:
     raise DockerError(cmd, result.returncode, result.stderr if json_output else "")
 
-  return _parse_json_output(result.stdout) if json_output else []
+  return _parse_json_output(result.stdout) if json_output else result.returncode

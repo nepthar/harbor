@@ -178,6 +178,16 @@ class CommandEntry(BaseModel):
   container: Identifier = "main"
   desc: str = ""
 
+  def argv(self) -> list[str]:
+    """Base argv for `docker compose exec`, ready for operator args to append.
+
+    A string `cmd` runs under `/bin/sh -c` with `"$@"` so extra args reach the
+    script; a list is already an argv and args append directly.
+    """
+    if isinstance(self.cmd, str):
+      return ["/bin/sh", "-c", f'{self.cmd} "$@"', "_"]
+    return list(self.cmd)
+
 
 class Manifest(BaseModel):
   """Parsed harbor TOML for a happ bundle or catalog service definition."""
@@ -250,6 +260,17 @@ def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
   errors.extend(_validate_run_volumes(manifest))
   errors.extend(_validate_routes(manifest))
   errors.extend(_validate_env_refs(manifest))
+  errors.extend(_validate_commands(manifest))
+  return errors
+
+
+def _validate_commands(manifest: Manifest) -> list[str]:
+  errors: list[str] = []
+  for name, entry in manifest.commands.items():
+    if entry.container not in manifest.run:
+      errors.append(
+        f"[commands.{name}]: container {entry.container!r} is not declared in [run]"
+      )
   return errors
 
 

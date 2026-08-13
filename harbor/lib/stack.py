@@ -100,6 +100,14 @@ class AppRunUnit:
 
 
 @dataclass(frozen=True)
+class AppCommand:
+  name: str
+  argv: tuple[str, ...]
+  container: str
+  desc: str
+
+
+@dataclass(frozen=True)
 class AppStack:
   """An immutable, installation-independent app definition.
 
@@ -107,8 +115,7 @@ class AppStack:
   configuration such as config values, volume binds, allocated ports and
   the harbor domain belongs to :class:`AppRunData`.
 
-  TODO: [commands] and [cron] are accepted by the manifest but not resolved
-  here yet.
+  TODO: [cron] is accepted by the manifest but not resolved here yet.
   """
 
   app: AppID
@@ -119,6 +126,7 @@ class AppStack:
   routes: Mapping[str, AppRoute]
   config: Mapping[str, AppConfig]
   volumes: Mapping[str, AppVolume]
+  commands: Mapping[str, AppCommand]
 
   @classmethod
   def from_bytes(cls, data: bytes, app_id: AppID, source: Path) -> "AppStack":
@@ -155,6 +163,15 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
     for name, v in manifest.volumes.items()
   }
   run_units = _resolve_run_units(manifest, app, config, volumes)
+  commands = {
+    name: AppCommand(
+      name=name,
+      argv=tuple(entry.argv()),
+      container=entry.container,
+      desc=entry.desc,
+    )
+    for name, entry in manifest.commands.items()
+  }
 
   return AppStack(
     app=app,
@@ -169,6 +186,7 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
     },
     config=config,
     volumes=volumes,
+    commands=commands,
   )
 
 
