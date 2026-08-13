@@ -140,10 +140,11 @@ def run_command(
   args: list[str],
   ctx: HarborCtx,
 ) -> int:
-  """Run a manifest `[commands]` entry via ``docker compose exec``.
+  """Run a manifest `[commands]` entry in its target unit.
 
-  The target unit must already be running — credentials and network state live
-  in that container, and harbor will not start it for you.
+  If that unit is already up, ``docker compose exec`` into it. Otherwise a
+  one-off ``docker compose run --rm --no-deps`` — same service definition and
+  mounts, no sibling services started for you.
   """
   state = ctx.run_state(app_id)
   if not state.compose_exists:
@@ -159,19 +160,32 @@ def run_command(
     )
 
   running = {c.run_unit for c in state.containers if c.state.lower() == "running"}
-  if entry.container not in running:
-    raise ValueError(
-      f"Container {entry.container!r} for {app_id} is not running; "
-      f"run `harbor start {app_id}` first"
+  argv = [*entry.argv, *args]
+  env = _compose_env(app_id, ctx)
+
+  if entry.container in running:
+    return _compose_exit(
+      ["compose", "exec", entry.container, *argv], state.run_path, env
     )
 
-  code = docker_run_command(
-    ["compose", "exec", entry.container, *entry.argv, *args],
-    cwd=state.run_path,
-    json_output=False,
-    check=False,
-    env=_compose_env(app_id, ctx),
-  )
+  # Host binds are only linked while an app runs; restore them for the one-off
+  # so compose mounts resolve, then tear them down again if nothing else is up.
+  was_fully_stopped = state.running_count == 0
+  if was_fully_stopped:
+    link_host_volumes(stack, load_run_data(stack, ctx))
+  try:
+    return _compose_exit(
+      ["compose", "run", "--rm", "--no-deps", entry.container, *argv],
+      state.run_path,
+      env,
+    )
+  finally:
+    if was_fully_stopped:
+      unlink_host_volumes(state.run_path)
+
+
+def _compose_exit(cmd: list[str], cwd: Path, env: dict[str, str]) -> int:
+  code = docker_run_command(cmd, cwd=cwd, json_output=False, check=False, env=env)
   assert isinstance(code, int)
   return code
 

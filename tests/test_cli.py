@@ -216,7 +216,7 @@ desc = "List-form command"
   assert ["compose", "exec", "main", "echo", "hello", "world"] in calls
 
 
-def test_cmd_refuses_unknown_and_stopped_apps(harbor_env):
+def test_cmd_uses_run_when_container_is_stopped(harbor_env):
   app = harbor_env.root / "apps" / "cmd-demo.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
@@ -238,10 +238,23 @@ cmd = "echo pong"
   assert "not staged" in not_staged.stderr
 
   assert harbor_env.run("stage", "cmd-demo").returncode == 0
-  stopped = harbor_env.run("cmd", "cmd-demo", "ping")
-  assert stopped.returncode == 1
-  assert "not running" in stopped.stderr
-  assert "harbor start cmd-demo" in stopped.stderr
+  one_off = harbor_env.run("cmd", "cmd-demo", "ping", "extra")
+  assert one_off.returncode == 0, one_off.stderr
+  calls = [
+    json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
+  ]
+  assert [
+    "compose",
+    "run",
+    "--rm",
+    "--no-deps",
+    "main",
+    "/bin/sh",
+    "-c",
+    'echo pong "$@"',
+    "_",
+    "extra",
+  ] in calls
 
   assert harbor_env.run("start", "cmd-demo").returncode == 0
   missing = harbor_env.run("cmd", "cmd-demo", "nope")
