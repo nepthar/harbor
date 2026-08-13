@@ -24,6 +24,18 @@ class HarborRunUnitStatus:
   state: str
 
 
+@dataclass(frozen=True)
+class DockerReturn:
+  """Result of a ``docker`` invocation.
+
+  ``data`` is the parsed JSON when ``json_output`` was True; otherwise empty.
+  ``returncode`` is always the process exit status.
+  """
+
+  returncode: int
+  data: list[dict[str, Any]]
+
+
 def _parse_docker_label_string(raw: str) -> dict[str, str]:
   labels: dict[str, str] = {}
   for part in raw.split(","):
@@ -35,7 +47,7 @@ def _parse_docker_label_string(raw: str) -> dict[str, str]:
 
 def load_harbor_run_unit_status() -> dict[str, tuple[HarborRunUnitStatus, ...]]:
   """Return every container that carries a Harbor app ID label."""
-  containers = docker_run_command(
+  result = docker_run_command(
     [
       "ps",
       "-a",
@@ -44,11 +56,9 @@ def load_harbor_run_unit_status() -> dict[str, tuple[HarborRunUnitStatus, ...]]:
     ],
     check=False,
   )
-  if not isinstance(containers, list):
-    return {}
 
   statuses: dict[str, list[HarborRunUnitStatus]] = {}
-  for container in containers:
+  for container in result.data:
     labels = _parse_docker_label_string(container.get("Labels") or "")
     app_id = labels.get(HARBOR_APP_ID_LABEL)
     if not app_id:
@@ -101,7 +111,7 @@ def docker_run_command(
   json_output: bool = True,
   check: bool = True,
   env: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
+) -> DockerReturn:
   """Run ``docker <cmd>``.
 
   Output handling follows one rule: **anything harbor is not itself parsing
@@ -109,9 +119,9 @@ def docker_run_command(
   pulling an image, and swallowing that is indistinguishable from a hang.
 
   So ``json_output`` decides both the format *and* who sees it. When True, the
-  command is asked for JSON, its output is captured, and it is parsed into a
-  ``list[dict]``. When False, the child inherits harbor's stdio and writes
-  straight to the terminal; there is nothing to return.
+  command is asked for JSON, its output is captured, and it is parsed into
+  ``DockerReturn.data``. When False, the child inherits harbor's stdio and
+  writes straight to the terminal; ``data`` is empty.
 
   Args:
       cmd: arguments after ``docker`` (e.g. ``["compose", "ps"]``).
@@ -119,9 +129,6 @@ def docker_run_command(
       json_output: parse the output (True) or stream it to the terminal (False).
       check: raise :class:`DockerError` on a non-zero exit.
       env: extra environment variables merged onto ``os.environ``.
-
-  Returns:
-      Parsed objects when ``json_output`` is True, else an empty list.
   """
   full = [DOCKER, *cmd]
   if json_output:
@@ -136,4 +143,5 @@ def docker_run_command(
   if check and result.returncode != 0:
     raise DockerError(cmd, result.returncode, result.stderr if json_output else "")
 
-  return _parse_json_output(result.stdout) if json_output else []
+  data = _parse_json_output(result.stdout) if json_output else []
+  return DockerReturn(returncode=result.returncode, data=data)

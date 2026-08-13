@@ -134,6 +134,62 @@ def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
   )
 
 
+def run_command(
+  app_id: AppID,
+  cmd_name: str,
+  args: list[str],
+  ctx: HarborCtx,
+) -> int:
+  """Run a manifest `[commands]` entry in its target unit.
+
+  If that unit is already up, ``docker compose exec`` into it. Otherwise a
+  one-off ``docker compose run --rm --no-deps`` — same service definition and
+  mounts, no sibling services started for you.
+  """
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
+
+  stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
+  entry = stack.commands.get(cmd_name)
+  if entry is None:
+    available = ", ".join(sorted(stack.commands)) or "(none)"
+    raise ValueError(
+      f"Unknown command {cmd_name!r} for {app_id}; "
+      f"available: {available}. List with `harbor cmd {app_id}`"
+    )
+
+  running = {c.run_unit for c in state.containers if c.state.lower() == "running"}
+  argv = [*entry.argv, *args]
+  env = _compose_env(app_id, ctx)
+
+  if entry.run_unit in running:
+    return docker_run_command(
+      ["compose", "exec", entry.run_unit, *argv],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=env,
+    ).returncode
+
+  # Host binds are only linked while an app runs; restore them for the one-off
+  # so compose mounts resolve, then tear them down again if nothing else is up.
+  was_fully_stopped = state.running_count == 0
+  if was_fully_stopped:
+    link_host_volumes(stack, load_run_data(stack, ctx))
+  try:
+    return docker_run_command(
+      ["compose", "run", "--rm", "--no-deps", entry.run_unit, *argv],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=env,
+    ).returncode
+  finally:
+    if was_fully_stopped:
+      unlink_host_volumes(state.run_path)
+
+
 def stop(app_id: AppID, ctx: HarborCtx) -> None:
   """Tear down routes, then bring an app's containers down."""
   state = ctx.run_state(app_id)

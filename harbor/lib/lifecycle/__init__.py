@@ -13,7 +13,7 @@ from harbor.lib.lifecycle.routes import (
   sync_route_assignment,
   unregister_app_routes,
 )
-from harbor.lib.lifecycle.run import logs, recovery_lines, start, stop
+from harbor.lib.lifecycle.run import logs, recovery_lines, run_command, start, stop
 from harbor.lib.lifecycle.snapshot import snapshot
 from harbor.lib.lifecycle.stage import (
   StageSuccess,
@@ -46,6 +46,7 @@ __all__ = [
   "restore",
   "restore_plan",
   "rm",
+  "run_command",
   "snapshot",
   "snapshot_names",
   "stage",

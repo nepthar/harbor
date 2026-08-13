@@ -5,6 +5,7 @@ import sys
 
 from harbor.cli import (
   catalog,
+  cmd,
   config,
   config_sys,
   doctor,
@@ -53,6 +54,7 @@ COMMANDS = [
   snapshot,
   restore,
   logs,
+  cmd,
   fetch,
   inspect,
   config,

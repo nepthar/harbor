@@ -9,6 +9,9 @@ files in the CLI tests.
 
 from __future__ import annotations
 
+import pytest
+
+from harbor.lib.manifest import ConfigError
 from harbor.lib.stack import (
   HARBOR_APP_ID_LABEL,
   HARBOR_RUN_UNIT_LABEL,
@@ -35,6 +38,7 @@ image = "alpine:latest"
   assert stack.routes == {}
   assert stack.config == {}
   assert stack.volumes == {}
+  assert stack.commands == {}
 
   main = stack.run_units["main"]
   assert list(stack.run_units) == ["main"]
@@ -247,3 +251,55 @@ image = "alpine"
   )
 
   assert stack.network_mode == "host"
+
+
+def test_commands_resolve_onto_the_stack(tmp_path):
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+
+[run.worker]
+image = "alpine"
+
+[commands.reset]
+cmd = "python manage.py reset"
+desc = "Reset the admin password"
+
+[commands.reindex]
+cmd = ["python", "manage.py", "reindex"]
+run_unit = "worker"
+desc = "Rebuild the search index"
+""",
+  )
+
+  reset = stack.commands["reset"]
+  assert reset.run_unit == "main"
+  assert reset.desc == "Reset the admin password"
+  assert reset.argv == ("/bin/sh", "-c", 'python manage.py reset "$@"', "_")
+
+  reindex = stack.commands["reindex"]
+  assert reindex.run_unit == "worker"
+  assert reindex.argv == ("python", "manage.py", "reindex")
+
+
+def test_command_targeting_unknown_run_unit_is_rejected(tmp_path):
+  with pytest.raises(ConfigError, match="run_unit 'missing' is not declared"):
+    stack_of(
+      tmp_path,
+      """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+
+[commands.bad]
+cmd = "true"
+run_unit = "missing"
+""",
+    )
