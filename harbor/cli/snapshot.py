@@ -19,7 +19,7 @@ def register(subparsers) -> None:
     "--label",
     default="",
     metavar="LABEL",
-    help="Optional label appended to the snapshot folder name",
+    help="Optional label appended to the snapshot name",
   )
   # Default holds_lock=True: the whole copy (including sudo volume cp) runs under
   # the harbor lock so nothing else mutates the app mid-snapshot.

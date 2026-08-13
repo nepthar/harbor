@@ -18,11 +18,15 @@ from harbor.lib.harbor import HarborCtx
 
 
 def _snapshot(harbor_env, app_id: str, label: str) -> str:
-  """Stop `app_id`, snapshot it, and return the snapshot folder name."""
+  """Stop `app_id`, snapshot it, and return the snapshot name."""
   assert harbor_env.run("stop", app_id).returncode == 0
   taken = harbor_env.run("snapshot", app_id, "--label", label)
   assert taken.returncode == 0, taken.stderr
-  return Path(taken.stdout.split("written to ")[1].strip()).name
+  written = Path(taken.stdout.split("written to ")[1].strip())
+  name = written.name.removesuffix(".tar.gz")
+  assert written.is_file(), taken.stdout
+  assert not (written.parent / name).exists()
+  return name
 
 
 def test_restore_rebuilds_a_removed_app_from_its_snapshot(harbor_env):
@@ -36,6 +40,7 @@ def test_restore_rebuilds_a_removed_app_from_its_snapshot(harbor_env):
 
   restored = harbor_env.run("restore", app_id, name, "-y")
   assert restored.returncode == 0, restored.stderr
+  assert not (harbor_env.root / "snapshots" / app_id / name).exists()
 
   # compose.yml is regenerated rather than copied back, so the host ports it
   # publishes are the ones harbordb has just re-allocated.
@@ -71,9 +76,9 @@ def test_restore_clobbers_whatever_is_there_now(harbor_env):
   assert not scratch.exists()
 
   pre = [
-    p.name
+    p.name.removesuffix(".tar.gz")
     for p in (harbor_env.root / "snapshots" / app_id).iterdir()
-    if p.name.endswith("_pre-restore")
+    if p.name.endswith("_pre-restore.tar.gz")
   ]
   assert pre, "restore over a live run dir should take a pre-restore snapshot"
 
@@ -100,12 +105,20 @@ def test_restoring_latest_pre_restore_skips_new_snapshot(harbor_env):
   restored = harbor_env.run("restore", app_id, name, "-y")
   assert restored.returncode == 0, restored.stderr
   snapshots = harbor_env.root / "snapshots" / app_id
-  pre = sorted(p.name for p in snapshots.iterdir() if p.name.endswith("_pre-restore"))
+  pre = sorted(
+    p.name.removesuffix(".tar.gz")
+    for p in snapshots.iterdir()
+    if p.name.endswith("_pre-restore.tar.gz")
+  )
   assert len(pre) == 1
 
   undo = harbor_env.run("restore", app_id, pre[-1], "-y")
   assert undo.returncode == 0, undo.stderr
-  after = {p.name for p in snapshots.iterdir() if p.name.endswith("_pre-restore")}
+  after = {
+    p.name.removesuffix(".tar.gz")
+    for p in snapshots.iterdir()
+    if p.name.endswith("_pre-restore.tar.gz")
+  }
   assert after == set(pre)
 
 
@@ -132,6 +145,36 @@ def test_restore_names_the_snapshots_it_could_have_used(harbor_env):
   unknown = harbor_env.run("restore", "never-snapshotted", name, "-y")
   assert unknown.returncode == 1
   assert "No snapshots found" in unknown.stderr
+
+
+def test_restore_without_snapshot_lists_recent_ones(harbor_env):
+  app_id = "ports-demo"
+  assert harbor_env.run("start", app_id).returncode == 0
+  name = _snapshot(harbor_env, app_id, "listed")
+
+  omitted = harbor_env.run("restore", app_id)
+  assert omitted.returncode == 1
+  assert "SNAPSHOT is required" in omitted.stderr
+  assert name in omitted.stderr
+  assert f"harbor restore {app_id}" in omitted.stderr
+
+
+def test_restore_without_snapshot_caps_the_list_at_ten(harbor_env):
+  """Plant archives directly: real snapshots collide within the same minute."""
+  app_id = "ports-demo"
+  snap_dir = harbor_env.root / "snapshots" / app_id
+  snap_dir.mkdir(parents=True)
+  names = [f"2020-01-{day:02d}_00-00Z" for day in range(1, 13)]
+  for name in names:
+    (snap_dir / f"{name}.tar.gz").write_bytes(b"")
+
+  omitted = harbor_env.run("restore", app_id)
+  assert omitted.returncode == 1
+  # Newest first, capped at 10; the two oldest stay off the list.
+  assert names[0] not in omitted.stderr
+  assert names[1] not in omitted.stderr
+  assert names[-1] in omitted.stderr
+  assert omitted.stderr.index(names[-1]) < omitted.stderr.index(names[2])
 
 
 def test_restore_declined_at_the_prompt_changes_nothing(harbor_env):

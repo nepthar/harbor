@@ -13,6 +13,8 @@ from harbor.lib.util import validate_identifier
 
 logger = getLogger("harbor.lifecycle.snapshot")
 
+SNAPSHOT_TAR_SUFFIX = ".tar.gz"
+
 
 def _toml_str_array(values: list[str]) -> str:
   return "[" + ", ".join(f'"{v}"' for v in values) + "]"
@@ -41,6 +43,83 @@ def _staging_failure(staging: Path, message: str) -> RuntimeError:
     f"Incomplete snapshot left at {staging}; "
     f"remove it with `rm -rf {staging}` before retrying."
   )
+
+
+def snapshot_archive(root: Path, app: AppID, name: str) -> Path:
+  return root / app / f"{name}{SNAPSHOT_TAR_SUFFIX}"
+
+
+def _tar_create(folder: Path, archive: Path, *, sudo: bool) -> None:
+  cmd = ["tar", "-czf", "-", "-C", str(folder.parent), folder.name]
+  if sudo:
+    logger.warning("Asking for sudo access to compress the snapshot.")
+    cmd = ["sudo", *cmd]
+  with open(archive, "wb") as out:
+    result = subprocess.run(cmd, stdout=out, stderr=subprocess.PIPE)
+  if result.returncode != 0:
+    archive.unlink(missing_ok=True)
+    detail = (result.stderr or b"").decode().strip()
+    message = f"Unable to compress snapshot at {folder}."
+    if sudo:
+      message = (
+        "Unable to compress snapshot — sudo is required to read "
+        "root-owned volume files in the snapshot. "
+        "Ensure sudo is available and that you can authenticate when prompted."
+      )
+    raise RuntimeError(f"{message}\n{detail}" if detail else message)
+
+
+def _tar_extract(archive: Path, dest_parent: Path, *, sudo: bool) -> None:
+  cmd = ["tar", "-xzf", str(archive), "-C", str(dest_parent)]
+  if sudo:
+    logger.warning("Asking for sudo access to extract the snapshot.")
+    cmd = ["sudo", *cmd]
+  result = subprocess.run(cmd, capture_output=True, text=True)
+  if result.returncode != 0:
+    detail = (result.stderr or result.stdout or "").strip()
+    message = f"Unable to extract snapshot {archive}."
+    if sudo:
+      message = (
+        "Unable to extract snapshot — sudo is required to restore "
+        "root-owned volume files. "
+        "Ensure sudo is available and that you can authenticate when prompted."
+      )
+    raise RuntimeError(f"{message}\n{detail}" if detail else message)
+
+
+def remove_snapshot_dir(folder: Path, *, sudo: bool) -> None:
+  if not folder.exists():
+    return
+  if not sudo:
+    shutil.rmtree(folder)
+    return
+  result = subprocess.run(
+    ["sudo", "rm", "-rf", "--", str(folder)],
+    capture_output=True,
+    text=True,
+  )
+  if result.returncode != 0:
+    detail = (result.stderr or result.stdout or "").strip()
+    raise RuntimeError(
+      f"Unable to remove {folder}; remove it with `sudo rm -rf {folder}`."
+      + (f"\n{detail}" if detail else "")
+    )
+
+
+def extract_snapshot(archive: Path, *, sudo: bool) -> Path:
+  name = archive.name.removesuffix(SNAPSHOT_TAR_SUFFIX)
+  folder = archive.parent / name
+  if folder.exists():
+    raise ValueError(
+      f"Incomplete snapshot extract left at {folder}; "
+      f"remove it with `rm -rf {folder}` before retrying."
+    )
+  try:
+    _tar_extract(archive, archive.parent, sudo=sudo)
+  except Exception:
+    remove_snapshot_dir(folder, sudo=sudo)
+    raise
+  return folder
 
 
 def snapshot(
@@ -78,10 +157,16 @@ def snapshot(
     folder_name = f"{folder_name}_{label}"
 
   snapshot_folder = ctx.config.snapshot_root / app / folder_name
+  archive = snapshot_archive(ctx.config.snapshot_root, app, folder_name)
+  if archive.exists():
+    raise ValueError(
+      f"Snapshot already exists: {archive}. "
+      "Are you taking multiple snapshots within the same minute?"
+    )
   if snapshot_folder.exists():
     raise ValueError(
-      f"Snapshot folder already exists: {snapshot_folder}. "
-      "Are you taking multiple snapshots within the same minute?"
+      f"Incomplete snapshot left at {snapshot_folder}; "
+      f"remove it with `rm -rf {snapshot_folder}` before retrying."
     )
 
   staging = ctx.config.harbor_root / "temp" / "current_snapshot"
@@ -92,6 +177,7 @@ def snapshot(
     )
 
   staging.mkdir(parents=True, mode=0o700)
+  included: list[str] = []
 
   try:
     included, excluded = _volume_names(paths.run_path / "volumes")
@@ -172,4 +258,15 @@ def snapshot(
   except Exception as e:
     raise _staging_failure(staging, str(e)) from e
 
-  return snapshot_folder
+  sudo = bool(included)
+  try:
+    _tar_create(snapshot_folder, archive, sudo=sudo)
+    remove_snapshot_dir(snapshot_folder, sudo=sudo)
+  except Exception as e:
+    raise RuntimeError(
+      f"{e}\n"
+      f"Uncompressed snapshot left at {snapshot_folder}; "
+      f"remove it with `rm -rf {snapshot_folder}` before retrying."
+    ) from e
+
+  return archive

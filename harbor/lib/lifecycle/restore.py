@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
+import tarfile
 import tomllib
 from dataclasses import dataclass
 from logging import getLogger
@@ -10,7 +11,13 @@ from pathlib import Path
 
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle.snapshot import snapshot
+from harbor.lib.lifecycle.snapshot import (
+  SNAPSHOT_TAR_SUFFIX,
+  extract_snapshot,
+  remove_snapshot_dir,
+  snapshot,
+  snapshot_archive,
+)
 from harbor.lib.lifecycle.stage import materialize
 from harbor.lib.run_layout import AppRunData
 from harbor.lib.stack import AppStack
@@ -19,7 +26,7 @@ from harbor.lib.util import validate_identifier
 logger = getLogger("harbor.lifecycle.restore")
 
 # Label of the automatic safety snapshot taken before a restore overwrites the
-# live state. Snapshot folders are named <timestamp>_<label>.
+# live state. Snapshot archives are named <timestamp>_<label>.tar.gz.
 PRE_RESTORE_LABEL = "pre-restore"
 
 
@@ -43,7 +50,11 @@ def snapshot_names(app: AppID, ctx: HarborCtx) -> list[str]:
   app_snapshots = ctx.config.snapshot_root / app
   if not app_snapshots.is_dir():
     return []
-  return sorted(entry.name for entry in app_snapshots.iterdir() if entry.is_dir())
+  names = []
+  for entry in app_snapshots.iterdir():
+    if entry.is_file() and entry.name.endswith(SNAPSHOT_TAR_SUFFIX):
+      names.append(entry.name.removesuffix(SNAPSHOT_TAR_SUFFIX))
+  return sorted(names)
 
 
 def snapshotted_app_ids(ctx: HarborCtx) -> list[AppID]:
@@ -84,46 +95,52 @@ def resolve_snapshot_app(ctx: HarborCtx, query: str) -> AppID:
 
 def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
   """Work out what restoring would overwrite, without overwriting it."""
+  snapshot_name = snapshot_name.removesuffix(SNAPSHOT_TAR_SUFFIX)
   validate_identifier(snapshot_name)
 
   snapshot_path = ctx.config.snapshot_root / app / snapshot_name
-  if not snapshot_path.is_dir():
+  archive = snapshot_archive(ctx.config.snapshot_root, app, snapshot_name)
+  if not archive.is_file():
     available = snapshot_names(app, ctx)
     detail = "\n".join(f"  {name}" for name in available) if available else "  (none)"
     raise ValueError(f"No snapshot {snapshot_name} for {app}. Available:\n{detail}")
 
-  manifest_path = snapshot_path / "happ" / "manifest.toml"
-  for file in (
-    snapshot_path / "snapshot.toml",
-    snapshot_path / "config.logtab",
-    manifest_path,
-  ):
-    if not file.is_file():
+  prefix = f"{snapshot_name}/"
+  with tarfile.open(archive, "r:gz") as tar:
+    infos = {info.name.lstrip("./"): info for info in tar.getmembers()}
+    for rel in (
+      f"{prefix}snapshot.toml",
+      f"{prefix}config.logtab",
+      f"{prefix}happ/manifest.toml",
+    ):
+      if rel not in infos:
+        raise ValueError(
+          f"Snapshot {archive} is missing required file: {rel}. "
+          "It is incomplete and cannot be restored"
+        )
+    meta_file = tar.extractfile(infos[f"{prefix}snapshot.toml"])
+    if meta_file is None:
       raise ValueError(
-        f"Snapshot {snapshot_path} is missing required file: {file}. "
+        f"Snapshot {archive} is missing required file: {prefix}snapshot.toml. "
         "It is incomplete and cannot be restored"
       )
-
-  with open(snapshot_path / "snapshot.toml", "rb") as f:
-    meta = tomllib.load(f)
+    meta = tomllib.load(meta_file)
 
   # A snapshot restored onto a different app would write one app's secrets and
   # data under another's id, so treat a mismatch as a wrong argument.
   if meta.get("app_id") != str(app):
-    raise ValueError(
-      f"Snapshot {snapshot_path} belongs to {meta.get('app_id')!r}, not {app}"
-    )
+    raise ValueError(f"Snapshot {archive} belongs to {meta.get('app_id')!r}, not {app}")
 
   data_root = ctx.config.volume_roots["data"] / app
   data_volumes = []
   for name in meta.get("included_volumes", []):
-    source = snapshot_path / "volumes" / "data" / name
-    if not source.is_dir():
+    vol_prefix = f"{prefix}volumes/data/{name}"
+    if not any(m == vol_prefix or m.startswith(vol_prefix + "/") for m in infos):
       raise ValueError(
-        f"Snapshot {snapshot_path} lists data volume {name} but has no "
-        f"contents for it at {source}"
+        f"Snapshot {archive} lists data volume {name} but has no "
+        f"contents for it at {vol_prefix}"
       )
-    data_volumes.append((source, data_root / name))
+    data_volumes.append((snapshot_path / "volumes" / "data" / name, data_root / name))
 
   # The only current-state assumption restore keeps: clobbering files and data
   # volumes out from under live containers is how a restore becomes a corrupt
@@ -214,6 +231,21 @@ def restore(
   There is no scratch-and-swap: the pre-restore snapshot is the undo, so a
   failure partway leaves a broken run dir that another restore repairs.
   """
+  sudo = bool(plan.data_volumes)
+  archive = plan.snapshot_path.with_name(
+    f"{plan.snapshot_path.name}{SNAPSHOT_TAR_SUFFIX}"
+  )
+  extract_snapshot(archive, sudo=sudo)
+
+  try:
+    return _restore_extracted(plan, ctx, snapshot_first=snapshot_first)
+  finally:
+    remove_snapshot_dir(plan.snapshot_path, sudo=sudo)
+
+
+def _restore_extracted(
+  plan: RestorePlan, ctx: HarborCtx, *, snapshot_first: bool
+) -> AppRunData:
   app = plan.app_id
 
   # Parse the snapshot's happ before touching anything; a corrupt snapshot

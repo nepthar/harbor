@@ -1,13 +1,18 @@
 import argparse
 
+from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import (
   RestorePlan,
   resolve_snapshot_app,
   restore,
   restore_plan,
+  snapshot_names,
 )
 from harbor.lib.util import Conn
+
+# How many snapshot names to show when SNAPSHOT is omitted.
+_RECENT_SNAPSHOT_LIMIT = 10
 
 
 def register(subparsers) -> None:
@@ -19,7 +24,8 @@ def register(subparsers) -> None:
   parser.add_argument(
     "snapshot",
     metavar="SNAPSHOT",
-    help="Snapshot folder name under snapshots/<app_id>/",
+    nargs="?",
+    help="Snapshot name under snapshots/<app_id>/",
   )
   parser.add_argument(
     "-y", "--yes", action="store_true", help="Skip confirmation prompt"
@@ -34,6 +40,8 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
   app = resolve_snapshot_app(ctx, args.app_id)
+  if not args.snapshot:
+    raise ValueError(_missing_snapshot_message(app, ctx))
   plan = restore_plan(app, args.snapshot, ctx)
   snapshot_first = not args.no_snapshot
 
@@ -43,6 +51,17 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
 
   restore(plan, ctx, snapshot_first=snapshot_first)
   conn.out(f"Restored {plan.app_id} from {plan.snapshot_path}")
+
+
+def _missing_snapshot_message(app: AppID, ctx: HarborCtx) -> str:
+  # snapshot_names is oldest-first; newest-first is what the operator wants
+  # when picking which one to restore.
+  recent = list(reversed(snapshot_names(app, ctx)[-_RECENT_SNAPSHOT_LIMIT:]))
+  detail = "\n".join(f"  {name}" for name in recent) if recent else "  (none)"
+  return (
+    f"SNAPSHOT is required. Recent snapshots for {app}:\n{detail}\n"
+    f"Restore with `harbor restore {app} <snapshot>`"
+  )
 
 
 def _confirmed(plan: RestorePlan, snapshot_first: bool, conn: Conn) -> bool:
