@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from harbor.lib.apps import AppID
 from harbor.lib.manifest import ConfigError, Manifest, parse_manifest
-from harbor.lib.util import EnvTemplate
 
 HARBOR_APP_ID_LABEL = "harbor.app_id"
 HARBOR_RUN_UNIT_LABEL = "harbor.run_unit"
@@ -162,7 +161,7 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
     name: AppVolume(name, v.kind, True if v.kind == "app" else v.readonly, v.src)
     for name, v in manifest.volumes.items()
   }
-  run_units = _resolve_run_units(manifest, app, config, volumes)
+  run_units = _resolve_run_units(manifest, app, volumes)
   commands = {
     name: AppCommand(
       name=name,
@@ -193,26 +192,18 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
 def _resolve_run_units(
   manifest: Manifest,
   app: AppID,
-  config: Mapping[str, AppConfig],
   volumes: Mapping[str, AppVolume],
 ) -> Mapping[str, AppRunUnit]:
   run_units = {}
 
-  config_varnames = {str(name): f"${{{c.env_name()}}}" for name, c in config.items()}
-
   for run_unit_name, run_entry in manifest.run.items():
+    # Placeholders in env stay as written; `make_compose_dict` substitutes
+    # against the flat keyspace (config, routes.*, happ.*).
     run_env = {
       "HAPP_ID": app,
       "HAPP_VERSION": manifest.app.version,
       "HAPP_RUN_UNIT": run_unit_name,
-      **run_entry.env,
-    }
-    # `${config}` becomes a compose variable, so its value never lands in
-    # compose.yml. `${routes.x}` is left for `make_compose_dict`, which is the
-    # first point where an allocated route exists to name.
-    run_env = {
-      k: EnvTemplate(str(v)).safe_substitute(config_varnames)
-      for k, v in run_env.items()
+      **{str(k): str(v) for k, v in run_entry.env.items()},
     }
 
     run_units[run_unit_name] = AppRunUnit(

@@ -96,10 +96,14 @@ def test_app_stack_resolves_config():
   assert plain.env_name() == f"{HARBOR_CONFIG_ENV_PREFIX}_subdomain"
 
 
-def test_config_env_var_injected_into_run_env():
+def test_config_env_var_is_not_rewritten_on_the_stack():
+  """Compose, not the stack, rewrites `${admin_user}` to the harbor env name."""
   stack = _stack_from(MANIFEST)
   env = stack.run_units["main"].environment
-  assert env["ADMIN_USER"] == f"${{{HARBOR_CONFIG_ENV_PREFIX}_admin_user}}"
+  assert env["ADMIN_USER"] == "${admin_user}"
+  assert stack.config["admin_user"].env_name() == (
+    f"{HARBOR_CONFIG_ENV_PREFIX}_admin_user"
+  )
 
 
 def test_fixtures_parse_with_config_section():

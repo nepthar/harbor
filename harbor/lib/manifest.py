@@ -14,7 +14,13 @@ from pydantic import (
 )
 
 from harbor.lib.apps import AppID
-from harbor.lib.util import ROUTE_NAMESPACE, EnvTemplate, Identifier
+from harbor.lib.util import (
+  HAPP_KEY_PREFIX,
+  HAPP_KEYS,
+  ROUTE_KEY_PREFIX,
+  EnvTemplate,
+  Identifier,
+)
 
 NetworkMode = Literal["normal", "host"]
 VolumeKind = Literal["app", "data", "temp", "bulk", "logs", "host"]
@@ -275,25 +281,30 @@ def _validate_commands(manifest: Manifest) -> list[str]:
 
 
 def _validate_env_refs(manifest: Manifest) -> list[str]:
-  """`${routes.<name>}` in [run.*.env] must name a declared route.
+  """Every `${…}` in [run.*.env] must name a key in the flat substitution map.
 
-  Every route gets a URL at compose time (provider domain when assigned,
-  otherwise a harbor.localhost placeholder).
+  Known keys: declared [config] names, `routes.<name>` for each route, and the
+  fixed `happ.*` keys. Plain unknown identifiers (no dot) are left alone for
+  compose; dotted unknowns are refused.
   """
-  routes = {name for run_entry in manifest.run.values() for name in run_entry.routes}
+  known = set(manifest.config)
+  known.update(
+    f"{ROUTE_KEY_PREFIX}{name}"
+    for run_entry in manifest.run.values()
+    for name in run_entry.routes
+  )
+  known.update(f"{HAPP_KEY_PREFIX}{key}" for key in HAPP_KEYS)
 
   errors: list[str] = []
   for unit_name, run_entry in manifest.run.items():
     for var, value in run_entry.env.items():
       for ref in sorted(EnvTemplate(value).get_identifiers()):
-        namespace, dot, route_name = ref.partition(".")
+        if ref in known:
+          continue
+        if "." not in ref:
+          continue  # Undeclared config-style; compose leaves it unsubstituted.
         where = f"[run.{unit_name}.env]: {var} references ${{{ref}}}"
-        if not dot:
-          continue  # A [config] value; `_resolve_run_units` wires those up.
-        if namespace != ROUTE_NAMESPACE:
-          errors.append(f"{where}, but {namespace!r} is not a known namespace")
-        elif route_name not in routes:
-          errors.append(f"{where}, which is not declared in [run.*.routes]")
+        errors.append(f"{where}, which is not a known substitution")
   return errors
 
 

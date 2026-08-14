@@ -168,9 +168,7 @@ volumes = { bin = "/opt/bin", app_config = "/config" }
     "./volumes/app/bin:/opt/bin:ro",
     "./volumes/data/app_config:/config",
   ]
-  # The container gets the same mapping as an env var, so a happ's own scripts
-  # can find their mounts without hardcoding paths.
-  assert service["environment"]["HAPP_VOLUMES"] == "bin:/opt/bin,app_config:/config"
+  assert "HAPP_VOLUMES" not in service["environment"]
 
 
 def test_routes_become_published_ports(tmp_path):
@@ -195,11 +193,11 @@ dns   = { port = "53/udp" }
   service = make_compose_dict(stack, data)["services"]["main"]
 
   assert service["ports"] == ["41000:8080", "9000:80", "41001:53/udp"]
-  assert service["environment"]["HAPP_ROUTES"] == "main:8080,admin:80,dns:53"
+  assert "HAPP_ROUTES" not in service["environment"]
 
 
-def test_harbor_mounts_land_after_the_happs_own_and_outside_HAPP_VOLUMES(tmp_path):
-  """HAPP_VOLUMES tells a happ where its [volumes] went; it declared none of these."""
+def test_harbor_mounts_land_after_the_happs_own_and_outside_happ_volumes(tmp_path):
+  """`${happ.volumes}` is the happ's own [volumes]; harbor mounts are not among them."""
   stack = stack_of(
     tmp_path,
     """\
@@ -212,6 +210,7 @@ app_config = { kind = "data" }
 [run.main]
 image = "alpine"
 volumes = { app_config = "/config" }
+env = { VOLS = "${happ.volumes}" }
 """,
   )
 
@@ -222,7 +221,7 @@ volumes = { app_config = "/config" }
     "./volumes/data/app_config:/config",
     "/etc/localtime:/etc/localtime:ro",
   ]
-  assert service["environment"]["HAPP_VOLUMES"] == "app_config:/config"
+  assert service["environment"]["VOLS"] == "app_config:/config"
 
 
 def test_a_unit_with_no_volumes_of_its_own_still_gets_the_harbor_mounts(tmp_path):
@@ -269,7 +268,7 @@ cmd = ["/bin/sh", "-c", "exec sleep 1"]
   service = make_compose_dict(stack, run_data(stack))["services"]["main"]
 
   assert service["command"] == ["/bin/sh", "-c", "exec sleep 1"]
-  assert service["environment"]["HAPP_CMD"] == "/bin/sh -c exec sleep 1"
+  assert "HAPP_CMD" not in service["environment"]
 
 
 def test_compose_passthrough_lands_verbatim_in_the_service(tmp_path):
@@ -316,8 +315,11 @@ compose = { image = "other", healthcheck = { disable = true } }
     parse_manifest(manifest, AppID("demo"), Path("manifest.toml"))
 
 
-def test_the_app_domain_reaches_both_env_and_labels(tmp_path):
-  """The label is what `harbor doctor` and the route provider read back."""
+def test_the_app_domain_reaches_labels_not_env(tmp_path):
+  """The label is what `harbor doctor` and the route provider read back.
+
+  Apps that want the domain in env ask via `${happ.domain}`.
+  """
   stack = stack_of(
     tmp_path,
     """\
@@ -333,7 +335,7 @@ image = "alpine"
   data = run_data(stack, app_domain="photos.harbor.localhost")
   service = make_compose_dict(stack, data)["services"]["main"]
 
-  assert service["environment"]["HAPP_DOMAIN"] == "photos.harbor.localhost"
+  assert "HAPP_DOMAIN" not in service["environment"]
   assert service["labels"][HARBOR_SUBDOMAIN_LABEL] == "photos.harbor.localhost"
 
 
@@ -363,14 +365,16 @@ api  = { port = "9001" }
 
   env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
 
-  # Assigned non-private routes use the provider domain and the route scheme.
+  # Assigned non-private routes use the provider domain. Public URLs are
+  # https (TLS terminates at the reverse proxy); `scheme` on a route is only
+  # how the proxy dials the backend.
   # "main" is the one route that gets the bare app subdomain.
-  assert env["BASE_URL"] == "http://mealie.home.example"
-  assert env["API"] == "http://api-mealie.home.example/v1"
+  assert env["BASE_URL"] == "https://mealie.home.example"
+  assert env["API"] == "https://api-mealie.home.example/v1"
 
 
 def test_a_route_reference_survives_alongside_a_config_reference(tmp_path):
-  """Two substitutions, two mechanisms: config indirects through compose."""
+  """One flat map, two value kinds: config becomes a compose env var name."""
   stack = stack_of(
     tmp_path,
     """\
@@ -390,9 +394,56 @@ main = { port = "9000" }
 """,
   )
 
+  assert stack.run_units["main"].environment["GREETING"] == (
+    "${timezone} at ${routes.main}"
+  )
+
   env = make_compose_dict(stack, run_data(stack))["services"]["main"]["environment"]
 
-  assert env["GREETING"] == "${__HARBOR_CONFIG__timezone} at http://mealie.home.example"
+  assert env["GREETING"] == (
+    "${__HARBOR_CONFIG__timezone} at https://mealie.home.example"
+  )
+
+
+def test_happ_references_in_env_become_runtime_context(tmp_path):
+  """`${happ.x}` is the app asking for what harbor used to inject as HAPP_*."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+subdomain = "jrnl"
+
+[volumes]
+data = { kind = "data" }
+
+[run.main]
+image = "alpine"
+cmd = ["/bin/sh", "-c", "exec sleep 1"]
+volumes = { data = "/data" }
+
+[run.main.env]
+DOMAIN = "${happ.domain}"
+VOLS = "${happ.volumes}"
+CMD = "${happ.cmd}"
+ROUTES = "${happ.routes}"
+
+[run.main.routes]
+main = { port = "8080" }
+""",
+  )
+
+  data = run_data(stack, app_domain="jrnl.home.example", host_ports={"main": 41000})
+  env = make_compose_dict(stack, data)["services"]["main"]["environment"]
+
+  assert env["DOMAIN"] == "jrnl.home.example"
+  assert env["VOLS"] == "data:/data"
+  assert env["CMD"] == "/bin/sh -c exec sleep 1"
+  assert env["ROUTES"] == "main:8080"
+  assert "HAPP_DOMAIN" not in env
+  assert "HAPP_VOLUMES" not in env
+  assert "HAPP_CMD" not in env
+  assert "HAPP_ROUTES" not in env
 
 
 def test_host_network_mode_is_set_per_service(tmp_path):

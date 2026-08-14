@@ -6,6 +6,7 @@ from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.run_layout import AppRunData
 from harbor.lib.stack import AppStack
+from harbor.lib.util import PUBLIC_ROUTE_SCHEME
 
 
 def published_urls(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -> list[str]:
@@ -22,7 +23,7 @@ def published_urls(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -> lis
     if not stack.subdomain:
       continue
     domain = ctx.config.provider_domain(tag)
-    urls.append(f"{route.scheme}://{route.subdomain(stack.subdomain)}.{domain}")
+    urls.append(f"{PUBLIC_ROUTE_SCHEME}://{route.subdomain(stack.subdomain)}.{domain}")
   return urls
 
 

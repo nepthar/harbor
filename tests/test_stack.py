@@ -63,10 +63,12 @@ image = "alpine:latest"
   }
 
 
-def test_config_becomes_env_placeholders_not_values(tmp_path):
-  """A stack is installation-independent, so config resolves to a variable name.
+def test_config_stays_as_placeholders_on_the_stack(tmp_path):
+  """A stack is installation-independent; compose rewrites config later.
 
-  The value is substituted by compose at run time from `AppRunData.config_env`.
+  `${admin_user}` survives until `make_compose_dict`, which turns it into
+  `${__HARBOR_CONFIG__admin_user}` so the value (and secrets) never land in
+  compose.yml.
   """
   stack = stack_of(
     tmp_path,
@@ -101,9 +103,9 @@ env = { USER = "${admin_user}", PASS = "${admin_pass}", PORT = "${port}", PLAIN 
   assert stack.config["mongo_pass"].has_default() is False
 
   env = stack.run_units["main"].environment
-  assert env["USER"] == "${__HARBOR_CONFIG__admin_user}"
-  assert env["PASS"] == "${__HARBOR_CONFIG__admin_pass}"
-  assert env["PORT"] == "${__HARBOR_CONFIG__port}"
+  assert env["USER"] == "${admin_user}"
+  assert env["PASS"] == "${admin_pass}"
+  assert env["PORT"] == "${port}"
   assert env["PLAIN"] == "literal"
   # Not a declared config name, so it is left for compose to deal with.
   assert env["UNKNOWN"] == "${nope}"
