@@ -347,7 +347,7 @@ api = { port = "8080" }
 
 
 def test_env_reference_to_an_undeclared_route_is_rejected():
-  with pytest.raises(ConfigError, match="not declared in"):
+  with pytest.raises(ConfigError, match="not a known substitution"):
     _stack(
       """
 [app]
@@ -361,8 +361,8 @@ env = { BASE_URL = "${routes.nope}" }
     )
 
 
-def test_env_reference_to_an_unknown_namespace_is_rejected():
-  with pytest.raises(ConfigError, match="not a known namespace"):
+def test_env_reference_to_an_unknown_dotted_key_is_rejected():
+  with pytest.raises(ConfigError, match="not a known substitution"):
     _stack(
       """
 [app]
@@ -372,6 +372,37 @@ subdomain = "photos"
 [run.main]
 image = "alpine:latest"
 env = { BASE_URL = "${volumes.data}" }
+"""
+    )
+
+
+def test_env_may_reference_happ_keys():
+  stack = _stack(
+    """
+[app]
+version = "0.1.0"
+subdomain = "photos"
+
+[run.main]
+image = "alpine:latest"
+env = { DOMAIN = "${happ.domain}", VOLS = "${happ.volumes}" }
+"""
+  )
+  assert stack.run_units["main"].environment["DOMAIN"] == "${happ.domain}"
+  assert stack.run_units["main"].environment["VOLS"] == "${happ.volumes}"
+
+
+def test_env_reference_to_an_unknown_happ_key_is_rejected():
+  with pytest.raises(ConfigError, match="not a known substitution"):
+    _stack(
+      """
+[app]
+version = "0.1.0"
+subdomain = "photos"
+
+[run.main]
+image = "alpine:latest"
+env = { HOST = "${happ.host}" }
 """
     )
 

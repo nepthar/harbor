@@ -38,18 +38,28 @@ def validate_github_segment(value: str, kind: str) -> str:
 
 Identifier = Annotated[str, AfterValidator(validate_identifier)]
 
-# The namespace prefix in `${routes.<name>}`.
-ROUTE_NAMESPACE = "routes"
+# Flat substitution key prefixes. Keys look namespaced (`routes.main`,
+# `happ.domain`) but the keyspace itself is flat — see EnvTemplate.
+ROUTE_KEY_PREFIX = "routes."
+HAPP_KEY_PREFIX = "happ."
+HAPP_KEYS = frozenset({"domain", "volumes", "cmd", "routes"})
+
+# What a browser hits. `route.scheme` is the backend dial scheme (how a reverse
+# proxy talks to the app) and must not leak into `${routes.*}` URLs.
+PUBLIC_ROUTE_SCHEME = "https"
 
 
 class EnvTemplate(string.Template):
-  """What `[run.<unit>.env]` values may reference.
+  """`[run.<unit>.env]` placeholders against a flat substitution keyspace.
 
-  `${name}` is a [config] value; `${routes.<name>}` is a route's public URL.
-  Config names are plain identifiers, so the dot is what tells the two apart --
-  and it is why the default `Template` pattern (which stops at the dot, making
-  `${routes.main}` an invalid placeholder that substitution silently ignores)
-  is not enough.
+  Keys may contain a single dot so that `routes.main` and `happ.domain` are
+  ordinary map keys, not nested namespaces. The default `Template` pattern
+  stops at the first dot, which would make those placeholders invalid and
+  leave them unsubstituted — hence the custom `idpattern`.
+
+  At compose time the map holds: declared [config] names (rewritten to
+  `${__HARBOR_CONFIG__…}` so secrets stay out of compose.yml), every
+  `routes.<name>` URL, and the fixed `happ.*` keys.
   """
 
   idpattern = r"(?a:[_a-z][_a-z0-9-]*(?:\.[_a-z0-9-]+)?)"

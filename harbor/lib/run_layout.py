@@ -15,11 +15,17 @@ from harbor.lib.stack import (
   PRIMARY_ROUTE_NAME,
   AppConfig,
   AppRoute,
+  AppRunUnit,
   AppStack,
   AppVolume,
   BoundVolume,
 )
-from harbor.lib.util import ROUTE_NAMESPACE, EnvTemplate
+from harbor.lib.util import (
+  HAPP_KEY_PREFIX,
+  PUBLIC_ROUTE_SCHEME,
+  ROUTE_KEY_PREFIX,
+  EnvTemplate,
+)
 
 logger = getLogger("harbor.run_layout")
 
@@ -364,14 +370,19 @@ def _route_urls(
   assignments: Mapping[str, str],
   config: Config,
 ) -> dict[str, str]:
-  """Where each route answers: provider domain, or harbor.localhost placeholder."""
+  """Where each route answers: provider domain, or harbor.localhost placeholder.
+
+  The URL is always https: TLS terminates at the reverse proxy. `route.scheme`
+  is how the proxy dials the backend, not what a browser (or `${routes.x}`)
+  should use.
+  """
   urls: dict[str, str] = {}
   for name, route in routes.items():
     if not route.subdomain:
       continue
     tag = assignments.get(name)
     domain = config.provider_domain(tag or "")
-    urls[name] = f"{route.scheme}://{route.subdomain}.{domain}"
+    urls[name] = f"{PUBLIC_ROUTE_SCHEME}://{route.subdomain}.{domain}"
   return urls
 
 
@@ -384,23 +395,47 @@ def _app_domain(
   return f"{stack.subdomain}.{config.provider_domain(tag)}"
 
 
-def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
-  route_vars = {
-    f"{ROUTE_NAMESPACE}.{name}": url for name, url in data.route_urls.items()
+def _env_substitutions(
+  stack: AppStack, run_unit: AppRunUnit, data: AppRunData
+) -> dict[str, str]:
+  """Flat key → value map for one unit's `[run.*.env]` placeholders.
+
+  Config keys rewrite to `${__HARBOR_CONFIG__…}` so values (especially secrets)
+  stay out of compose.yml and are interpolated from the process env at up.
+  `routes.*` and `happ.*` take concrete values.
+  """
+  volumes = ",".join(
+    _env_kvpair(name, bound.guest_path) for name, bound in run_unit.volumes.items()
+  )
+  cmd = " ".join(run_unit.command) if run_unit.command else ""
+  routes = ",".join(
+    _env_kvpair(name, str(data.routes[name].container_port)) for name in run_unit.routes
+  )
+  return {
+    **{name: f"${{{cfg.env_name()}}}" for name, cfg in stack.config.items()},
+    **{f"{ROUTE_KEY_PREFIX}{name}": url for name, url in data.route_urls.items()},
+    f"{HAPP_KEY_PREFIX}domain": data.app_domain or "",
+    f"{HAPP_KEY_PREFIX}volumes": volumes,
+    f"{HAPP_KEY_PREFIX}cmd": cmd,
+    f"{HAPP_KEY_PREFIX}routes": routes,
   }
+
+
+def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
   services: dict[str, Any] = {}
   for run_name, run_unit in stack.run_units.items():
-    # The manifest validator has already checked that every `${routes.x}` here
-    # names a declared route, so the only way one survives unsubstituted is a
+    # The manifest validator has already checked that every dotted `${…}`
+    # names a known flat key, so the only way one survives unsubstituted is a
     # route that was never allocated -- and `materialize` allocates before it
     # writes.
     environment = {
-      str(k): EnvTemplate(str(v)).safe_substitute(route_vars)
+      str(k): EnvTemplate(str(v)).safe_substitute(
+        _env_substitutions(stack, run_unit, data)
+      )
       for k, v in run_unit.environment.items()
     }
     labels = {str(k): str(v) for k, v in run_unit.labels.items()}
     if data.app_domain:
-      environment["HAPP_DOMAIN"] = data.app_domain
       labels[HARBOR_SUBDOMAIN_LABEL] = data.app_domain
 
     service: dict[str, Any] = {
@@ -411,36 +446,25 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
     service["restart"] = run_unit.restart or "unless-stopped"
 
     mounts = [_mount_string(bound) for bound in run_unit.volumes.values()]
-    if run_unit.volumes:
-      volstr = ",".join(
-        _env_kvpair(volname, bound.guest_path)
-        for volname, bound in run_unit.volumes.items()
-      )
-      environment["HAPP_VOLUMES"] = volstr
-
-    # Harbor's own mounts come last, and stay out of HAPP_VOLUMES: that
-    # variable tells a happ where the volumes it declared ended up, and it
+    # Harbor's own mounts come last, and stay out of `${happ.volumes}`: that
+    # value tells a happ where the volumes it declared ended up, and it
     # declared none of these.
     mounts.extend(data.host_mounts)
     if mounts:
       service["volumes"] = mounts
 
     if run_unit.command:
-      environment["HAPP_CMD"] = " ".join(run_unit.command)
       service["command"] = list(run_unit.command)
 
     if run_unit.routes:
-      svc_ports = []
-      routes_env = []
-      for port_name, _ in run_unit.routes.items():
-        route = data.routes[port_name]
-        svc_ports.append(
-          _port_string(route.host_port, route.container_port, route.proto)
+      service["ports"] = [
+        _port_string(
+          data.routes[name].host_port,
+          data.routes[name].container_port,
+          data.routes[name].proto,
         )
-        routes_env.append(_env_kvpair(port_name, str(route.container_port)))
-
-      service["ports"] = svc_ports
-      environment["HAPP_ROUTES"] = ",".join(routes_env)
+        for name in run_unit.routes
+      ]
 
     if stack.network_mode == "host":
       service["network_mode"] = "host"
