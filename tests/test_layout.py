@@ -6,10 +6,16 @@ fake docker is the only docker these tests are allowed to see.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
+import pytest
 import yaml
+
+from harbor.lib.config import load_config_file
+from harbor.lib.harbor import HarborCtx
+from harbor.lib.lifecycle import dev_plan, source_volume_links
 
 BASIC = "io.p2net.basic-features"
 
@@ -299,6 +305,150 @@ def test_restaging_does_not_regenerate_an_existing_auto_secret(harbor_env):
     "config", BASIC, "--get", "admin_pass", "--show-secret"
   ).stdout.strip()
   assert again == first
+
+
+# --- dev --------------------------------------------------------------------
+
+
+def _docker_calls(harbor_env) -> list[dict]:
+  return [json.loads(line) for line in harbor_env.docker_log.read_text().splitlines()]
+
+
+def _staged_for_dev(harbor_env) -> Path:
+  """Stage BASIC with its required config set, and return the source bundle."""
+  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
+  return harbor_env.root / "apps" / f"{BASIC}.happ"
+
+
+def test_dev_runs_in_the_foreground_against_the_source(harbor_env):
+  """The point of the command: `up` without `-d`, app links on the source."""
+  source = _staged_for_dev(harbor_env)
+
+  result = harbor_env.run("dev", BASIC)
+  assert result.returncode == 0, result.stderr
+
+  calls = _docker_calls(harbor_env)
+  args = [call["args"] for call in calls]
+  assert ["compose", "up"] in args
+  assert ["compose", "up", "-d"] not in args
+  assert ["compose", "down"] in args
+
+  # What the link pointed at while docker was running -- not after.
+  up = next(call for call in calls if call["args"] == ["compose", "up"])
+  assert up["app_links"] == {"bin": str(source.resolve() / "bin")}
+
+
+def test_dev_puts_the_app_links_back_when_it_is_over(harbor_env):
+  _staged_for_dev(harbor_env)
+  link = harbor_env.run_root / BASIC / "volumes" / "app" / "bin"
+
+  assert harbor_env.run("dev", BASIC).returncode == 0
+
+  assert link.readlink() == Path("../../happ/bin")
+  assert link.resolve() == (harbor_env.run_root / BASIC / "happ" / "bin").resolve()
+
+
+def test_dev_puts_the_app_links_back_after_a_failure(harbor_env):
+  """The links are borrowed for the run; an exception is not a way to keep them."""
+  _staged_for_dev(harbor_env)
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+  plan = dev_plan(ctx.resolve_app(BASIC), ctx)
+  link = harbor_env.run_root / BASIC / "volumes" / "app" / "bin"
+
+  with pytest.raises(RuntimeError):
+    with source_volume_links(plan):
+      assert link.readlink() == plan.source / "bin"
+      raise RuntimeError("the stack blew up")
+
+  assert link.readlink() == Path("../../happ/bin")
+
+
+def test_dev_leaves_the_staged_happ_copy_alone(harbor_env):
+  """Only the links move. `happ/` is still what `stage` put there."""
+  source = _staged_for_dev(harbor_env)
+  copied = (harbor_env.run_root / BASIC / "happ" / "bin" / "hello.sh").read_text()
+
+  assert harbor_env.run("dev", BASIC).returncode == 0
+
+  (source / "bin" / "hello.sh").write_text("echo edited\n")
+  assert (
+    harbor_env.run_root / BASIC / "happ" / "bin" / "hello.sh"
+  ).read_text() == copied
+
+
+def test_dev_refuses_an_app_that_is_not_staged(harbor_env):
+  refused = harbor_env.run("dev", BASIC)
+  assert refused.returncode == 1
+  assert "not staged" in refused.stderr
+  assert f"harbor stage {BASIC}" in refused.stderr
+
+
+def test_dev_refuses_unset_config_like_start_does(harbor_env):
+  assert harbor_env.run("stage", BASIC).returncode == 0
+
+  refused = harbor_env.run("dev", BASIC)
+  assert refused.returncode == 1
+  assert "admin_user" in refused.stderr
+  assert ["compose", "up"] not in [c["args"] for c in _docker_calls(harbor_env)]
+
+
+def test_dev_refuses_a_markdown_happ(harbor_env):
+  """There is no source folder to mount: the files only exist as a copy."""
+  app_id = "md-demo"
+  (harbor_env.root / "apps" / f"{app_id}.happ.md").write_text(
+    '```toml happ_path="manifest.toml"\n'
+    '[app]\nversion = "1"\n\n'
+    '[volumes]\nhello = { kind = "app", src = "bin/hello.sh" }\n\n'
+    "[run.main]\n"
+    'image   = "alpine:latest"\n'
+    'volumes = { hello = "/app/hello.sh" }\n'
+    "```\n\n"
+    '```bash happ_path="bin/hello.sh:+x"\n'
+    'echo "hello"\n'
+    "```\n"
+  )
+  assert harbor_env.run("stage", app_id).returncode == 0
+
+  refused = harbor_env.run("dev", app_id)
+  assert refused.returncode == 1
+  assert ".happ folder" in refused.stderr
+
+
+def test_dev_refuses_an_app_with_no_app_volumes(harbor_env):
+  app_id = "no-app-volumes"
+  _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
+  assert harbor_env.run("stage", app_id).returncode == 0
+
+  refused = harbor_env.run("dev", app_id)
+  assert refused.returncode == 1
+  assert 'no `kind = "app"` volumes' in refused.stderr
+
+
+def test_dev_reports_a_manifest_edited_since_staging(harbor_env):
+  """compose.yml came from the staged copy; say so before running it."""
+  source = _staged_for_dev(harbor_env)
+  manifest = source / "manifest.toml"
+  manifest.write_text(manifest.read_text() + "\n# edited after staging\n")
+
+  declined = harbor_env.run("dev", BASIC, input="n\n")
+  assert declined.returncode == 0, declined.stderr
+  assert "manifest has changed since it was staged" in declined.stdout
+  assert f"harbor stage {BASIC}" in declined.stdout
+  assert "Nothing started." in declined.stdout
+  assert ["compose", "up"] not in [c["args"] for c in _docker_calls(harbor_env)]
+
+  accepted = harbor_env.run("dev", BASIC, input="y\n")
+  assert accepted.returncode == 0, accepted.stderr
+  assert ["compose", "up"] in [c["args"] for c in _docker_calls(harbor_env)]
+
+
+def test_dev_does_not_ask_when_the_manifest_still_matches(harbor_env):
+  _staged_for_dev(harbor_env)
+
+  result = harbor_env.run("dev", BASIC)
+  assert result.returncode == 0, result.stderr
+  assert "Continue anyway" not in result.stdout
 
 
 # --- rm ---------------------------------------------------------------------

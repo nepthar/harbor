@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
@@ -136,6 +137,11 @@ def docker_run_command(
 
   run_env = {**os.environ, **env} if env else None
   logger.debug("running: %s (cwd=%s)", " ".join(full), cwd)
+  if not json_output:
+    # The child is about to write to the same stdout harbor has been buffering
+    # into. Without this, a piped `harbor dev` prints its receipt *after* the
+    # compose output it was meant to introduce.
+    sys.stdout.flush()
   result = subprocess.run(
     full, cwd=cwd, capture_output=json_output, text=True, env=run_env
   )

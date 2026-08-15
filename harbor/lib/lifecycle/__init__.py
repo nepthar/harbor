@@ -1,3 +1,4 @@
+from harbor.lib.lifecycle.dev import DevPlan, dev, dev_plan, source_volume_links
 from harbor.lib.lifecycle.restore import (
   RestorePlan,
   resolve_snapshot_app,
@@ -28,12 +29,15 @@ from harbor.lib.lifecycle.stage import (
 )
 
 __all__ = [
+  "DevPlan",
   "RemovalPlan",
   "RestorePlan",
   "StageSuccess",
   "StagingTarget",
   "apply_config_sets",
   "bind",
+  "dev",
+  "dev_plan",
   "link_host_volumes",
   "logs",
   "materialize",
@@ -49,6 +53,7 @@ __all__ = [
   "run_command",
   "snapshot",
   "snapshot_names",
+  "source_volume_links",
   "stage",
   "staging_target",
   "start",

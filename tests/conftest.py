@@ -67,8 +67,21 @@ from pathlib import Path
 args = sys.argv[1:]
 state = Path(os.environ["FAKE_DOCKER_STATE"])
 log = Path(os.environ["FAKE_DOCKER_LOG"])
+
+# Where the `app` volume links pointed at the moment of the call. `harbor dev`
+# swaps them for the duration of one docker command and puts them back, so
+# this is the only way a test can observe the swap from outside.
+app_volumes = Path.cwd() / "volumes" / "app"
+app_links = (
+    {p.name: os.readlink(p) for p in sorted(app_volumes.iterdir())}
+    if app_volumes.is_dir()
+    else {}
+)
+
 with log.open("a") as f:
-    f.write(json.dumps({"args": args, "cwd": os.getcwd()}) + "\\n")
+    f.write(json.dumps(
+        {"args": args, "cwd": os.getcwd(), "app_links": app_links}
+    ) + "\\n")
 
 containers = json.loads(state.read_text()) if state.exists() else []
 if args[:3] == ["compose", "up", "-d"]:
