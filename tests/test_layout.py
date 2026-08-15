@@ -394,7 +394,7 @@ def test_dev_refuses_unset_config_like_start_does(harbor_env):
 
 
 def test_dev_refuses_a_markdown_happ(harbor_env):
-  """There is no source folder to mount: the files only exist as a copy."""
+  """There is no source folder to edit: the files only exist as a copy."""
   app_id = "md-demo"
   (harbor_env.root / "apps" / f"{app_id}.happ.md").write_text(
     '```toml happ_path="manifest.toml"\n'
@@ -415,14 +415,38 @@ def test_dev_refuses_a_markdown_happ(harbor_env):
   assert ".happ folder" in refused.stderr
 
 
-def test_dev_refuses_an_app_with_no_app_volumes(harbor_env):
-  app_id = "no-app-volumes"
-  _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
+def test_dev_refuses_a_markdown_happ_with_nothing_to_mount(harbor_env):
+  """The folder requirement is about what the app *is*, not about mounts."""
+  app_id = "md-plain"
+  (harbor_env.root / "apps" / f"{app_id}.happ.md").write_text(
+    '```toml happ_path="manifest.toml"\n'
+    '[app]\nversion = "1"\n\n'
+    '[volumes]\nstate = { kind = "data" }\n\n'
+    "[run.main]\n"
+    'image   = "alpine:latest"\n'
+    'volumes = { state = "/state" }\n'
+    "```\n"
+  )
   assert harbor_env.run("stage", app_id).returncode == 0
 
   refused = harbor_env.run("dev", app_id)
   assert refused.returncode == 1
-  assert 'no `kind = "app"` volumes' in refused.stderr
+  assert ".happ folder" in refused.stderr
+
+
+def test_dev_with_no_app_volumes_is_just_an_interactive_run(harbor_env):
+  """A folder app with nothing to mount still runs: it is `compose up` here."""
+  app_id = "no-app-volumes"
+  _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
+  assert harbor_env.run("stage", app_id).returncode == 0
+
+  result = harbor_env.run("dev", app_id)
+  assert result.returncode == 0, result.stderr
+  assert "nothing is mounted from it" in result.stdout
+
+  args = [call["args"] for call in _docker_calls(harbor_env)]
+  assert ["compose", "up"] in args
+  assert ["compose", "up", "-d"] not in args
 
 
 def test_dev_reports_a_manifest_edited_since_staging(harbor_env):

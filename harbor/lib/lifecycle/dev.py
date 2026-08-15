@@ -18,7 +18,12 @@ from harbor.lib.stack import AppStack
 
 @dataclass(frozen=True)
 class DevPlan:
-  """A validated foreground run of a staged app against its source bundle."""
+  """A validated foreground run of a staged app against its source bundle.
+
+  An app with no `kind = "app"` volumes still needs that source to exist -- it
+  just has nothing to mount from it, which leaves a dev run as an interactive
+  `compose up`, so `mounts` is simply empty.
+  """
 
   app_id: AppID
   run_path: Path
@@ -69,6 +74,8 @@ def dev_plan(app: AppID, ctx: HarborCtx) -> DevPlan:
       f"run `harbor stop {app}` first"
     )
 
+  # Required whether or not anything is mounted from it: `harbor dev` is for
+  # an app you are editing in place, and that is what a folder bundle is.
   source = _dev_source(app, ctx)
   stack = AppStack.from_file(paths.manifest_path, app)
 
@@ -77,11 +84,6 @@ def dev_plan(app: AppID, ctx: HarborCtx) -> DevPlan:
     for name, volume in stack.volumes.items()
     if volume.kind == "app"
   }
-  if not mounts:
-    raise ValueError(
-      f'App {app} declares no `kind = "app"` volumes, so there is nothing for '
-      f"a dev run to mount from source. Run it with `harbor start {app}`."
-    )
   for name, path in mounts.items():
     if not path.exists():
       raise ValueError(f"App {app} - volume {name}: {path} does not exist")

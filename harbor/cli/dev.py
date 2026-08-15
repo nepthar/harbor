@@ -56,6 +56,8 @@ def _receipt(plan: DevPlan) -> str:
   rows: list[tuple[str, str]] = [("Source:", str(plan.source))]
   for name, path in plan.mounts.items():
     rows.append((f"  {name}:", str(path)))
+  if not plan.mounts:
+    rows.append(("", "(no app volumes: nothing is mounted from it)"))
 
   for i, line in enumerate(host_port_lines(plan.stack, plan.run_data)):
     rows.append(("Host:" if i == 0 else "", line))
