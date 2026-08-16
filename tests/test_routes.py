@@ -627,15 +627,25 @@ def test_npm_route_owners_maps_harbor_meta():
 
 
 # ── pangolin ───────────────────────────────────────────────────────────────
-def _pangolin_provider():
-  return PangolinRouteProvider(
+SITE = "substantial-atractaspis-branchi"
+
+
+def _pangolin_provider(site: str = SITE, resolved: int | None = 3):
+  """A provider whose site slug is already resolved, unless `resolved` is None.
+
+  Most tests are not about the site lookup, and leaving it unresolved would
+  make every one of them stub that request too.
+  """
+  provider = PangolinRouteProvider(
     endpoint="https://pangolin.example:3003",
     api_key="test-key",
     org_id="acme",
-    site_id=3,
+    site=site,
     harbor_domain="home.example",
     harbor_address="192.168.1.10",
   )
+  provider._resolved_site_id = resolved
+  return provider
 
 
 def _pangolin_config(args: dict[str, str]):
@@ -662,20 +672,53 @@ def _pangolin_config(args: dict[str, str]):
 PANGOLIN_ARGS = {
   "endpoint": "https://pangolin.example:3003",
   "org_id": "acme",
-  "site_id": "3",
+  "site": SITE,
   "api_key_secret": "pangolin.api_key",
 }
 
 
-def test_pangolin_config_constructs_with_numeric_site_id():
+def test_pangolin_config_constructs():
   provider = get_route_provider(_RouteDB(), _pangolin_config(PANGOLIN_ARGS), "web")
 
   assert isinstance(provider, PangolinRouteProvider)
   assert provider.org_id == "acme"
-  # site_id arrives from toml as a string; the provider needs the int.
-  assert provider.site_id == 3
+  assert provider.site == SITE
   assert provider.harbor_address == "192.168.1.10"
   assert provider.harbor_domain == "home.example"
+
+
+def test_pangolin_resolves_the_site_name_once():
+  """Config names the site the only way the dashboard shows it: its URL name."""
+  provider = _pangolin_provider(resolved=None)
+  provider._request = Mock(return_value={"siteId": 7, "name": "harbor host"})
+
+  assert provider._site_id() == 7
+  provider._request.assert_called_once_with("GET", f"/org/acme/site/{SITE}")
+
+  # Cached: a second route registration must not re-resolve it.
+  assert provider._site_id() == 7
+  assert provider._request.call_count == 1
+
+
+def test_pangolin_refuses_an_unknown_site():
+  provider = _pangolin_provider(site="no-such-site", resolved=None)
+  provider._request = Mock(return_value={})
+
+  with pytest.raises(RouteProviderError, match="has no site 'no-such-site'"):
+    provider._site_id()
+
+
+def test_pangolin_target_carries_the_resolved_site_id():
+  provider = _pangolin_provider(resolved=None)
+  provider._find_resource = Mock(return_value=None)
+  provider._domain_id = Mock(return_value="dom_1")
+  provider._site_id = Mock(return_value=7)
+  provider._request = Mock(return_value={"resourceId": 12})
+
+  provider.register_route(AppID("io.test.photos"), 41000, "photos", "home.example")
+
+  target = provider._request.call_args_list[-1]
+  assert target.kwargs["json"]["siteId"] == 7
 
 
 def test_config_requires_harbor_address_for_proxying_providers(tmp_path):
@@ -723,7 +766,7 @@ def test_pangolin_refuses_a_non_https_endpoint(endpoint):
       endpoint=endpoint,
       api_key="test-key",
       org_id="acme",
-      site_id=3,
+      site=SITE,
       harbor_domain="home.example",
       harbor_address="192.168.1.10",
     )
@@ -734,7 +777,7 @@ def test_pangolin_https_endpoint_keeps_case_and_drops_trailing_slash():
     endpoint="HTTPS://Pangolin.Example:3003/",
     api_key="test-key",
     org_id="acme",
-    site_id=3,
+    site=SITE,
     harbor_domain="home.example",
     harbor_address="192.168.1.10",
   )
@@ -748,10 +791,10 @@ def test_pangolin_config_refuses_plaintext_endpoint():
     get_route_provider(_RouteDB(), config, "web")
 
 
-def test_pangolin_config_rejects_non_numeric_site_id():
-  config = _pangolin_config({**PANGOLIN_ARGS, "site_id": "newt"})
-  with pytest.raises(RouteProviderError, match="not a site id"):
-    get_route_provider(_RouteDB(), config, "web")
+def test_pangolin_config_does_not_touch_the_network():
+  """Construction stays offline; the site lookup waits until a route needs it."""
+  provider = get_route_provider(_RouteDB(), _pangolin_config(PANGOLIN_ARGS), "web")
+  assert provider._resolved_site_id is None
 
 
 def test_pangolin_config_reports_missing_args():
@@ -902,7 +945,7 @@ def test_pangolin_validate_reports_missing_domain_and_site():
   errors = provider.validate()
 
   assert any("has no domain 'home.example'" in e for e in errors)
-  assert any("site 3 is not usable" in e for e in errors)
+  assert any(f"site {SITE!r} is not usable" in e for e in errors)
 
 
 def test_pangolin_validate_passes_on_verified_domain():

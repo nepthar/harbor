@@ -53,9 +53,10 @@ port_base = 41000
 # password_secret = "route_provider.web.password"
 
 # Pangolin publishes each route as a public HTTP resource on `domain`, with a
-# target on `site_id` pointing at harbor_address. `endpoint` is the base URL of
-# the integration API, and the key is an org (or root) API key stored with
-# `harbor config-sys --stdin route_provider.tunnel.api_key`.
+# target on `site` pointing at harbor_address. `endpoint` must be https -- the
+# API key is a bearer token on every call. `org_id` and `site` are the names in
+# the Pangolin dashboard URL: .../<org_id>/settings/sites/<site>/general. Store
+# the key with `harbor config-sys --stdin route_provider.tunnel.api_key`.
 #
 # [route_provider.tunnel]
 # kind   = "pangolin"
@@ -63,7 +64,7 @@ port_base = 41000
 # [route_provider.tunnel.args]
 # endpoint       = "https://pangolin-host:3003"
 # org_id         = "my-org"
-# site_id        = "1"
+# site           = "substantial-atractaspis-branchi"
 # api_key_secret = "route_provider.tunnel.api_key"
 
 # Optional: tagged host paths that apps with kind = "host" volumes can bind to.

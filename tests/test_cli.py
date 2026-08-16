@@ -18,6 +18,7 @@ import yaml
 from harbor.lib import lifecycle
 from harbor.lib.apps import read_app_actions, read_last_app_action
 from harbor.lib.config import VOLUME_KINDS, load_config_file
+from harbor.lib.crypto import FernetCryptoEngine
 from harbor.lib.happ import scan_happs
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.logtab import LogTab
@@ -484,6 +485,65 @@ def test_system_config_is_encrypted_listed_and_unset(harbor_env):
   old_command = harbor_env.run("provider", "set-password")
   assert old_command.returncode == 2
   assert "invalid choice" in old_command.stderr
+
+
+def test_decrypt_round_trips_a_stored_secret(harbor_env):
+  secret = "correct horse battery staple"
+  key = "backup.api_key"
+  assert (
+    harbor_env.run("config-sys", "--stdin", key, input=f"{secret}\n").returncode == 0
+  )
+
+  blob = harbor_env.read_db()["system"]["secrets"][key]
+  assert secret not in blob
+
+  result = harbor_env.run("decrypt", input=f"{blob}\n")
+  assert result.returncode == 0, result.stderr
+  assert result.stdout.strip() == secret
+
+
+def test_decrypt_tolerates_surrounding_whitespace(harbor_env):
+  # A blob pasted out of the logtab or a shell pipeline arrives padded.
+  harbor_env.run("config-sys", "--set", "k=hunter2")
+  blob = harbor_env.read_db()["system"]["secrets"]["k"]
+
+  result = harbor_env.run("decrypt", input=f"   {blob}  \n")
+  assert result.returncode == 0, result.stderr
+  assert result.stdout.strip() == "hunter2"
+
+
+@pytest.mark.parametrize(
+  "blob",
+  [
+    "not-a-fernet-token",
+    # Well-formed Fernet minted under a different master key.
+    FernetCryptoEngine("some other key").encrypt("hunter2"),
+  ],
+)
+def test_decrypt_refuses_what_it_cannot_authenticate(harbor_env, blob):
+  result = harbor_env.run("decrypt", input=f"{blob}\n")
+
+  assert result.returncode == 1
+  assert "Could not decrypt" in result.stderr
+  # Nothing plausible-looking leaks onto stdout on failure.
+  assert result.stdout.strip() == ""
+
+
+def test_decrypt_refuses_empty_stdin(harbor_env):
+  result = harbor_env.run("decrypt", input="\n")
+  assert result.returncode == 1
+  assert "Nothing on stdin" in result.stderr
+
+
+def test_decrypt_refuses_when_there_is_no_master_key(harbor_env):
+  # Without a key the noop engine would echo the input back and call it success.
+  (harbor_env.root / "master.key").write_text("")
+  blob = FernetCryptoEngine("0" * 64).encrypt("hunter2")
+
+  result = harbor_env.run("decrypt", input=f"{blob}\n")
+  assert result.returncode == 1
+  assert "No master key" in result.stderr
+  assert "hunter2" not in result.stdout
 
 
 def test_host_bind_one_shot_via_start(harbor_env):

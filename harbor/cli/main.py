@@ -8,6 +8,7 @@ from harbor.cli import (
   cmd,
   config,
   config_sys,
+  decrypt,
   dev,
   doctor,
   fetch,
@@ -61,6 +62,7 @@ COMMANDS = [
   inspect,
   config,
   config_sys,
+  decrypt,
   routes,
 ]
 

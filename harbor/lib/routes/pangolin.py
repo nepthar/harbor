@@ -27,7 +27,7 @@ class PangolinRouteProvider(RouteProvider):
   """
 
   KIND = "pangolin"
-  REQUIRED_ARGS = ("endpoint", "org_id", "site_id", "api_key_secret")
+  REQUIRED_ARGS = ("endpoint", "org_id", "site", "api_key_secret")
 
   # Pangolin's integration API is versioned in the path, not the host.
   API_PREFIX = "/v1"
@@ -44,17 +44,6 @@ class PangolinRouteProvider(RouteProvider):
   ) -> "PangolinRouteProvider":
     args = cls._args(tag, conf)
     api_key = cls._secret(harbor_db, args.pop("api_key_secret"))
-
-    # toml args are strings; the API wants the numeric site id.
-    site_id = args.pop("site_id")
-    try:
-      args["site_id"] = int(site_id)
-    except ValueError:
-      raise RouteProviderError(
-        f"route_provider.{tag}.args.site_id: {site_id!r} is not a site id; "
-        f"use the numeric id Pangolin shows for the site"
-      ) from None
-
     return cls(
       api_key=api_key,
       harbor_domain=conf.domain,
@@ -67,7 +56,7 @@ class PangolinRouteProvider(RouteProvider):
     endpoint: str,
     api_key: str,
     org_id: str,
-    site_id: int,
+    site: str,
     harbor_domain: str,
     harbor_address: str,
     timeout: float = 30.0,
@@ -75,8 +64,10 @@ class PangolinRouteProvider(RouteProvider):
     self.endpoint = self._https_endpoint(endpoint)
     self._api_key = api_key
     self.org_id = org_id
-    # The Pangolin site (newt tunnel or local site) that can reach harbor.
-    self.site_id = site_id
+    # The niceId of the Pangolin site (newt tunnel or local site) that can
+    # reach harbor. Resolved to the numeric id targets need; see _site_id.
+    self.site = site
+    self._resolved_site_id: int | None = None
     self.harbor_domain = harbor_domain
     # LAN IP/hostname of the docker host Pangolin forwards traffic to. The
     # app's published port is reachable there.
@@ -135,6 +126,28 @@ class PangolinRouteProvider(RouteProvider):
 
     body = resp.json() if resp.content else {}
     return body.get("data") if isinstance(body, dict) else body
+
+  # ── sites ─────────────────────────────────────────────────────────────
+
+  def _site_id(self) -> int:
+    """The numeric siteId behind the configured niceId.
+
+    Targets are created against a numeric id that the dashboard never shows,
+    so config names the site the only way an operator can read it off Pangolin
+    -- the niceId in the site's URL, e.g.
+    ``.../sites/substantial-atractaspis-branchi/general``. Resolved once and
+    kept for the life of the provider.
+    """
+    if self._resolved_site_id is None:
+      data = self._request("GET", f"/org/{self.org_id}/site/{self.site}") or {}
+      site_id = data.get("siteId")
+      if site_id is None:
+        raise RouteProviderError(
+          f"Pangolin org {self.org_id!r} has no site {self.site!r}; use the name "
+          f"from the site's URL in the Pangolin dashboard"
+        )
+      self._resolved_site_id = int(site_id)
+    return self._resolved_site_id
 
   # ── domains ───────────────────────────────────────────────────────────
 
@@ -201,7 +214,7 @@ class PangolinRouteProvider(RouteProvider):
       "PUT",
       f"/public-resource/{rid}/target",
       json={
-        "siteId": self.site_id,
+        "siteId": self._site_id(),
         "ip": self.harbor_address,
         "port": port,
         "method": scheme,
@@ -230,9 +243,9 @@ class PangolinRouteProvider(RouteProvider):
       errors.append(f"Pangolin domain {self.harbor_domain} is not verified yet")
 
     try:
-      self._request("GET", f"/site/{self.site_id}")
+      self._request("GET", f"/site/{self._site_id()}")
     except RouteProviderError as e:
-      errors.append(f"Pangolin site {self.site_id} is not usable: {e}")
+      errors.append(f"Pangolin site {self.site!r} is not usable: {e}")
 
     return errors
 
