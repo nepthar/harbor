@@ -68,8 +68,16 @@ def _receipt(plan: DevPlan) -> str:
   for i, line in enumerate(route_lines(plan.stack, plan.run_data, plan.published)):
     rows.append(("Routes:" if i == 0 else "", line))
 
-  # The manifest was read at stage time, so compose.yml is the staged copy's.
-  rows.append(("Note:", f"manifest edits need `harbor stage {plan.app_id}`"))
+  # compose.yml came from the staged manifest, so an edited source manifest is
+  # not in this run. Silent when they match: there is nothing to act on.
+  if plan.manifest_stale:
+    rows.append(
+      (
+        "Note:",
+        f"manifest has changed, `harbor stage {plan.app_id}` may be required "
+        f"to reflect changes",
+      )
+    )
   if not plan.published:
     rows.append(("", "routes are not published; publish them with --routes"))
 

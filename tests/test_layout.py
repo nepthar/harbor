@@ -509,6 +509,23 @@ def test_dev_does_not_ask_when_the_manifest_still_matches(harbor_env):
   result = harbor_env.run("dev", BASIC)
   assert result.returncode == 0, result.stderr
   assert "Continue anyway" not in result.stdout
+  # Nothing to act on, so the receipt does not mention staging at all.
+  assert "Note:" not in result.stdout
+  assert f"harbor stage {BASIC}" not in result.stdout
+
+
+def test_dev_receipt_notes_staging_only_when_the_manifest_drifted(harbor_env):
+  source = _staged_for_dev(harbor_env)
+  manifest = source / "manifest.toml"
+  manifest.write_text(manifest.read_text() + "\n# edited after staging\n")
+
+  result = harbor_env.run("dev", BASIC, input="y\n")
+  assert result.returncode == 0, result.stderr
+  assert "Note:" in result.stdout
+  assert (
+    f"manifest has changed, `harbor stage {BASIC}` may be required to reflect "
+    f"changes" in result.stdout
+  )
 
 
 # --- rm ---------------------------------------------------------------------

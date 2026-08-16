@@ -2,6 +2,7 @@
 route-name -> subdomain mapping (reserved "main" = the bare app subdomain).
 """
 
+import json
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from typing import get_args
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from harbor.lib.apps import AppID
 from harbor.lib.config import (
@@ -687,13 +689,82 @@ def test_pangolin_config_constructs():
   assert provider.harbor_domain == "home.example"
 
 
+def _response(status: int, *, json_body=None, text: str = "", content_type: str = ""):
+  resp = requests.Response()
+  resp.status_code = status
+  resp.headers["Content-Type"] = content_type
+  resp._content = (json.dumps(json_body) if json_body is not None else text).encode()
+  return resp
+
+
+def test_pangolin_names_the_wrong_endpoint_on_an_html_error():
+  """The dashboard answers /v1 with its own HTML 404, which says nothing."""
+  provider = _pangolin_provider()
+  resp = _response(
+    404,
+    text="<!DOCTYPE html><html lang='en-US'><head><title>404</title></head></html>",
+    content_type="text/html; charset=utf-8",
+  )
+
+  message = provider._failure("GET", "/org/acme/domains", resp, "listOrgDomains")
+
+  assert "not serving the integration API" in message
+  assert "enable_integration_api" in message
+  # The markup itself is not echoed back at the operator.
+  assert "DOCTYPE" not in message
+
+
+def test_pangolin_surfaces_the_api_message_on_a_json_error():
+  provider = _pangolin_provider()
+  resp = _response(
+    404,
+    json_body={"message": "Organization not found", "success": False},
+    content_type="application/json",
+  )
+
+  message = provider._failure("GET", "/org/acme/domains", resp, "listOrgDomains")
+
+  assert "Organization not found" in message
+  assert "not serving the integration API" not in message
+
+
+def test_pangolin_reports_a_rejected_key_with_its_reason():
+  provider = _pangolin_provider()
+  resp = _response(
+    401, json_body={"message": "Unauthorized"}, content_type="application/json"
+  )
+
+  message = provider._failure("GET", "/org/acme/domains", resp, "listOrgDomains")
+
+  assert "rejected the API key (401: Unauthorized)" in message
+  assert "'acme'" in message
+
+
+def test_pangolin_403_names_the_permission_the_key_is_missing():
+  """Pangolin's 403 body never says which action it refused, so harbor must."""
+  provider = _pangolin_provider()
+  resp = _response(
+    403,
+    json_body={"message": "Key does not have permission perform this action"},
+    content_type="application/json",
+  )
+
+  message = provider._failure(
+    "PUT", "/org/acme/public-resource", resp, "createResource"
+  )
+
+  assert "'createResource' permission" in message
+  assert "PUT /org/acme/public-resource" in message
+  assert "'acme'" in message
+
+
 def test_pangolin_resolves_the_site_name_once():
   """Config names the site the only way the dashboard shows it: its URL name."""
   provider = _pangolin_provider(resolved=None)
   provider._request = Mock(return_value={"siteId": 7, "name": "harbor host"})
 
   assert provider._site_id() == 7
-  provider._request.assert_called_once_with("GET", f"/org/acme/site/{SITE}")
+  provider._request.assert_called_once_with("GET", f"/org/acme/site/{SITE}", "getSite")
 
   # Cached: a second route registration must not re-resolve it.
   assert provider._site_id() == 7
@@ -813,14 +884,14 @@ def test_pangolin_register_creates_resource_and_target():
   provider.register_route(app, 41000, "photos", "home.example")
 
   create, target = provider._request.call_args_list
-  assert create.args == ("PUT", "/org/acme/public-resource")
+  assert create.args == ("PUT", "/org/acme/public-resource", "createResource")
   assert create.kwargs["json"] == {
     "name": "harbor:io.test.photos",
     "subdomain": "photos",
     "domainId": "dom_1",
     "mode": "http",
   }
-  assert target.args == ("PUT", "/public-resource/12/target")
+  assert target.args == ("PUT", "/public-resource/12/target", "createTarget")
   assert target.kwargs["json"] == {
     "siteId": 3,
     "ip": "192.168.1.10",
@@ -848,8 +919,8 @@ def test_pangolin_register_reuses_resource_and_replaces_targets():
 
   # No resource is created; the stale target is dropped before the new one.
   delete, create = provider._request.call_args_list
-  assert delete.args == ("DELETE", "/target/99")
-  assert create.args == ("PUT", "/public-resource/12/target")
+  assert delete.args == ("DELETE", "/target/99", "deleteTarget")
+  assert create.args == ("PUT", "/public-resource/12/target", "createTarget")
   assert create.kwargs["json"]["port"] == 41001
 
 
@@ -891,7 +962,9 @@ def test_pangolin_unregister_deletes_resource():
 
   provider.unregister_route("photos", "home.example")
 
-  provider._request.assert_called_once_with("DELETE", "/public-resource/12")
+  provider._request.assert_called_once_with(
+    "DELETE", "/public-resource/12", "deleteResource"
+  )
 
 
 def test_pangolin_route_owners_maps_name_prefix():

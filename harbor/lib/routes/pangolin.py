@@ -94,11 +94,50 @@ class PangolinRouteProvider(RouteProvider):
 
   # ── low-level request helper ──────────────────────────────────────────
 
-  def _request(self, method: str, path: str, **kwargs):
+  def _failure(
+    self, method: str, path: str, resp: requests.Response, action: str
+  ) -> str:
+    """Explain a failed call, telling apart "API said no" from "not the API".
+
+    The integration API is off by default on self-hosted Pangolin and runs on
+    its own port, so `endpoint` very easily ends up pointing at the dashboard
+    instead. That answers every path with the dashboard's own HTML 404, and
+    echoing a page of markup back at the operator explains nothing.
+    """
+    try:
+      body = resp.json()
+    except ValueError:
+      kind = resp.headers.get("Content-Type", "an unknown content type")
+      return (
+        f"Pangolin {method} {path} returned {resp.status_code} as {kind} rather "
+        f"than JSON, so {self.endpoint} is not serving the integration API. "
+        f"Point args.endpoint at the integration API's own host/port -- it is "
+        f"separate from the dashboard, and needs enable_integration_api in "
+        f"Pangolin's config.yml"
+      )
+
+    message = (body or {}).get("message") or resp.reason
+    if resp.status_code == 403:
+      # Pangolin's own 403 does not name the action it refused, and the key's
+      # permissions are a checklist in the dashboard -- so name it here.
+      return (
+        f"Pangolin refused {method} {path} ({resp.status_code}: {message}). The "
+        f"API key needs the {action!r} permission; enable it on the key, and "
+        f"check the key is scoped to org {self.org_id!r}"
+      )
+    if resp.status_code == 401:
+      return (
+        f"Pangolin rejected the API key ({resp.status_code}: {message}); check "
+        f"that it is valid and scoped to org {self.org_id!r}"
+      )
+    return f"Pangolin {method} {path} returned {resp.status_code}: {message}"
+
+  def _request(self, method: str, path: str, action: str, **kwargs):
     """Call the integration API and unwrap Pangolin's response envelope.
 
     Every response is ``{data, success, error, message, status}``; callers only
-    ever want ``data``.
+    ever want ``data``. ``action`` is the Pangolin permission the endpoint is
+    guarded by, carried so a 403 can say which one the key is missing.
     """
     if not self._api_key:
       raise RouteProviderError("A Pangolin API key is required to authenticate")
@@ -113,16 +152,8 @@ class PangolinRouteProvider(RouteProvider):
     except requests.RequestException as e:
       raise RouteProviderError(f"Pangolin {method} {path} failed: {e}") from e
 
-    if resp.status_code in (401, 403):
-      raise RouteProviderError(
-        f"Pangolin rejected the API key ({resp.status_code}); check that it is "
-        f"valid and scoped to org {self.org_id!r}"
-      )
-
     if not resp.ok:
-      raise RouteProviderError(
-        f"Pangolin {method} {path} returned {resp.status_code}: {resp.text}"
-      )
+      raise RouteProviderError(self._failure(method, path, resp, action))
 
     body = resp.json() if resp.content else {}
     return body.get("data") if isinstance(body, dict) else body
@@ -139,7 +170,9 @@ class PangolinRouteProvider(RouteProvider):
     kept for the life of the provider.
     """
     if self._resolved_site_id is None:
-      data = self._request("GET", f"/org/{self.org_id}/site/{self.site}") or {}
+      data = (
+        self._request("GET", f"/org/{self.org_id}/site/{self.site}", "getSite") or {}
+      )
       site_id = data.get("siteId")
       if site_id is None:
         raise RouteProviderError(
@@ -153,7 +186,7 @@ class PangolinRouteProvider(RouteProvider):
 
   def _domain(self) -> dict | None:
     """Return the org domain entry whose base domain is the harbor domain."""
-    data = self._request("GET", f"/org/{self.org_id}/domains") or {}
+    data = self._request("GET", f"/org/{self.org_id}/domains", "listOrgDomains") or {}
     for domain in data.get("domains", []):
       if domain.get("baseDomain") == self.harbor_domain:
         return domain
@@ -174,7 +207,10 @@ class PangolinRouteProvider(RouteProvider):
     # pageSize defaults to 20; ask for the lot so paging never hides a route.
     data = (
       self._request(
-        "GET", f"/org/{self.org_id}/public-resources", params={"pageSize": 1000}
+        "GET",
+        f"/org/{self.org_id}/public-resources",
+        "listResources",
+        params={"pageSize": 1000},
       )
       or {}
     )
@@ -196,7 +232,7 @@ class PangolinRouteProvider(RouteProvider):
     if embedded is not None:
       return embedded
     rid = resource["resourceId"]
-    data = self._request("GET", f"/public-resource/{rid}/targets") or {}
+    data = self._request("GET", f"/public-resource/{rid}/targets", "listTargets") or {}
     return data.get("targets", [])
 
   def _set_target(self, resource: dict, port: int, scheme: str) -> None:
@@ -208,11 +244,12 @@ class PangolinRouteProvider(RouteProvider):
     """
     rid = resource["resourceId"]
     for target in self._targets(resource):
-      self._request("DELETE", f"/target/{target['targetId']}")
+      self._request("DELETE", f"/target/{target['targetId']}", "deleteTarget")
 
     self._request(
       "PUT",
       f"/public-resource/{rid}/target",
+      "createTarget",
       json={
         "siteId": self._site_id(),
         "ip": self.harbor_address,
@@ -243,7 +280,7 @@ class PangolinRouteProvider(RouteProvider):
       errors.append(f"Pangolin domain {self.harbor_domain} is not verified yet")
 
     try:
-      self._request("GET", f"/site/{self._site_id()}")
+      self._request("GET", f"/site/{self._site_id()}", "getSite")
     except RouteProviderError as e:
       errors.append(f"Pangolin site {self.site!r} is not usable: {e}")
 
@@ -286,6 +323,7 @@ class PangolinRouteProvider(RouteProvider):
       resource = self._request(
         "PUT",
         f"/org/{self.org_id}/public-resource",
+        "createResource",
         json={
           "name": f"{self.NAME_PREFIX}{app}",
           "subdomain": subdomain,
@@ -307,7 +345,9 @@ class PangolinRouteProvider(RouteProvider):
     existing = self._find_resource(domain_name)
     if existing:
       logger.info("deleting Pangolin resource for %s", domain_name)
-      self._request("DELETE", f"/public-resource/{existing['resourceId']}")
+      self._request(
+        "DELETE", f"/public-resource/{existing['resourceId']}", "deleteResource"
+      )
 
   def _harbor_resources(self) -> list[tuple[str, dict]]:
     """Yield (subdomain, resource) for single-label names under the harbor domain.
