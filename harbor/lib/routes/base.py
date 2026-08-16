@@ -1,0 +1,152 @@
+import logging
+
+from harbor.lib.apps import AppID
+from harbor.lib.config import Config, RouteProviderEntry
+from harbor.lib.store import HarborStore
+
+logger = logging.getLogger("harbor.routes")
+
+
+class RouteProviderError(Exception):
+  """Raised when a route provider cannot complete an operation."""
+
+
+def refuse_foreign_route(domain_name: str, owner: str | None) -> RouteProviderError:
+  owner_desc = f"happ {owner!r}" if owner else "a non-Harbor proxy host"
+  return RouteProviderError(
+    f"Refusing to replace {domain_name}; it is already owned by {owner_desc}"
+  )
+
+
+class RouteProvider:
+  # The config `kind` that selects this provider. `get_route_provider` builds
+  # its dispatch table from these, so a new provider only has to set one.
+  KIND: str = ""
+  # `args` keys that must be present and non-empty in the provider's block.
+  REQUIRED_ARGS: tuple[str, ...] = ()
+
+  @classmethod
+  def from_config(
+    cls,
+    tag: str,
+    conf: RouteProviderEntry,
+    config: Config,
+    harbor_db: HarborStore,
+  ) -> "RouteProvider":
+    """Build this provider from its ``[route_provider.<tag>]`` block.
+
+    Each provider reads whatever it needs -- its own ``args``, the harbor-wide
+    address, secrets out of harbordb -- and refuses here rather than leaving
+    the dispatcher to know one kind's requirements from another's.
+    """
+    raise NotImplementedError
+
+  @classmethod
+  def _args(cls, tag: str, conf: RouteProviderEntry) -> dict[str, str]:
+    """A copy of the block's args, refusing if any REQUIRED_ARGS are missing.
+
+    The copy is the caller's to mutate: `from_config` pops the args it has to
+    resolve (secrets, ints) and splats the rest into the constructor.
+    """
+    missing = [name for name in cls.REQUIRED_ARGS if not conf.args.get(name)]
+    if missing:
+      raise RouteProviderError(
+        f"route_provider.{tag}.args: missing {missing}; needs {cls.REQUIRED_ARGS}"
+      )
+    return dict(conf.args)
+
+  @staticmethod
+  def _secret(harbor_db: HarborStore, ref: str) -> str:
+    value = harbor_db.get_secret(ref)
+    if not value:
+      raise RouteProviderError(
+        f"Missing secret {ref!r}. Run: harbor config-sys --stdin {ref}"
+      )
+    return value
+
+  def register_route(
+    self,
+    app: AppID,
+    port: int,
+    subdomain: str,
+    domain: str,
+    scheme: str = "http",
+  ):
+    """Register a new route with this provider"""
+    raise NotImplementedError
+
+  def unregister_route(self, subdomain: str, domain: str):
+    """Unregister a route - no longer route to there"""
+    raise NotImplementedError
+
+  def list_routes(self) -> list[tuple[str, str]]:
+    """Fetch harbor-domain routes as (subdomain, destination) pairs."""
+    raise NotImplementedError
+
+  def route_owners(self) -> dict[str, str | None]:
+    """Map subdomain under the harbor domain -> owning harbor app id.
+
+    ``None`` means a proxy host exists for that subdomain but is not
+    Harbor-owned. Missing keys are free.
+    """
+    raise NotImplementedError
+
+  def validate(self) -> list[str]:
+    """Return an empty list if this is valid, or a list of errors"""
+    raise NotImplementedError
+
+
+class NoopRouteProvider(RouteProvider):
+  """A route provider that records intent but does not configure any proxy.
+
+  Used for the reserved ``none`` tag, and for any ``kind = "noop"`` provider
+  the operator defines (e.g. to mint URLs on a domain without a reverse proxy).
+  """
+
+  KIND = "noop"
+
+  @classmethod
+  def from_config(
+    cls,
+    tag: str,
+    conf: RouteProviderEntry,
+    config: Config,
+    harbor_db: HarborStore,
+  ) -> "NoopRouteProvider":
+    return cls(domain=conf.domain)
+
+  def __init__(self, domain: str = ""):
+    self.domain = domain
+    self.routes: dict[str, str] = {}
+    self.owners: dict[str, str] = {}
+
+  def register_route(
+    self,
+    app: AppID,
+    port: int,
+    subdomain: str,
+    domain: str,
+    scheme: str = "http",
+  ):
+    route = f"{subdomain}.{domain}"
+    owner = self.owners.get(subdomain)
+    if owner is not None and owner != app:
+      raise refuse_foreign_route(route, owner)
+    self.routes[subdomain] = f":{port}"
+    self.owners[subdomain] = app
+    logger.warning(f"Noop route provider - {app} Registere {route}")
+
+  def unregister_route(self, subdomain: str, domain: str):
+    route = f"{subdomain}.{domain}"
+    logger.debug(f"Noop route provider - Unregister {route}")
+    self.routes.pop(subdomain, None)
+    self.owners.pop(subdomain, None)
+
+  def list_routes(self) -> list[tuple[str, str]]:
+    return sorted(self.routes.items())
+
+  def route_owners(self) -> dict[str, str | None]:
+    return dict(self.owners)
+
+  def validate(self) -> list[str]:
+    return []

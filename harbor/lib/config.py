@@ -29,7 +29,7 @@ NONE_ROUTE_PROVIDER_TAG = "none"
 # Domain used for route URLs when a route is unassigned or assigned to none.
 PLACEHOLDER_DOMAIN = "harbor.localhost"
 
-RouteProviderKind = Literal["nginx_proxy_manager", "noop"]
+RouteProviderKind = Literal["nginx_proxy_manager", "pangolin", "noop"]
 
 
 logger = logging.getLogger("harbor.config")
@@ -103,6 +103,7 @@ class ConfigFile(BaseModel):
   port_base: int = 41000
   volume_root: str | None = None
   volume_roots: VolumeRootsEntry | None = None
+  harbor_address: str = ""
   default_route_provider: str = NONE_ROUTE_PROVIDER_TAG
   route_provider: dict[str, RouteProviderEntry] = Field(default_factory=dict)
   host_volume: dict[str, HostVolumeEntry] = Field(default_factory=dict)
@@ -139,6 +140,7 @@ class Config:
   master_key: str
   master_keyfile: Path
   port_base: int
+  harbor_address: str
   default_route_provider: str
   route_providers: dict[str, RouteProviderEntry]
   host_volumes: dict[str, HostVolume]
@@ -155,6 +157,7 @@ class Config:
     port_base: int,
     default_route_provider: str,
     route_providers: dict[str, RouteProviderEntry],
+    harbor_address: str = "",
     extra_app_sources: dict[str, Path] | None = None,
     host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
@@ -167,6 +170,7 @@ class Config:
     self.master_key = master_key
     self.master_keyfile = master_keyfile
     self.port_base = port_base
+    self.harbor_address = harbor_address
     self.default_route_provider = default_route_provider
     self.route_providers = route_providers
     self.host_volumes = host_volumes or {}
@@ -270,6 +274,7 @@ def load_config_file(config_file: str | Path) -> Config:
     master_key=master_key,
     master_keyfile=master_keyfile,
     port_base=parsed.port_base,
+    harbor_address=parsed.harbor_address,
     default_route_provider=parsed.default_route_provider,
     route_providers=route_providers,
     extra_app_sources=extra_app_sources,
@@ -303,6 +308,18 @@ def _validate_config(parsed: ConfigFile) -> list[str]:
       validate_identifier(tag)
     except ValueError as e:
       errors.append(f"route_provider tag {tag!r} is not a valid name: {e}")
+
+  # Every provider that actually proxies traffic has to be told where harbor
+  # is; only noop, which configures nothing, can do without it.
+  if not parsed.harbor_address:
+    proxying = sorted(
+      tag for tag, entry in parsed.route_provider.items() if entry.kind != "noop"
+    )
+    if proxying:
+      errors.append(
+        f"route_provider {proxying} need harbor_address to point at; "
+        f'set harbor_address = "<ip or hostname>" in config.toml'
+      )
 
   for tag in parsed.host_volume:
     try:

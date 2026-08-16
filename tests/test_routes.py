@@ -5,6 +5,7 @@ route-name -> subdomain mapping (reserved "main" = the bare app subdomain).
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import Mock, patch
 
 import pytest
@@ -15,12 +16,17 @@ from harbor.lib.config import (
   PLACEHOLDER_DOMAIN,
   Config,
   RouteProviderEntry,
+  RouteProviderKind,
+  load_config_file,
 )
 from harbor.lib.lifecycle.routes import assigned_routes, preflight_app_routes
 from harbor.lib.manifest import ConfigError, Manifest, _validate_routes
 from harbor.lib.routes import (
+  PROVIDERS,
   NginxProxyManagerRouteProvider,
   NoopRouteProvider,
+  PangolinRouteProvider,
+  RouteProvider,
   RouteProviderError,
   get_route_provider,
 )
@@ -415,13 +421,55 @@ class _RouteDB:
     return None, None
 
 
+# ── provider dispatch ──────────────────────────────────────────────────────
+def test_every_config_kind_has_a_provider():
+  """The config schema and the dispatch table have to name the same kinds.
+
+  Adding one to `RouteProviderKind` without registering a provider would parse
+  fine and then refuse at start time, which is the wrong place to find out.
+  """
+  assert set(get_args(RouteProviderKind)) == set(PROVIDERS)
+
+
+def test_provider_must_implement_from_config():
+  class Halfway(RouteProvider):
+    KIND = "halfway"
+
+  with pytest.raises(NotImplementedError):
+    Halfway.from_config(
+      "web",
+      RouteProviderEntry(kind="noop", domain="home.example"),
+      _pangolin_config(PANGOLIN_ARGS),
+      _RouteDB(),
+    )
+
+
+def test_required_args_are_checked_against_the_tagged_block():
+  class Demanding(RouteProvider):
+    KIND = "demanding"
+    REQUIRED_ARGS = ("endpoint", "token")
+
+  conf = RouteProviderEntry(
+    kind="noop", domain="home.example", args={"endpoint": "http://x", "token": ""}
+  )
+  # An empty value is as missing as an absent key, and the error names the block.
+  with pytest.raises(RouteProviderError, match=r"route_provider.web.args: missing"):
+    Demanding._args("web", conf)
+
+  conf.args["token"] = "t"
+  args = Demanding._args("web", conf)
+  assert args == {"endpoint": "http://x", "token": "t"}
+  # A copy, so from_config can pop resolved args without touching the config.
+  assert args is not conf.args
+
+
 def _npm_provider():
   return NginxProxyManagerRouteProvider(
     endpoint="http://npm.example",
     email="admin@example.com",
     password="test-password",
     harbor_domain="home.example",
-    forward_host="192.168.1.10",
+    harbor_address="192.168.1.10",
   )
 
 
@@ -435,6 +483,7 @@ def test_documented_route_provider_config_constructs():
     master_key="",
     master_keyfile=Path("/tmp/master.key"),
     port_base=41000,
+    harbor_address="192.168.1.10",
     default_route_provider="web",
     route_providers={
       NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
@@ -447,7 +496,6 @@ def test_documented_route_provider_config_constructs():
           "endpoint": "http://npm.example",
           "email": "admin@example.com",
           "password_secret": "npm.password",
-          "forward_host": "192.168.1.10",
         },
       ),
     },
@@ -457,7 +505,7 @@ def test_documented_route_provider_config_constructs():
 
   assert isinstance(provider, NginxProxyManagerRouteProvider)
   assert provider.email == "admin@example.com"
-  assert provider.forward_host == "192.168.1.10"
+  assert provider.harbor_address == "192.168.1.10"
   assert provider.harbor_domain == "home.example"
 
 
@@ -576,6 +624,293 @@ def test_npm_route_owners_maps_harbor_meta():
     ("photos", "10.0.0.5:41000"),
     ("manual", "10.0.0.5:80"),
   ]
+
+
+# ── pangolin ───────────────────────────────────────────────────────────────
+def _pangolin_provider():
+  return PangolinRouteProvider(
+    endpoint="https://pangolin.example:3003",
+    api_key="test-key",
+    org_id="acme",
+    site_id=3,
+    harbor_domain="home.example",
+    harbor_address="192.168.1.10",
+  )
+
+
+def _pangolin_config(args: dict[str, str]):
+  return Config(
+    harbor_root=Path("/tmp"),
+    volume_roots={},
+    apps_root=Path("/tmp/apps"),
+    run_root=Path("/tmp/run"),
+    snapshot_root=Path("/tmp/snapshots"),
+    master_key="",
+    master_keyfile=Path("/tmp/master.key"),
+    port_base=41000,
+    harbor_address="192.168.1.10",
+    default_route_provider="web",
+    route_providers={
+      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
+        kind="noop", domain=PLACEHOLDER_DOMAIN
+      ),
+      "web": RouteProviderEntry(kind="pangolin", domain="home.example", args=args),
+    },
+  )
+
+
+PANGOLIN_ARGS = {
+  "endpoint": "https://pangolin.example:3003",
+  "org_id": "acme",
+  "site_id": "3",
+  "api_key_secret": "pangolin.api_key",
+}
+
+
+def test_pangolin_config_constructs_with_numeric_site_id():
+  provider = get_route_provider(_RouteDB(), _pangolin_config(PANGOLIN_ARGS), "web")
+
+  assert isinstance(provider, PangolinRouteProvider)
+  assert provider.org_id == "acme"
+  # site_id arrives from toml as a string; the provider needs the int.
+  assert provider.site_id == 3
+  assert provider.harbor_address == "192.168.1.10"
+  assert provider.harbor_domain == "home.example"
+
+
+def test_config_requires_harbor_address_for_proxying_providers(tmp_path):
+  config = tmp_path / "config.toml"
+  config.write_text(
+    """
+volume_root = "volumes"
+default_route_provider = "web"
+
+[route_provider.web]
+kind = "pangolin"
+domain = "home.example"
+"""
+  )
+  with pytest.raises(ValueError, match="harbor_address"):
+    load_config_file(config)
+
+
+def test_config_allows_missing_harbor_address_when_only_noop(tmp_path):
+  config = tmp_path / "config.toml"
+  config.write_text(
+    """
+volume_root = "volumes"
+default_route_provider = "web"
+
+[route_provider.web]
+kind = "noop"
+domain = "home.example"
+"""
+  )
+  assert load_config_file(config).harbor_address == ""
+
+
+@pytest.mark.parametrize(
+  "endpoint",
+  [
+    "http://pangolin.example:3003",
+    "pangolin.example:3003",  # no scheme is not an implicit https
+    "ftp://pangolin.example",
+  ],
+)
+def test_pangolin_refuses_a_non_https_endpoint(endpoint):
+  with pytest.raises(RouteProviderError, match="is not https"):
+    PangolinRouteProvider(
+      endpoint=endpoint,
+      api_key="test-key",
+      org_id="acme",
+      site_id=3,
+      harbor_domain="home.example",
+      harbor_address="192.168.1.10",
+    )
+
+
+def test_pangolin_https_endpoint_keeps_case_and_drops_trailing_slash():
+  provider = PangolinRouteProvider(
+    endpoint="HTTPS://Pangolin.Example:3003/",
+    api_key="test-key",
+    org_id="acme",
+    site_id=3,
+    harbor_domain="home.example",
+    harbor_address="192.168.1.10",
+  )
+  assert provider.endpoint == "HTTPS://Pangolin.Example:3003"
+
+
+def test_pangolin_config_refuses_plaintext_endpoint():
+  # The refusal has to survive the config path, not just direct construction.
+  config = _pangolin_config({**PANGOLIN_ARGS, "endpoint": "http://pangolin.example"})
+  with pytest.raises(RouteProviderError, match="is not https"):
+    get_route_provider(_RouteDB(), config, "web")
+
+
+def test_pangolin_config_rejects_non_numeric_site_id():
+  config = _pangolin_config({**PANGOLIN_ARGS, "site_id": "newt"})
+  with pytest.raises(RouteProviderError, match="not a site id"):
+    get_route_provider(_RouteDB(), config, "web")
+
+
+def test_pangolin_config_reports_missing_args():
+  args = {k: v for k, v in PANGOLIN_ARGS.items() if k != "org_id"}
+  with pytest.raises(RouteProviderError, match="org_id"):
+    get_route_provider(_RouteDB(), _pangolin_config(args), "web")
+
+
+def test_pangolin_register_creates_resource_and_target():
+  provider = _pangolin_provider()
+  provider._find_resource = Mock(return_value=None)
+  provider._domain_id = Mock(return_value="dom_1")
+  provider._request = Mock(return_value={"resourceId": 12})
+  app = AppID("io.test.photos")
+
+  provider.register_route(app, 41000, "photos", "home.example")
+
+  create, target = provider._request.call_args_list
+  assert create.args == ("PUT", "/org/acme/public-resource")
+  assert create.kwargs["json"] == {
+    "name": "harbor:io.test.photos",
+    "subdomain": "photos",
+    "domainId": "dom_1",
+    "mode": "http",
+  }
+  assert target.args == ("PUT", "/public-resource/12/target")
+  assert target.kwargs["json"] == {
+    "siteId": 3,
+    "ip": "192.168.1.10",
+    "port": 41000,
+    "method": "http",
+    "mode": "http",
+    "enabled": True,
+  }
+
+
+def test_pangolin_register_reuses_resource_and_replaces_targets():
+  provider = _pangolin_provider()
+  app = AppID("io.test.photos")
+  provider._find_resource = Mock(
+    return_value={
+      "resourceId": 12,
+      "name": f"harbor:{app}",
+      "fullDomain": "photos.home.example",
+      "targets": [{"targetId": 99}],
+    }
+  )
+  provider._request = Mock()
+
+  provider.register_route(app, 41001, "photos", "home.example")
+
+  # No resource is created; the stale target is dropped before the new one.
+  delete, create = provider._request.call_args_list
+  assert delete.args == ("DELETE", "/target/99")
+  assert create.args == ("PUT", "/public-resource/12/target")
+  assert create.kwargs["json"]["port"] == 41001
+
+
+def test_pangolin_register_refuses_foreign_owner():
+  provider = _pangolin_provider()
+  provider._request = Mock()
+  provider._find_resource = Mock(
+    return_value={
+      "resourceId": 12,
+      "name": "my hand-made resource",
+      "fullDomain": "photos.home.example",
+    }
+  )
+
+  with pytest.raises(RouteProviderError, match="already owned"):
+    provider.register_route(AppID("io.test.photos"), 41000, "photos", "home.example")
+  provider._request.assert_not_called()
+
+
+def test_pangolin_register_forwards_https_scheme():
+  provider = _pangolin_provider()
+  provider._find_resource = Mock(return_value=None)
+  provider._domain_id = Mock(return_value="dom_1")
+  provider._request = Mock(return_value={"resourceId": 12})
+
+  provider.register_route(
+    AppID("io.test.photos"), 8443, "admin", "home.example", scheme="https"
+  )
+
+  target = provider._request.call_args_list[-1]
+  assert target.kwargs["json"]["method"] == "https"
+  assert target.kwargs["json"]["port"] == 8443
+
+
+def test_pangolin_unregister_deletes_resource():
+  provider = _pangolin_provider()
+  provider._request = Mock()
+  provider._find_resource = Mock(return_value={"resourceId": 12})
+
+  provider.unregister_route("photos", "home.example")
+
+  provider._request.assert_called_once_with("DELETE", "/public-resource/12")
+
+
+def test_pangolin_route_owners_maps_name_prefix():
+  provider = _pangolin_provider()
+  provider._resources = Mock(
+    return_value=[
+      {
+        "resourceId": 1,
+        "name": "harbor:io.test.photos",
+        "fullDomain": "photos.home.example",
+        "targets": [{"ip": "10.0.0.5", "port": 41000}],
+      },
+      {
+        "resourceId": 2,
+        "name": "manual",
+        "fullDomain": "manual.home.example",
+        "targets": [{"ip": "10.0.0.5", "port": 80}],
+      },
+      {
+        "resourceId": 3,
+        "name": "nested",
+        "fullDomain": "qbt.arr.home.example",
+        "targets": [],
+      },
+      {
+        "resourceId": 4,
+        "name": "harbor:ignored",
+        "fullDomain": "other.example.com",
+        "targets": [],
+      },
+      {"resourceId": 5, "name": "bare", "fullDomain": "home.example", "targets": []},
+      {"resourceId": 6, "name": "tcp", "fullDomain": None, "targets": []},
+    ]
+  )
+
+  assert provider.route_owners() == {
+    "photos": "io.test.photos",
+    "manual": None,
+  }
+  assert provider.list_routes() == [
+    ("photos", "10.0.0.5:41000"),
+    ("manual", "10.0.0.5:80"),
+  ]
+
+
+def test_pangolin_validate_reports_missing_domain_and_site():
+  provider = _pangolin_provider()
+  provider._domain = Mock(return_value=None)
+  provider._request = Mock(side_effect=RouteProviderError("404"))
+
+  errors = provider.validate()
+
+  assert any("has no domain 'home.example'" in e for e in errors)
+  assert any("site 3 is not usable" in e for e in errors)
+
+
+def test_pangolin_validate_passes_on_verified_domain():
+  provider = _pangolin_provider()
+  provider._domain = Mock(return_value={"domainId": "dom_1", "verified": True})
+  provider._request = Mock(return_value={"siteId": 3})
+
+  assert provider.validate() == []
 
 
 # ── preflight against the route provider ───────────────────────────────────

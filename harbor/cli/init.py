@@ -27,6 +27,11 @@ port_base = 41000
 # name     = "dev"
 # location = "~/code/happs"
 
+# The address by which harbor is reachable on your network, used for setting
+# up routes. Every route provider that proxies traffic points at it, so it is
+# required as soon as one is configured.
+# harbor_address = "10.0.0.5"
+
 # Routes are auto-assigned to this provider tag on first stage (like a config
 # default), unless marked private=true in the manifest. The reserved tag
 # "none" is a built-in noop and is the default when this key is omitted.
@@ -46,7 +51,20 @@ port_base = 41000
 # endpoint        = "http://npm-host:81"
 # email           = "admin@example.com"
 # password_secret = "route_provider.web.password"
-# forward_host    = "10.0.0.5"
+
+# Pangolin publishes each route as a public HTTP resource on `domain`, with a
+# target on `site_id` pointing at harbor_address. `endpoint` is the base URL of
+# the integration API, and the key is an org (or root) API key stored with
+# `harbor config-sys --stdin route_provider.tunnel.api_key`.
+#
+# [route_provider.tunnel]
+# kind   = "pangolin"
+# domain = "example.com"
+# [route_provider.tunnel.args]
+# endpoint       = "https://pangolin-host:3003"
+# org_id         = "my-org"
+# site_id        = "1"
+# api_key_secret = "route_provider.tunnel.api_key"
 
 # Optional: tagged host paths that apps with kind = "host" volumes can bind to.
 # Paths must exist before `harbor config|start --bind`. Assign with

@@ -5,54 +5,12 @@ from time import time
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, Config
+from harbor.lib.config import Config, RouteProviderEntry
 from harbor.lib.store import HarborStore
 
+from .base import RouteProvider, RouteProviderError, refuse_foreign_route
+
 logger = logging.getLogger("harbor.routes")
-
-
-class RouteProviderError(Exception):
-  """Raised when a route provider cannot complete an operation."""
-
-
-def refuse_foreign_route(domain_name: str, owner: str | None) -> RouteProviderError:
-  owner_desc = f"happ {owner!r}" if owner else "a non-Harbor proxy host"
-  return RouteProviderError(
-    f"Refusing to replace {domain_name}; it is already owned by {owner_desc}"
-  )
-
-
-class RouteProvider:
-  def register_route(
-    self,
-    app: AppID,
-    port: int,
-    subdomain: str,
-    domain: str,
-    scheme: str = "http",
-  ):
-    """Register a new route with this provider"""
-    raise NotImplementedError
-
-  def unregister_route(self, subdomain: str, domain: str):
-    """Unregister a route - no longer route to there"""
-    raise NotImplementedError
-
-  def list_routes(self) -> list[tuple[str, str]]:
-    """Fetch harbor-domain routes as (subdomain, destination) pairs."""
-    raise NotImplementedError
-
-  def route_owners(self) -> dict[str, str | None]:
-    """Map subdomain under the harbor domain -> owning harbor app id.
-
-    ``None`` means a proxy host exists for that subdomain but is not
-    Harbor-owned. Missing keys are free.
-    """
-    raise NotImplementedError
-
-  def validate(self) -> list[str]:
-    """Return an empty list if this is valid, or a list of errors"""
-    raise NotImplementedError
 
 
 class NginxProxyManagerRouteProvider(RouteProvider):
@@ -64,11 +22,35 @@ class NginxProxyManagerRouteProvider(RouteProvider):
   it is missing or expired.
   """
 
+  KIND = "nginx_proxy_manager"
+  REQUIRED_ARGS = ("endpoint", "email", "password_secret")
+
   # Refresh slightly ahead of the real expiry to avoid racing the clock.
   TOKEN_REFRESH_LEEWAY = 60  # seconds
   # State keys under SystemDB.
   _TOKEN_KEY = "npm_token"
   _TOKEN_EXPIRE_KEY = "npm_token_expire"
+
+  @classmethod
+  def from_config(
+    cls,
+    tag: str,
+    conf: RouteProviderEntry,
+    config: Config,
+    harbor_db: HarborStore,
+  ) -> "NginxProxyManagerRouteProvider":
+    args = cls._args(tag, conf)
+    password = cls._secret(harbor_db, args.pop("password_secret"))
+    token, token_expire = harbor_db.get_token(cls._TOKEN_KEY)
+    return cls(
+      password=password,
+      harbor_domain=conf.domain,
+      harbor_address=config.harbor_address,
+      harbor_db=harbor_db,
+      token=token,
+      token_expire=token_expire,
+      **args,
+    )
 
   def __init__(
     self,
@@ -76,7 +58,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     email: str,
     password: str,
     harbor_domain: str,
-    forward_host: str,
+    harbor_address: str,
     harbor_db: HarborStore | None = None,
     token: str | None = None,
     token_expire: float | None = None,
@@ -88,7 +70,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     self.harbor_domain = harbor_domain
     # LAN IP/hostname of the docker host that NPM forwards traffic to. The
     # app's published port is reachable there.
-    self.forward_host = forward_host
+    self.harbor_address = harbor_address
     self._harbor_db = harbor_db
     self._token = token
     self._token_expire = token_expire or 0.0
@@ -204,7 +186,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     domain: str,
     scheme: str = "http",
   ):
-    """Create (or update) a proxy host pointing domain -> forward_host:port.
+    """Create (or update) a proxy host pointing domain -> harbor_address:port.
 
     Idempotent: if a proxy host already serves this domain we update it in
     place so re-running ``start_app`` does not create duplicates.
@@ -220,7 +202,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     payload = {
       "domain_names": [domain_name],
       "forward_scheme": scheme,
-      "forward_host": self.forward_host,
+      "forward_host": self.harbor_address,
       "forward_port": port,
       "access_list_id": 0,
       "certificate_id": cert_id,
@@ -242,12 +224,18 @@ class NginxProxyManagerRouteProvider(RouteProvider):
       if owner != app:
         raise refuse_foreign_route(domain_name, owner)
       logger.info(
-        "updating NPM proxy host for %s -> %s:%d", domain_name, self.forward_host, port
+        "updating NPM proxy host for %s -> %s:%d",
+        domain_name,
+        self.harbor_address,
+        port,
       )
       self._request("PUT", f"/api/nginx/proxy-hosts/{existing['id']}", json=payload)
     else:
       logger.info(
-        "creating NPM proxy host for %s -> %s:%d", domain_name, self.forward_host, port
+        "creating NPM proxy host for %s -> %s:%d",
+        domain_name,
+        self.harbor_address,
+        port,
       )
       self._request("POST", "/api/nginx/proxy-hosts", json=payload)
 
@@ -288,107 +276,3 @@ class NginxProxyManagerRouteProvider(RouteProvider):
       subdomain: (host.get("meta") or {}).get("harbor_app")
       for subdomain, host in self._harbor_proxy_hosts()
     }
-
-
-class NoopRouteProvider(RouteProvider):
-  """A route provider that records intent but does not configure any proxy.
-
-  Used for the reserved ``none`` tag, and for any ``kind = "noop"`` provider
-  the operator defines (e.g. to mint URLs on a domain without a reverse proxy).
-  """
-
-  def __init__(self, domain: str = ""):
-    self.domain = domain
-    self.routes: dict[str, str] = {}
-    self.owners: dict[str, str] = {}
-
-  def register_route(
-    self,
-    app: AppID,
-    port: int,
-    subdomain: str,
-    domain: str,
-    scheme: str = "http",
-  ):
-    route = f"{subdomain}.{domain}"
-    owner = self.owners.get(subdomain)
-    if owner is not None and owner != app:
-      raise refuse_foreign_route(route, owner)
-    self.routes[subdomain] = f":{port}"
-    self.owners[subdomain] = app
-    logger.warning(f"Noop route provider - {app} has requested {route}")
-
-  def unregister_route(self, subdomain: str, domain: str):
-    route = f"{subdomain}.{domain}"
-    logger.debug(f"Noop route provider - Attempting to unregister {route}")
-    self.routes.pop(subdomain, None)
-    self.owners.pop(subdomain, None)
-
-  def list_routes(self) -> list[tuple[str, str]]:
-    return sorted(self.routes.items())
-
-  def route_owners(self) -> dict[str, str | None]:
-    return dict(self.owners)
-
-  def validate(self) -> list[str]:
-    return []
-
-
-class PangolinRouteProvider(RouteProvider):
-  ## Ignore for now
-  pass
-
-
-def get_route_provider(
-  harbor_db: HarborStore, config: Config, tag: str
-) -> RouteProvider:
-  """Build the route provider for ``tag``.
-
-  ``none`` (and any ``kind = "noop"``) yields a NoopRouteProvider. Unknown
-  tags refuse with a named fix.
-  """
-  if tag == NONE_ROUTE_PROVIDER_TAG:
-    return NoopRouteProvider(domain=config.provider_domain(tag))
-
-  conf = config.route_providers.get(tag)
-  if conf is None:
-    known = ", ".join(sorted(config.route_providers))
-    raise RouteProviderError(
-      f"No route provider tagged {tag!r}; known tags: {known}. "
-      f"Add [route_provider.{tag}] to config.toml or pick an existing tag"
-    )
-
-  if conf.kind == "noop":
-    return NoopRouteProvider(domain=conf.domain)
-
-  if conf.kind == "nginx_proxy_manager":
-    required = ("endpoint", "email", "password_secret", "forward_host")
-    missing = [name for name in required if not conf.args.get(name)]
-    if missing:
-      raise RouteProviderError(
-        f"route_provider.{tag}.args: missing {missing}; needs {required}"
-      )
-
-    args = dict(conf.args)
-    pw_ref = args.pop("password_secret")
-    password = harbor_db.get_secret(pw_ref)
-    if not password:
-      raise RouteProviderError(
-        f"Missing password secret {pw_ref!r}. Run: harbor config-sys --stdin {pw_ref}"
-      )
-
-    tok, exp = harbor_db.get_token(NginxProxyManagerRouteProvider._TOKEN_KEY)
-
-    return NginxProxyManagerRouteProvider(
-      password=password,
-      harbor_domain=conf.domain,
-      harbor_db=harbor_db,
-      token=tok,
-      token_expire=exp,
-      **args,
-    )
-
-  raise RouteProviderError(
-    f"route_provider.{tag}: unknown kind {conf.kind!r}; "
-    f'expected "nginx_proxy_manager" or "noop"'
-  )
