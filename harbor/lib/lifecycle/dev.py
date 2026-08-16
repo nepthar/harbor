@@ -10,8 +10,15 @@ from harbor.lib.docker import DockerError, docker_run_command
 from harbor.lib.happ import HAPP_SUFFIX
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle._common import logger
+from harbor.lib.lifecycle.routes import (
+  assigned_routes,
+  preflight_app_routes,
+  register_app_routes,
+  unregister_app_routes,
+)
 from harbor.lib.lifecycle.run import recovery_lines
 from harbor.lib.lifecycle.stage import link_host_volumes, unlink_host_volumes
+from harbor.lib.routes import RouteProviderError
 from harbor.lib.run_layout import AppRunData, load_run_data
 from harbor.lib.stack import AppStack
 
@@ -36,6 +43,9 @@ class DevPlan:
   # compose.yml about to run was generated from something else. Only the
   # caller can say whether that matters for the run it wants.
   manifest_stale: bool
+  # route name -> public URL, for the routes this run will publish. Empty
+  # unless `--routes` asked for it; a dev run is unpublished by default.
+  published: dict[str, str]
 
 
 def _dev_source(app: AppID, ctx: HarborCtx) -> Path:
@@ -61,7 +71,7 @@ def _dev_source(app: AppID, ctx: HarborCtx) -> Path:
   return origin.resolve()
 
 
-def dev_plan(app: AppID, ctx: HarborCtx) -> DevPlan:
+def dev_plan(app: AppID, ctx: HarborCtx, *, publish_routes: bool = False) -> DevPlan:
   """Work out what a dev run would mount, and refuse if it cannot run at all."""
   paths = ctx.staged_paths(app)
   if not paths.exists() or not paths.compose_path.is_file():
@@ -94,6 +104,14 @@ def dev_plan(app: AppID, ctx: HarborCtx) -> DevPlan:
   if run_data.start_blockers:
     raise ValueError("\n".join(recovery_lines(app, run_data.start_blockers)))
 
+  published: dict[str, str] = {}
+  if publish_routes:
+    published = {
+      name: run_data.route_urls[name]
+      for name, _, _ in assigned_routes(run_data, ctx)
+      if name in run_data.route_urls
+    }
+
   return DevPlan(
     app_id=app,
     run_path=paths.run_path,
@@ -104,6 +122,7 @@ def dev_plan(app: AppID, ctx: HarborCtx) -> DevPlan:
     manifest_stale=(
       (source / "manifest.toml").read_bytes() != paths.manifest_path.read_bytes()
     ),
+    published=published,
   )
 
 
@@ -138,6 +157,15 @@ def source_volume_links(plan: DevPlan) -> Iterator[None]:
       link.symlink_to(original)
 
 
+def _unpublish(app: AppID, ctx: HarborCtx) -> None:
+  """Best effort, like `stop`: a provider that will not answer must not keep
+  the containers up or the links borrowed."""
+  try:
+    unregister_app_routes(app, ctx)
+  except Exception as e:
+    logger.error("failed to unregister routes for %s: %s", app, e)
+
+
 def _compose_down(plan: DevPlan) -> None:
   """Best effort: the links go back whether or not teardown succeeds."""
   try:
@@ -160,15 +188,29 @@ def dev(plan: DevPlan, ctx: HarborCtx) -> int:
   up -- so the app runs against the same config, volumes and host ports a
   normal `harbor start` would give it.
 
-  Routes are not registered with their providers: a foreground run ends
-  whenever the terminal does, and provider state that outlives it is worse
-  than not having published a dev run at all.
+  Routes are published only when the plan says so, and only for as long as the
+  run lasts: a foreground run ends whenever its terminal does, and provider
+  state that outlives it is worse than never having published at all. Unlike
+  `start`, registration happens *before* the stack is up -- there is no "after"
+  in a blocking run -- so the proxy points at a port that answers a moment
+  later.
   """
   app = plan.app_id
+  if plan.published:
+    try:
+      preflight_app_routes(plan.run_data, ctx)
+    except RouteProviderError as e:
+      raise ValueError(str(e)) from e
+
   link_host_volumes(plan.stack, plan.run_data)
   try:
     with source_volume_links(plan):
       record_app_action("dev", app, ctx.config)
+      if plan.published:
+        try:
+          register_app_routes(plan.run_data, ctx)
+        except RouteProviderError as e:
+          raise ValueError(str(e)) from e
       try:
         result = docker_run_command(
           ["compose", "up"],
@@ -178,6 +220,8 @@ def dev(plan: DevPlan, ctx: HarborCtx) -> int:
           env=plan.run_data.config_env(),
         )
       finally:
+        if plan.published:
+          _unpublish(app, ctx)
         _compose_down(plan)
   finally:
     unlink_host_volumes(plan.run_path)

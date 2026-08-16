@@ -2,7 +2,7 @@ import argparse
 
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import DevPlan, dev, dev_plan
-from harbor.lib.receipt import host_port_lines
+from harbor.lib.receipt import LABEL_WIDTH, route_lines
 from harbor.lib.util import Conn
 
 
@@ -12,12 +12,17 @@ def register(subparsers) -> None:
     help="Run a staged app in this terminal with its happ mounted from source",
   )
   parser.add_argument("app", metavar="APP", help="App ID of a staged app")
+  parser.add_argument(
+    "--routes",
+    action="store_true",
+    help="Publish the app's routes to their providers for the duration of the run",
+  )
   parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
   app = ctx.resolve_app(args.app)
-  plan = dev_plan(app, ctx)
+  plan = dev_plan(app, ctx, publish_routes=args.routes)
 
   if plan.manifest_stale and not _confirmed(plan, conn):
     conn.out("Nothing started.")
@@ -59,14 +64,16 @@ def _receipt(plan: DevPlan) -> str:
   if not plan.mounts:
     rows.append(("", "(no app volumes: nothing is mounted from it)"))
 
-  for i, line in enumerate(host_port_lines(plan.stack, plan.run_data)):
-    rows.append(("Host:" if i == 0 else "", line))
+  # The same block `harbor start` prints; only what is published differs.
+  for i, line in enumerate(route_lines(plan.stack, plan.run_data, plan.published)):
+    rows.append(("Routes:" if i == 0 else "", line))
 
   # The manifest was read at stage time, so compose.yml is the staged copy's.
   rows.append(("Note:", f"manifest edits need `harbor stage {plan.app_id}`"))
-  rows.append(("", "routes are not published for a dev run"))
+  if not plan.published:
+    rows.append(("", "routes are not published; publish them with --routes"))
 
-  width = max(len(label) for label, _ in rows)
+  width = max(LABEL_WIDTH, max(len(label) for label, _ in rows))
   lines = [f"Dev {plan.app_id} (ctrl-c to stop)"]
   lines.extend(f"  {label:<{width}}  {value}" for label, value in rows)
   return "\n".join(lines)

@@ -449,6 +449,42 @@ def test_dev_with_no_app_volumes_is_just_an_interactive_run(harbor_env):
   assert ["compose", "up", "-d"] not in args
 
 
+def test_dev_lists_every_route_and_where_to_reach_it(harbor_env):
+  app_id = "ports-demo"
+  assert harbor_env.run("stage", app_id).returncode == 0
+
+  result = harbor_env.run("dev", app_id)
+  assert result.returncode == 0, result.stderr
+
+  assert "Routes:" in result.stdout
+  assert "Host:" not in result.stdout
+  # web is auto-allocated from port_base; admin is pinned at 9000:80.
+  assert "main:8080/tcp <- http://localhost:41000" in result.stdout
+  assert "main:80/tcp <- http://localhost:9000" in result.stdout
+  # Unpublished: the local port is the whole story, and the receipt says why.
+  assert "harbor.localhost" not in result.stdout
+  assert "publish them with --routes" in result.stdout
+
+
+def test_dev_routes_publishes_for_the_length_of_the_run(harbor_env):
+  app_id = "ports-demo"
+  assert harbor_env.run("stage", app_id).returncode == 0
+
+  result = harbor_env.run("dev", app_id, "--routes")
+  assert result.returncode == 0, result.stderr
+
+  # Neither route is named `main`, so both subdomains are prefixed.
+  assert (
+    "main:8080/tcp <- http://localhost:41000 <- https://web-ports.harbor.localhost"
+    in result.stdout
+  )
+  assert (
+    "main:80/tcp <- http://localhost:9000 <- https://admin-ports.harbor.localhost"
+    in result.stdout
+  )
+  assert "publish them with --routes" not in result.stdout
+
+
 def test_dev_reports_a_manifest_edited_since_staging(harbor_env):
   """compose.yml came from the staged copy; say so before running it."""
   source = _staged_for_dev(harbor_env)

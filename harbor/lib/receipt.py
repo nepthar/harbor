@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG
@@ -8,46 +9,67 @@ from harbor.lib.run_layout import AppRunData
 from harbor.lib.stack import AppStack
 from harbor.lib.util import PUBLIC_ROUTE_SCHEME
 
+# Every label in these receipts pads to at least this, so the capability block
+# and the location block under it line up in one `harbor start`.
+LABEL_WIDTH = len("Containers:")
 
-def published_urls(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -> list[str]:
-  """URLs for routes assigned to a non-none provider, in declaration order."""
+
+def published_route_urls(
+  stack: AppStack, run_data: AppRunData, ctx: HarborCtx
+) -> dict[str, str]:
+  """Route name -> public URL, for routes assigned to a non-none provider."""
   assignments = ctx.app_store(stack.app).list_route_assignments()
-  urls: list[str] = []
+  urls: dict[str, str] = {}
   for route_name, route in stack.routes.items():
     tag = assignments.get(route_name)
     if not tag or tag == NONE_ROUTE_PROVIDER_TAG:
       continue
     if route_name in run_data.route_urls:
-      urls.append(run_data.route_urls[route_name])
+      urls[route_name] = run_data.route_urls[route_name]
       continue
     if not stack.subdomain:
       continue
     domain = ctx.config.provider_domain(tag)
-    urls.append(f"{PUBLIC_ROUTE_SCHEME}://{route.subdomain(stack.subdomain)}.{domain}")
+    urls[route_name] = (
+      f"{PUBLIC_ROUTE_SCHEME}://{route.subdomain(stack.subdomain)}.{domain}"
+    )
   return urls
 
 
-def host_port_lines(stack: AppStack, run_data: AppRunData | None) -> list[str]:
-  """Host port mappings as ``:<host> → <unit>:<container>/<proto>``."""
+def published_urls(stack: AppStack, run_data: AppRunData, ctx: HarborCtx) -> list[str]:
+  """URLs for routes assigned to a non-none provider, in declaration order."""
+  return list(published_route_urls(stack, run_data, ctx).values())
+
+
+def route_lines(
+  stack: AppStack,
+  run_data: AppRunData | None,
+  published: Mapping[str, str],
+) -> list[str]:
+  """Every declared route, read right to left: where you reach it, then what
+  answers.
+
+  `published` supplies the public URL for the routes that have one; a route
+  missing from it simply stops at the host port. URLs are printed bare rather
+  than wrapped in terminal hyperlink escapes -- that is what makes them
+  clickable in a terminal *and* still useful piped into anything else.
+  """
   lines: list[str] = []
+  for name, route in stack.routes.items():
+    assigned = run_data.routes.get(name) if run_data else None
+    if assigned is not None and assigned.host_port > 0:
+      where = f"http://localhost:{assigned.host_port}"
+    elif stack.network_mode == "host":
+      # Host networking maps nothing, so the container port is the host port
+      # and harbor never allocated one.
+      where = f"http://localhost:{route.container_port}"
+    else:
+      where = "(no host port allocated)"
 
-  if run_data:
-    for assigned_route in run_data.routes.values():
-      host_port = (
-        "<auto>" if assigned_route.host_port < 1 else str(assigned_route.host_port)
-      )
-      unit = assigned_route.run_unit_name
-      container_port = assigned_route.container_port
-      proto = "" if assigned_route.proto == "all" else f"/{assigned_route.proto}"
-      lines.append(f":{host_port} → {unit}:{container_port}{proto}")
-  else:
-    for app_route in stack.routes.values():
-      host_port = "<auto>" if app_route.needs_allocation else str(app_route.host_port)
-      unit = app_route.run_unit_name
-      container_port = app_route.container_port
-      proto = "" if app_route.proto == "all" else f"/{app_route.proto}"
-      lines.append(f":{host_port} → {unit}:{container_port}{proto}")
-
+    line = f"{route.run_unit_name}:{route.container_port}/{route.proto} <- {where}"
+    if name in published:
+      line += f" <- {published[name]}"
+    lines.append(line)
   return lines
 
 
@@ -79,20 +101,14 @@ def location_receipt(
   *,
   heading: str | None = None,
 ) -> str:
-  """Post-up / status location block (Routes, Host, Data, Logs)."""
+  """Post-up / status location block (Routes, Data, Logs)."""
   app_id = stack.app
   title = heading if heading is not None else f"Running {app_id}"
   rows: list[tuple[str, str]] = []
 
-  pubs = published_urls(stack, run_data, ctx)
-  if pubs:
-    rows.append(("Routes:", ", ".join(pubs)))
-
-  hosts = host_port_lines(stack, run_data)
-  if hosts:
-    rows.append(("Host:", hosts[0]))
-    for extra in hosts[1:]:
-      rows.append(("", extra))
+  routes = route_lines(stack, run_data, published_route_urls(stack, run_data, ctx))
+  for i, line in enumerate(routes):
+    rows.append(("Routes:" if i == 0 else "", line))
 
   vols = volume_lines(stack, run_data, ctx)
   data_line = next((line for line in vols if line.startswith("data:")), None)
@@ -117,11 +133,11 @@ def capability_receipt(
   app_id = stack.app
   lines: list[str] = [f"{app_id}"]
 
-  images = [f"{name}: {unit.image}" for name, unit in stack.run_units.items()]
-  if images:
-    lines.append(f"  Images:  {images[0]}")
-    for extra in images[1:]:
-      lines.append(f"           {extra}")
+  containers = [f"{name}, image={unit.image}" for name, unit in stack.run_units.items()]
+  if containers:
+    lines.append(_labeled_line("Containers:", containers[0]))
+    for extra in containers[1:]:
+      lines.append(_labeled_line("", extra))
 
   if not compact:
     declared_ports: list[str] = []
@@ -135,24 +151,24 @@ def capability_receipt(
         private = ", private" if route and route.private else ""
         declared_ports.append(f"{unit_name}.{port_name}: {spec}{private}")
     if declared_ports:
-      lines.append(f"  Ports:   {declared_ports[0]}")
+      lines.append(_labeled_line("Ports:", declared_ports[0]))
       for extra in declared_ports[1:]:
-        lines.append(f"           {extra}")
+        lines.append(_labeled_line("", extra))
 
     if stack.subdomain and run_data is not None:
       pubs = published_urls(stack, run_data, ctx)
       if pubs:
-        lines.append(f"  Routes:  {pubs[0]}")
+        lines.append(_labeled_line("Routes:", pubs[0]))
         for extra in pubs[1:]:
-          lines.append(f"           {extra}")
+          lines.append(_labeled_line("", extra))
     elif stack.subdomain:
-      lines.append(f"  Routes:  subdomain={stack.subdomain}")
+      lines.append(_labeled_line("Routes:", f"subdomain={stack.subdomain}"))
 
     vols = volume_lines(stack, run_data, ctx)
     if vols:
-      lines.append(f"  Volumes: {vols[0]}")
+      lines.append(_labeled_line("Volumes:", vols[0]))
       for extra in vols[1:]:
-        lines.append(f"           {extra}")
+        lines.append(_labeled_line("", extra))
 
     required = [
       name
@@ -166,14 +182,12 @@ def capability_receipt(
         parts.append(f"required={','.join(required)}")
       if secrets:
         parts.append(f"secrets={','.join(secrets)}")
-      lines.append(f"  Config:  {' '.join(parts)}")
+      lines.append(_labeled_line("Config:", " ".join(parts)))
 
   dangers = danger_callouts(stack)
   for danger in dangers:
-    lines.append(f"  Danger:  {danger}")
+    lines.append(_labeled_line("Danger:", danger))
 
-  if compact and not dangers and len(images) == 1:
-    return f"  Image:   {images[0].split(': ', 1)[1]}"
   if compact:
     # Drop the title line when embedding under Running …
     return "\n".join(lines[1:] if lines[0] == app_id else lines)
@@ -207,15 +221,9 @@ def status_receipt(
     ("Source:", str(source)),
   ]
 
-  pubs = published_urls(stack, run_data, ctx)
-  if pubs:
-    rows.append(("Routes:", ", ".join(pubs)))
-
-  hosts = host_port_lines(stack, run_data)
-  if hosts:
-    rows.append(("Host:", hosts[0]))
-    for extra in hosts[1:]:
-      rows.append(("", extra))
+  routes = route_lines(stack, run_data, published_route_urls(stack, run_data, ctx))
+  for i, line in enumerate(routes):
+    rows.append(("Routes:" if i == 0 else "", line))
 
   if run_data.start_blockers:
     rows.append(("Config:", f"incomplete ({len(run_data.start_blockers)} issue(s))"))
@@ -234,23 +242,26 @@ def status_receipt(
   return _format_labeled(app_id, rows)
 
 
+def _labeled_line(label: str, value: str) -> str:
+  return f"  {label:<{LABEL_WIDTH}}  {value}"
+
+
 def _format_labeled(title: str, rows: list[tuple[str, str]]) -> str:
   width = max((len(label) for label, _ in rows if label), default=0)
+  width = max(width, LABEL_WIDTH)
   lines = [title]
   for label, value in rows:
-    if label:
-      lines.append(f"  {label:<{width}}  {value}")
-    else:
-      lines.append(f"  {'':<{width}}  {value}")
+    lines.append(f"  {label:<{width}}  {value}")
   return "\n".join(lines)
 
 
 __all__ = [
   "capability_receipt",
   "danger_callouts",
-  "host_port_lines",
   "location_receipt",
+  "published_route_urls",
   "published_urls",
+  "route_lines",
   "status_receipt",
   "volume_lines",
 ]

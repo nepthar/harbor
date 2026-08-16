@@ -60,7 +60,8 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
   started = harbor_env.run("start", "ports-demo")
   assert started.returncode == 0, started.stderr
   assert "Running ports-demo" in started.stdout
-  assert "Host:" in started.stdout
+  assert "Containers:  main, image=alpine:latest" in started.stdout
+  assert "main:8080/tcp <- http://localhost:41000" in started.stdout
   assert "harbor logs -f ports-demo" in started.stdout
 
   concise = harbor_env.run("ps")
@@ -120,13 +121,13 @@ def test_status_and_inspect(harbor_env):
   status = harbor_env.run("status", "ports-demo")
   assert status.returncode == 0, status.stderr
   assert "running" in status.stdout
-  assert "Host:" in status.stdout
+  # The same route block `start` prints, so both read alike.
+  assert "main:8080/tcp <- http://localhost:41000" in status.stdout
   assert "harbor logs -f ports-demo" in status.stdout
 
   inspected = harbor_env.run("inspect", "ports-demo")
   assert inspected.returncode == 0, inspected.stderr
-  assert "Images:" in inspected.stdout
-  assert "alpine:latest" in inspected.stdout
+  assert "Containers:  main, image=alpine:latest" in inspected.stdout
 
 
 def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
@@ -1056,7 +1057,7 @@ def test_readme_quickstart_from_repo_apps(harbor_env):
   started = harbor_env.run("start", str(happ))
   assert started.returncode == 0, started.stderr
   assert "Running demo-routes" in started.stdout
-  assert "Host:" in started.stdout
+  assert "Routes:" in started.stdout
 
   ps = harbor_env.run("ps")
   assert ps.returncode == 0, ps.stderr
