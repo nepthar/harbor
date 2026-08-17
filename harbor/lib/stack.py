@@ -24,6 +24,7 @@ class AppConfig:
   secret: bool
   default: str | None
   desc: str | None
+  hidden: bool = False
 
   def has_default(self) -> bool:
     return not self.secret and self.default is not None
@@ -35,7 +36,7 @@ class AppConfig:
     return f"{self.name} ({'secret' if self.secret else 'config'})"
 
   def __repr__(self) -> str:
-    return f"AppConfig(name={self.name}, secret={self.secret}, default={self.default})"
+    return f"AppConfig(name={self.name}, secret={self.secret}, default={self.default}, hidden={self.hidden})"
 
 
 @dataclass(frozen=True)
@@ -151,7 +152,7 @@ class AppStack:
 
 def _build(manifest: Manifest, app: AppID) -> AppStack:
   config = {
-    name: AppConfig(name, entry.secret, entry.default, entry.desc)
+    name: AppConfig(name, entry.secret, entry.default, entry.desc, entry.hidden)
     for name, entry in manifest.config.items()
   }
   # `app` volumes carry the happ's own files and are always read-only, so a

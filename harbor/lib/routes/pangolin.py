@@ -24,6 +24,11 @@ class PangolinRouteProvider(RouteProvider):
   site). Pangolin resources carry no free-form metadata, so ownership is
   recorded in the resource's display name as ``harbor:<app id>``; a resource
   whose name lacks that prefix reads as un-owned and is never replaced.
+
+  ``args.shared_policy``, if set, is the niceId of a Pangolin shared policy
+  (the slug in the policy's dashboard URL). Every route this instance
+  registers is attached to that policy. Two ``[route_provider.*]`` blocks
+  with different tags can point at different policies.
   """
 
   KIND = "pangolin"
@@ -59,6 +64,7 @@ class PangolinRouteProvider(RouteProvider):
     site: str,
     harbor_domain: str,
     harbor_address: str,
+    shared_policy: str | None = None,
     timeout: float = 30.0,
   ):
     self.endpoint = self._https_endpoint(endpoint)
@@ -72,6 +78,8 @@ class PangolinRouteProvider(RouteProvider):
     # LAN IP/hostname of the docker host Pangolin forwards traffic to. The
     # app's published port is reachable there.
     self.harbor_address = harbor_address
+    self.shared_policy = shared_policy or None
+    self._resolved_policy_id: int | None = None
     self._timeout = timeout
     self._session = requests.Session()
 
@@ -182,6 +190,53 @@ class PangolinRouteProvider(RouteProvider):
       self._resolved_site_id = int(site_id)
     return self._resolved_site_id
 
+  # ── shared policies ───────────────────────────────────────────────────
+
+  def _policy_id(self) -> int | None:
+    """The numeric resourcePolicyId behind the configured niceId.
+
+    Sites have a get-by-niceId on the integration API; shared policies do
+    not, so we list and match. Create-resource also has no resourcePolicyId
+    field -- the attach is a later update; see _apply_shared_policy.
+    """
+    if not self.shared_policy:
+      return None
+    if self._resolved_policy_id is None:
+      data = (
+        self._request(
+          "GET",
+          f"/org/{self.org_id}/public-resource-policies",
+          "listResourcePolicies",
+          params={"pageSize": 1000},
+        )
+        or {}
+      )
+      for policy in data.get("policies", []):
+        if policy.get("niceId") == self.shared_policy:
+          self._resolved_policy_id = int(policy["resourcePolicyId"])
+          break
+      else:
+        raise RouteProviderError(
+          f"Pangolin org {self.org_id!r} has no shared policy "
+          f"{self.shared_policy!r}; use the name from the policy's URL in "
+          f"the Pangolin dashboard"
+        )
+    return self._resolved_policy_id
+
+  def _apply_shared_policy(self, resource: dict) -> None:
+    policy_id = self._policy_id()
+    if policy_id is None:
+      return
+    if resource.get("resourcePolicyId") == policy_id:
+      return
+    rid = resource["resourceId"]
+    self._request(
+      "POST",
+      f"/public-resource/{rid}",
+      "updateResource",
+      json={"resourcePolicyId": policy_id},
+    )
+
   # ── domains ───────────────────────────────────────────────────────────
 
   def _domain(self) -> dict | None:
@@ -284,6 +339,12 @@ class PangolinRouteProvider(RouteProvider):
     except RouteProviderError as e:
       errors.append(f"Pangolin site {self.site!r} is not usable: {e}")
 
+    if self.shared_policy:
+      try:
+        self._policy_id()
+      except RouteProviderError as e:
+        errors.append(str(e))
+
     return errors
 
   def register_route(
@@ -299,6 +360,8 @@ class PangolinRouteProvider(RouteProvider):
     Idempotent: if a resource already serves this domain we reuse it and just
     re-point its target, so re-running ``start_app`` does not create duplicates.
     """
+    # Resolve first so a missing policy refuses before we create a resource.
+    self._policy_id()
     domain_name = self._domain_name(subdomain, domain)
     existing = self._find_resource(domain_name)
 
@@ -339,6 +402,7 @@ class PangolinRouteProvider(RouteProvider):
       resource = {**resource, "targets": []}
 
     self._set_target(resource, port, scheme)
+    self._apply_shared_policy(resource)
 
   def unregister_route(self, subdomain: str, domain: str):
     domain_name = self._domain_name(subdomain, domain)

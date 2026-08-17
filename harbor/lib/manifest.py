@@ -62,6 +62,9 @@ class ConfigEntry(BaseModel):
   """A per-installation config value declared in [config].
   If a value is secret, it will be encrypted at rest.
   Every field is optional, so an entry may be declared with no options: `my_var = {}`.
+
+  Setting hidden=true is a hint to the user interface that this config value
+  is would be "noise" if listed in a list of configuration parameters.
   """
 
   model_config = ConfigDict(extra="forbid")
@@ -69,6 +72,7 @@ class ConfigEntry(BaseModel):
   desc: str = ""
   default: str | None = None
   secret: bool = False
+  hidden: bool = False
 
 
 @dataclass(frozen=True)

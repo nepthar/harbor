@@ -632,7 +632,12 @@ def test_npm_route_owners_maps_harbor_meta():
 SITE = "substantial-atractaspis-branchi"
 
 
-def _pangolin_provider(site: str = SITE, resolved: int | None = 3):
+POLICY = "closed-spea-hammondii"
+
+
+def _pangolin_provider(
+  site: str = SITE, resolved: int | None = 3, shared_policy: str | None = None
+):
   """A provider whose site slug is already resolved, unless `resolved` is None.
 
   Most tests are not about the site lookup, and leaving it unresolved would
@@ -645,6 +650,7 @@ def _pangolin_provider(site: str = SITE, resolved: int | None = 3):
     site=site,
     harbor_domain="home.example",
     harbor_address="192.168.1.10",
+    shared_policy=shared_policy,
   )
   provider._resolved_site_id = resolved
   return provider
@@ -687,6 +693,39 @@ def test_pangolin_config_constructs():
   assert provider.site == SITE
   assert provider.harbor_address == "192.168.1.10"
   assert provider.harbor_domain == "home.example"
+  assert provider.shared_policy is None
+
+
+def test_pangolin_config_passes_shared_policy():
+  args = {**PANGOLIN_ARGS, "shared_policy": POLICY}
+  provider = get_route_provider(_RouteDB(), _pangolin_config(args), "web")
+  assert provider.shared_policy == POLICY
+
+
+def test_pangolin_empty_shared_policy_is_unset():
+  provider = _pangolin_provider(shared_policy="")
+  assert provider.shared_policy is None
+
+
+def test_pangolin_config_tags_can_carry_different_shared_policies():
+  config = _pangolin_config(PANGOLIN_ARGS)
+  config.route_providers["closed"] = RouteProviderEntry(
+    kind="pangolin",
+    domain="home.example",
+    args={**PANGOLIN_ARGS, "shared_policy": POLICY},
+  )
+  config.route_providers["open"] = RouteProviderEntry(
+    kind="pangolin",
+    domain="open.example",
+    args={**PANGOLIN_ARGS, "shared_policy": "open-policy-slug"},
+  )
+  db = _RouteDB()
+
+  closed = get_route_provider(db, config, "closed")
+  opened = get_route_provider(db, config, "open")
+
+  assert closed.shared_policy == POLICY
+  assert opened.shared_policy == "open-policy-slug"
 
 
 def _response(status: int, *, json_body=None, text: str = "", content_type: str = ""):
@@ -1027,6 +1066,113 @@ def test_pangolin_validate_passes_on_verified_domain():
   provider._request = Mock(return_value={"siteId": 3})
 
   assert provider.validate() == []
+
+
+def _policies(*nice_ids: str):
+  return {
+    "policies": [
+      {"niceId": name, "resourcePolicyId": 40 + i} for i, name in enumerate(nice_ids)
+    ]
+  }
+
+
+def test_pangolin_register_attaches_shared_policy_on_create():
+  provider = _pangolin_provider(shared_policy=POLICY)
+  provider._find_resource = Mock(return_value=None)
+  provider._domain_id = Mock(return_value="dom_1")
+
+  def _request(method, path, action, **kwargs):
+    if action == "listResourcePolicies":
+      return _policies(POLICY)
+    return {"resourceId": 12}
+
+  provider._request = Mock(side_effect=_request)
+
+  provider.register_route(AppID("io.test.photos"), 41000, "photos", "home.example")
+
+  attach = next(
+    c for c in provider._request.call_args_list if c.args[2] == "updateResource"
+  )
+  assert attach.args == ("POST", "/public-resource/12", "updateResource")
+  assert attach.kwargs["json"] == {"resourcePolicyId": 40}
+
+
+def test_pangolin_register_attaches_shared_policy_on_reuse():
+  provider = _pangolin_provider(shared_policy=POLICY)
+  app = AppID("io.test.photos")
+  provider._find_resource = Mock(
+    return_value={
+      "resourceId": 12,
+      "name": f"harbor:{app}",
+      "fullDomain": "photos.home.example",
+      "targets": [{"targetId": 99}],
+    }
+  )
+
+  def _request(method, path, action, **kwargs):
+    if action == "listResourcePolicies":
+      return _policies(POLICY)
+
+  provider._request = Mock(side_effect=_request)
+
+  provider.register_route(app, 41001, "photos", "home.example")
+
+  attach = next(
+    c for c in provider._request.call_args_list if c.args[2] == "updateResource"
+  )
+  assert attach.kwargs["json"] == {"resourcePolicyId": 40}
+
+
+def test_pangolin_register_skips_attach_when_already_applied():
+  provider = _pangolin_provider(shared_policy=POLICY)
+  app = AppID("io.test.photos")
+  provider._find_resource = Mock(
+    return_value={
+      "resourceId": 12,
+      "name": f"harbor:{app}",
+      "fullDomain": "photos.home.example",
+      "resourcePolicyId": 40,
+      "targets": [{"targetId": 99}],
+    }
+  )
+
+  def _request(method, path, action, **kwargs):
+    if action == "listResourcePolicies":
+      return _policies(POLICY)
+
+  provider._request = Mock(side_effect=_request)
+
+  provider.register_route(app, 41001, "photos", "home.example")
+
+  assert all(c.args[2] != "updateResource" for c in provider._request.call_args_list)
+
+
+def test_pangolin_register_refuses_unknown_shared_policy():
+  provider = _pangolin_provider(shared_policy=POLICY)
+  provider._find_resource = Mock()
+  provider._request = Mock(return_value={"policies": []})
+
+  with pytest.raises(
+    RouteProviderError, match="has no shared policy 'closed-spea-hammondii'"
+  ):
+    provider.register_route(AppID("io.test.photos"), 41000, "photos", "home.example")
+  provider._find_resource.assert_not_called()
+
+
+def test_pangolin_validate_reports_missing_shared_policy():
+  provider = _pangolin_provider(shared_policy=POLICY)
+  provider._domain = Mock(return_value={"domainId": "dom_1", "verified": True})
+
+  def _request(method, path, action, **kwargs):
+    if action == "listResourcePolicies":
+      return {"policies": []}
+    return {"siteId": 3}
+
+  provider._request = Mock(side_effect=_request)
+
+  errors = provider.validate()
+
+  assert any("has no shared policy 'closed-spea-hammondii'" in e for e in errors)
 
 
 # ── preflight against the route provider ───────────────────────────────────
