@@ -154,7 +154,7 @@ def test_inspect_shows_live_state_for_an_installed_app(harbor_env):
   assert "main:8080/tcp <- http://localhost:41000" in inspected.stdout
   assert "harbor logs -f ports-demo" in inspected.stdout
   assert "Last action:" in inspected.stdout
-  assert "Config:" not in inspected.stdout
+  assert "subdomain: ports" in inspected.stdout
   assert "Note:" not in inspected.stdout
 
 
@@ -520,6 +520,39 @@ def test_config_set_while_running_warns(harbor_env):
   assert "is running" in result.stderr
   assert f"harbor stop {BASIC}" in result.stderr
   assert f"harbor start {BASIC}" in result.stderr
+
+
+def test_config_set_subdomain_overrides_the_manifest(harbor_env):
+  app_id = "ports-demo"
+  assert harbor_env.run("start", app_id).returncode == 0
+  assert harbor_env.read_db()["routes"][app_id]["web"]["subdomain"] == "web-ports"
+
+  running = harbor_env.run("config", app_id, "--set", "subdomain=lab")
+  assert running.returncode == 1
+  assert f"harbor stop {app_id}" in running.stderr
+  assert harbor_env.read_db()["routes"][app_id]["web"]["subdomain"] == "web-ports"
+
+  assert harbor_env.run("stop", app_id).returncode == 0
+  set_result = harbor_env.run("config", app_id, "--set", "subdomain=lab")
+  assert set_result.returncode == 0, set_result.stderr
+
+  got = harbor_env.run("config", app_id, "--get", "subdomain")
+  assert got.stdout.strip() == "lab"
+  assert harbor_env.read_db()["routes"][app_id]["web"]["subdomain"] == "web-lab"
+  assert harbor_env.read_db()["routes"][app_id]["admin"]["subdomain"] == "admin-lab"
+
+  listed = harbor_env.run("config", app_id)
+  assert listed.returncode == 0, listed.stderr
+  assert "subdomain" in listed.stdout
+  assert "lab" in listed.stdout
+
+
+def test_config_set_subdomain_rejects_a_dotted_name(harbor_env):
+  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  result = harbor_env.run("config", "ports-demo", "--set", "subdomain=foo.bar")
+  assert result.returncode == 1
+  assert "foo.bar" in result.stderr
+  assert "identifier" in result.stderr
 
 
 def test_system_config_is_encrypted_listed_and_unset(harbor_env):

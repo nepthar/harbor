@@ -386,13 +386,28 @@ def _route_urls(
   return urls
 
 
+def resolved_subdomain(stack: AppStack, ctx: HarborCtx) -> str | None:
+  """The DNS label this install uses: stored config, else the happ default."""
+  cfg = stack.config.get("subdomain")
+  if cfg is not None:
+    _, value = ctx.app_store(stack.app).get_config("subdomain")
+    if value:
+      return value
+    if cfg.has_default():
+      return cfg.default
+  return stack.subdomain
+
+
 def _app_domain(
-  stack: AppStack, assignments: Mapping[str, str], config: Config
+  stack: AppStack,
+  assignments: Mapping[str, str],
+  config: Config,
+  subdomain: str | None,
 ) -> str | None:
-  if stack.subdomain is None:
+  if subdomain is None:
     return None
   tag = assignments.get(PRIMARY_ROUTE_NAME) or ""
-  return f"{stack.subdomain}.{config.provider_domain(tag)}"
+  return f"{subdomain}.{config.provider_domain(tag)}"
 
 
 def _env_substitutions(
@@ -496,7 +511,9 @@ def load_run_data(stack: AppStack, ctx: HarborCtx) -> AppRunData:
   return AppRunData(
     app=stack.app,
     run_path=run_path,
-    app_domain=_app_domain(stack, assignments, ctx.config),
+    app_domain=_app_domain(
+      stack, assignments, ctx.config, resolved_subdomain(stack, ctx)
+    ),
     volume_links=vol_links,
     config_values=config_values,
     routes=routes,

@@ -17,9 +17,11 @@ from harbor.lib.run_layout import (
   AssignedRoute,
   load_run_data,
   make_compose_dict,
+  resolved_subdomain,
 )
 from harbor.lib.secrets import SecretGenerationError, generate_secret
 from harbor.lib.stack import AppStack
+from harbor.lib.util import validate_identifier
 
 # Scratch names used while swapping in a new happ copy. Both are inside the run
 # dir so the swap is a rename on one filesystem rather than a second copy.
@@ -93,9 +95,9 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
   if stack.network_mode == "host" or not stack.routes:
     return
 
-  if not stack.subdomain:
+  app_subdomain = resolved_subdomain(stack, ctx)
+  if not app_subdomain:
     raise ValueError(f"App {stack.app} declares routes but has no [app].subdomain")
-  app_subdomain = stack.subdomain
 
   hdb = ctx.harbor_db()
   hdb.clear_routes(stack.app)
@@ -282,13 +284,55 @@ def apply_config_sets(
   stack: AppStack, sets: list[tuple[str, str]], ctx: HarborCtx
 ) -> None:
   store = ctx.app_store(stack.app)
+  running = False
+  try:
+    running = ctx.run_state(stack.app).running_count > 0
+  except ValueError:
+    pass
+
   for name, value in sets:
     config = stack.config.get(name)
     if not config:
       raise ValueError(f"No config {name} in {stack.app}'s manifest")
     if not value:
       raise ValueError(f"Empty value for config {name!r}")
+    if name == "subdomain":
+      try:
+        validate_identifier(value)
+      except ValueError:
+        raise ValueError(
+          f"subdomain {value!r} is not a valid identifier "
+          f"(letters, digits, _ and -; no periods)"
+        ) from None
+      if running:
+        raise ValueError(
+          f"App {stack.app} is running; run `harbor stop {stack.app}` first"
+        )
     store.set_config(name, config.secret, value)
+    if name == "subdomain":
+      _relabel_routes(stack, value, ctx)
+
+
+def _relabel_routes(stack: AppStack, app_subdomain: str, ctx: HarborCtx) -> None:
+  """Rewrite allocated route labels to match a new app subdomain.
+
+  Ports stay as they are; only the DNS label changes. Compose is rewritten
+  so `${routes.*}` URLs match before the next start.
+  """
+  hdb = ctx.harbor_db()
+  for name, entry in hdb.list_routes(stack.app).items():
+    route = stack.routes.get(name)
+    if route is None:
+      continue
+    updated = dict(entry)
+    updated["subdomain"] = route.subdomain(app_subdomain)
+    hdb.set_route(stack.app, name, updated)
+
+  compose_path = ctx.staged_paths(stack.app).compose_path
+  if compose_path.is_file():
+    run_data = load_run_data(stack, ctx)
+    with open(compose_path, "w") as f:
+      yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
 
 
 def bind(stack: AppStack, volname: str, host_volume_tag: str, ctx: HarborCtx) -> None:
