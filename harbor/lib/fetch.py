@@ -1,10 +1,15 @@
-"""Install a happ by copying it out of a GitHub repository.
+"""Install or update a happ by copying it out of a GitHub repository.
 
 `harbor fetch github:<user>/<repo>/<ref>/<path>/<name>.happ` downloads a happ
 folder and installs it as `apps/<app_id>.happ`. A `<name>.happ.md` target does
 the same for a single-file markdown happ. There is no archive, no packaging
 step, and nothing for a publisher to build: committing the `.happ` directory
 (or the `.happ.md` file) *is* publishing it.
+
+`harbor fetch <app_id>` re-resolves that happ's recorded source and replaces
+the catalog copy when the commit has moved. Append `@<sha>` to pin, on either
+form. A first-time github: fetch asks before installing; an update just
+applies, like `uv`.
 
 Two API calls do the work. The ref is resolved to a commit sha, then one
 recursive tree listing enumerates the folder at that sha. Every file is then
@@ -18,8 +23,8 @@ The listing carries each entry's mode and size, so hostile or oversized trees
 are rejected before a single byte is downloaded.
 
 Harbor makes no claim about *who* wrote a happ. What protects the operator is
-that a manifest is short and readable: the caller shows its capability receipt
-and asks before installing.
+that a first-time install shows its capability receipt and asks before
+committing the files.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -68,7 +73,8 @@ USAGE = (
   f"{GITHUB_PREFIX}<user>/<repo>/<ref>/<path>/<name>{HAPP_SUFFIX} "
   f"(or <name>{HAPP_MD_SUFFIX})\n"
   f"  e.g. {GITHUB_PREFIX}nepthar/harbor/main/examples/hello-world{HAPP_SUFFIX}\n"
-  f"  <ref> is a branch, tag, or full commit sha."
+  f"  <ref> is a branch, tag, or full commit sha. Append @<sha> to pin.\n"
+  f"  An installed app id updates from its recorded source; app_id@<sha> pins."
 )
 
 
@@ -103,6 +109,10 @@ class GithubTarget:
 
   def describe(self, sha: str) -> str:
     return f"{self.user}/{self.repo}@{sha[:8]} {self.repo_path}"
+
+  def at_sha(self, sha: str) -> GithubTarget:
+    """A copy that downloads this happ at `sha` instead of `ref`."""
+    return replace(self, ref=sha)
 
 
 @dataclass(frozen=True)
@@ -187,6 +197,50 @@ def _check_segment(segment: str, context: str) -> None:
     raise ValueError(f"Malformed path segment {segment!r} in {context}")
   if any(c < " " or c == "\x7f" for c in segment):
     raise ValueError(f"Unprintable character in path segment of {context}")
+
+
+def split_pin(raw: str) -> tuple[str, str | None]:
+  """Split a trailing `@<40-hex-sha>` pin from a fetch spec or app id.
+
+  Anything after `@` that is not a full sha is left in place so a later
+  classifier can reject it; a github target never uses `@`.
+  """
+  head, sep, tail = raw.rpartition("@")
+  if not sep or not _SHA_RE.fullmatch(tail):
+    return raw, None
+  if not head:
+    raise ValueError("a pin @<sha> must follow a github: target or an app id")
+  return head, tail
+
+
+def recorded_source(spec: str, pin: str | None) -> str:
+  """The `source` string stored for a fetch: spec, plus `@sha` when pinned.
+
+  A github ref that is itself a full sha is also a pin, and is stored with
+  the same suffix so `source_is_pinned` is one check.
+  """
+  if pin:
+    return f"{spec}@{pin}"
+  target = parse_target(spec)
+  if _SHA_RE.fullmatch(target.ref):
+    return f"{spec}@{target.ref}"
+  return spec
+
+
+def source_is_pinned(source: str) -> bool:
+  """Whether `source` is frozen at a sha rather than following a moving ref."""
+  return split_pin(source)[1] is not None
+
+
+def format_current(version: str, sha: str) -> str:
+  return f"{version}@{sha}"
+
+
+def parse_current(current: str) -> tuple[str, str]:
+  version, sep, sha = current.rpartition("@")
+  if not sep or not _SHA_RE.fullmatch(sha):
+    raise ValueError(f"Malformed app source current {current!r}")
+  return version, sha
 
 
 # --- transport -------------------------------------------------------------
@@ -373,7 +427,8 @@ def ensure_destination_for(
     if existing.exists():
       raise ValueError(
         f"{app_id} is already installed at {existing}.\n"
-        f"Remove it first if you mean to replace it; harbor fetch never "
+        f"Update a previously fetched happ with `harbor fetch {app_id}`. "
+        f"Remove it first if you mean to replace it; a github: fetch never "
         f"overwrites an installed happ."
       )
   return apps_root / f"{app_id}{suffix}"
@@ -387,7 +442,7 @@ def _download_root(app_id: AppID, apps_root: Path) -> Path:
   the final move is a rename within one filesystem rather than a copy.
   """
   apps_root.mkdir(parents=True, exist_ok=True)
-  root = apps_root / f".fetch-{app_id}-{os.getpid()}"
+  root = apps_root / f".fetch-{app_id}"
   shutil.rmtree(root, ignore_errors=True)
   return root
 
@@ -477,6 +532,45 @@ def commit_happ(fetched: FetchedHapp, apps_root: Path) -> Path:
   finally:
     shutil.rmtree(fetched.root, ignore_errors=True)
   return dest
+
+
+def replace_happ(fetched: FetchedHapp, dest: Path) -> Path:
+  """Swap an existing catalog entry for a downloaded happ.
+
+  Same incoming/outgoing rename as staging: `os.replace` cannot overwrite a
+  non-empty directory, so the old copy moves aside first.
+  """
+  if dest.is_symlink():
+    raise ValueError(
+      f"{fetched.app_id} is a symlink at {dest}; harbor fetch will not "
+      f"overwrite a linked working tree."
+    )
+  if dest.name != fetched.path.name:
+    raise ValueError(
+      f"{fetched.app_id} is installed as {dest.name}, but the source is now "
+      f"{fetched.path.name}. Remove it first if you mean to switch flavors."
+    )
+
+  outgoing = dest.parent / f".outgoing-{fetched.app_id}"
+  _remove(outgoing)
+  try:
+    os.replace(dest, outgoing)
+    os.replace(fetched.path, dest)
+  except OSError as e:
+    if not dest.exists() and outgoing.exists():
+      os.replace(outgoing, dest)
+    raise ValueError(f"Could not update {fetched.app_id} at {dest}: {e}") from e
+  finally:
+    _remove(outgoing)
+    shutil.rmtree(fetched.root, ignore_errors=True)
+  return dest
+
+
+def _remove(path: Path) -> None:
+  if path.is_symlink() or path.is_file():
+    path.unlink()
+  elif path.is_dir():
+    shutil.rmtree(path)
 
 
 def discard(fetched: FetchedHapp) -> None:

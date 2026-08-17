@@ -27,13 +27,18 @@ from harbor.lib.fetch import (
   GithubTarget,
   download_happ,
   ensure_destination_for,
+  format_current,
   list_tree,
   parse_target,
+  recorded_source,
   resolve_ref,
+  source_is_pinned,
+  split_pin,
 )
 from harbor.lib.harbor import HarborCtx
 
 SHA = "a1b2c3d4" * 5  # 40 hex chars
+NEW_SHA = "b" * 40
 REPO_PATH = "examples/hello-world.happ"
 TARGET = f"github:nepthar/harbor/main/{REPO_PATH}"
 
@@ -330,6 +335,29 @@ def test_a_pinned_sha_costs_no_api_call(github):
   assert github.api_calls == []
 
 
+def test_split_pin_strips_a_trailing_sha():
+  spec, pin = split_pin(f"{TARGET}@{SHA}")
+  assert spec == TARGET
+  assert pin == SHA
+  assert split_pin(TARGET) == (TARGET, None)
+  assert split_pin("hello-world") == ("hello-world", None)
+  assert split_pin(f"hello-world@{SHA}") == ("hello-world", SHA)
+
+
+def test_split_pin_leaves_a_non_sha_suffix_in_place():
+  raw = "hello-world@v1.2.3"
+  assert split_pin(raw) == (raw, None)
+
+
+def test_recorded_source_pins_a_sha_ref():
+  spec = f"github:nepthar/harbor/{SHA}/{REPO_PATH}"
+  assert recorded_source(spec, None) == f"{spec}@{SHA}"
+  assert recorded_source(TARGET, None) == TARGET
+  assert recorded_source(TARGET, SHA) == f"{TARGET}@{SHA}"
+  assert source_is_pinned(f"{TARGET}@{SHA}")
+  assert not source_is_pinned(TARGET)
+
+
 # --- listing safety --------------------------------------------------------
 
 
@@ -509,6 +537,11 @@ def test_fetch_installs_a_happ(github, ctx, harbor_env):
   assert "alpine:latest" in conn.text
   assert f"nepthar/harbor@{SHA[:8]}" in conn.text
   assert "Installed hello-world" in conn.text
+  record = ctx.harbor_db().get_app_source("hello-world")
+  assert record == {
+    "source": TARGET,
+    "current": format_current("0.1.0", SHA),
+  }
 
 
 def test_fetch_installs_files_shipped_beside_the_manifest(github, ctx, harbor_env):
@@ -713,3 +746,161 @@ def test_the_cli_rejects_a_non_github_target(harbor_env):
   assert result.returncode == 1
   assert "Unsupported fetch target" in result.stderr
   assert "github:<user>/<repo>/<ref>" in result.stderr
+
+
+def test_the_cli_rejects_a_pathlike_target(harbor_env):
+  result = harbor_env.run("fetch", "hello-world.happ")
+
+  assert result.returncode == 1
+  assert "Don't know how to fetch" in result.stderr
+
+
+def test_the_cli_rejects_a_non_sha_pin(harbor_env):
+  result = harbor_env.run("fetch", "hello-world@v1")
+
+  assert result.returncode == 1
+  assert "40-character commit sha" in result.stderr
+
+
+# --- update ----------------------------------------------------------------
+
+
+def test_fetch_app_id_is_a_no_op_when_the_commit_is_unchanged(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  before = len(github.requests)
+  conn = FakeConn()
+
+  fetch(ctx, conn, "hello-world")
+
+  assert not conn.prompted
+  assert f"already at {format_current('0.1.0', SHA)}" in conn.text
+  assert len(github.requests) == before + 1  # resolve the branch, nothing else
+  assert not any("/git/trees/" in path for path in github.requests[before:])
+
+
+def test_fetch_app_id_replaces_the_catalog_when_main_moves(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  github.sha = NEW_SHA
+  github.add("manifest.toml", MANIFEST.replace(b"0.1.0", b"0.2.0"))
+  conn = FakeConn()
+
+  fetch(ctx, conn, "hello-world")
+
+  installed = harbor_env.root / "apps" / "hello-world.happ"
+  assert b'version      = "0.2.0"' in (installed / "manifest.toml").read_bytes()
+  assert not conn.prompted
+  assert "Updated hello-world" in conn.text
+  assert f" - {format_current('0.1.0', SHA)}" in conn.text
+  assert f" + {format_current('0.2.0', NEW_SHA)}" in conn.text
+  assert "snapshot" not in conn.text.lower()
+  record = ctx.harbor_db().get_app_source("hello-world")
+  assert record == {
+    "source": TARGET,
+    "current": format_current("0.2.0", NEW_SHA),
+  }
+
+
+def test_fetch_app_id_does_not_touch_the_run_dir(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  started = harbor_env.run("start", "hello-world")
+  assert started.returncode == 0, started.stderr
+  staged = (harbor_env.run_root / "hello-world" / "happ" / "manifest.toml").read_bytes()
+
+  github.sha = NEW_SHA
+  github.add("manifest.toml", MANIFEST.replace(b"0.1.0", b"0.2.0"))
+  conn = FakeConn()
+  fetch(ctx, conn, "hello-world")
+
+  assert (
+    harbor_env.run_root / "hello-world" / "happ" / "manifest.toml"
+  ).read_bytes() == staged
+  assert "harbor snapshot hello-world" in conn.text
+  assert "harbor stage hello-world" in conn.text
+  assert "harbor start hello-world" in conn.text
+
+
+def test_a_pinned_fetch_does_not_follow_main(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn(), f"{TARGET}@{SHA}")
+  record = ctx.harbor_db().get_app_source("hello-world")
+  assert record["source"] == f"{TARGET}@{SHA}"
+
+  github.sha = NEW_SHA
+  before = len(github.requests)
+  conn = FakeConn()
+  fetch(ctx, conn, "hello-world")
+
+  assert f"pinned at {format_current('0.1.0', SHA)}" in conn.text
+  assert len(github.requests) == before
+  assert ctx.harbor_db().get_app_source("hello-world")["current"] == format_current(
+    "0.1.0", SHA
+  )
+
+
+def test_fetch_app_id_at_sha_pins_without_redownloading(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  before = len(github.requests)
+  conn = FakeConn()
+
+  fetch(ctx, conn, f"hello-world@{SHA}")
+
+  assert f"Pinned hello-world at {format_current('0.1.0', SHA)}" in conn.text
+  assert not any("/git/trees/" in path for path in github.requests[before:])
+  assert ctx.harbor_db().get_app_source("hello-world")["source"] == f"{TARGET}@{SHA}"
+
+
+def test_fetch_app_id_at_sha_moves_a_pin(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn(), f"{TARGET}@{SHA}")
+  github.add("manifest.toml", MANIFEST.replace(b"0.1.0", b"0.2.0"))
+  conn = FakeConn()
+
+  fetch(ctx, conn, f"hello-world@{NEW_SHA}")
+
+  assert "Updated hello-world" in conn.text
+  record = ctx.harbor_db().get_app_source("hello-world")
+  assert record == {
+    "source": f"{TARGET}@{NEW_SHA}",
+    "current": format_current("0.2.0", NEW_SHA),
+  }
+
+
+def test_fetch_app_id_without_a_source_is_refused(ctx, harbor_env):
+  conn = FakeConn()
+  with pytest.raises(ValueError, match="no recorded GitHub source"):
+    fetch(ctx, conn, "ports-demo")
+  assert not conn.prompted
+
+
+def test_fetch_unknown_app_id_names_github(harbor_env):
+  result = harbor_env.run("fetch", "no-such-app")
+
+  assert result.returncode == 1
+  assert "No app found" in result.stderr
+  assert "github:" in result.stderr
+
+
+def test_rm_leaves_fetch_source_so_the_catalog_can_still_update(
+  github, ctx, harbor_env
+):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  assert harbor_env.run("start", "hello-world").returncode == 0
+  removed = harbor_env.run("rm", "hello-world", "-y")
+  assert removed.returncode == 0, removed.stderr
+
+  github.sha = NEW_SHA
+  github.add("manifest.toml", MANIFEST.replace(b"0.1.0", b"0.2.0"))
+  conn = FakeConn()
+  fetch(ctx, conn, "hello-world")
+
+  assert "Updated hello-world" in conn.text
+  assert "snapshot" not in conn.text.lower()
+  assert (
+    b"0.2.0"
+    in (harbor_env.root / "apps" / "hello-world.happ" / "manifest.toml").read_bytes()
+  )
