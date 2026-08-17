@@ -38,6 +38,7 @@ class RestorePlan:
   snapshot_path: Path
   app_version: str
   run_path: Path
+  config_path: Path
   # (path inside the snapshot, path it is copied back over)
   data_volumes: tuple[tuple[Path, Path], ...]
   # True when the target is the app's newest pre-restore snapshot, i.e. this
@@ -164,6 +165,7 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
     snapshot_path=snapshot_path,
     app_version=str(meta.get("app_version", "")),
     run_path=ctx.staged_paths(app).run_path,
+    config_path=ctx.config.app_config_path(app),
     data_volumes=tuple(data_volumes),
     is_latest_pre_restore=bool(pre_restores) and snapshot_name == pre_restores[-1],
   )
@@ -172,15 +174,16 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
 def _rebuild_run_dir(plan: RestorePlan) -> None:
   """Drop the live run dir and rebuild it from the snapshot.
 
-  This is the whole of it: a snapshot holds the happ and the config, and
-  `materialize` generates the rest. Snapshots taken before compose.yml was
-  dropped from the format still carry one; it is ignored.
+  A snapshot holds the happ and the config; `materialize` generates the rest.
+  Snapshots taken before compose.yml was dropped from the format still carry
+  one; it is ignored. Config is restored beside the run dir, not inside it.
   """
   if plan.run_path.exists():
     shutil.rmtree(plan.run_path)
   plan.run_path.mkdir(parents=True, mode=0o700)
   shutil.copytree(plan.snapshot_path / "happ", plan.run_path / "happ")
-  shutil.copy2(plan.snapshot_path / "config.logtab", plan.run_path / "config.logtab")
+  plan.config_path.parent.mkdir(parents=True, exist_ok=True)
+  shutil.copy2(plan.snapshot_path / "config.logtab", plan.config_path)
 
 
 def _restore_data_volumes(plan: RestorePlan, ctx: HarborCtx) -> None:
@@ -221,7 +224,7 @@ def _restore_data_volumes(plan: RestorePlan, ctx: HarborCtx) -> None:
 def restore(
   plan: RestorePlan, ctx: HarborCtx, *, snapshot_first: bool = True
 ) -> AppRunData:
-  """Replace an app's run dir and data volumes with a snapshot's.
+  """Replace an app's run dir, config, and data volumes with a snapshot's.
 
   When ``snapshot_first`` is true and a live run dir exists, a snapshot labeled
   ``pre-restore`` is taken first. If that fails, restore does not start.

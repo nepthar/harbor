@@ -30,6 +30,10 @@ BASIC = "io.p2net.basic-features"
 # --- lifecycle -------------------------------------------------------------
 
 
+def _ps_row(stdout: str, app_id: str) -> list[str]:
+  return next(line for line in stdout.splitlines() if line.startswith(app_id)).split()
+
+
 def test_start_materializes_compose_and_port_state(harbor_env):
   result = harbor_env.run("start", "ports-demo")
 
@@ -67,21 +71,31 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
 
   concise = harbor_env.run("ps")
   assert concise.returncode == 0, concise.stderr
-  assert concise.stdout.splitlines()[0].split() == ["APP_ID", "STATUS", "LAST_ACTION"]
-  concise_row = next(
-    line for line in concise.stdout.splitlines() if line.startswith("ports-demo")
-  )
-  assert concise_row.split() == ["ports-demo", "running", "started"]
+  assert concise.stdout.splitlines()[0].split() == [
+    "APP_ID",
+    "STATUS",
+    "CONFIG",
+    "VOLUMES",
+    "LAST_ACTION",
+  ]
+  assert _ps_row(concise.stdout, "ports-demo") == [
+    "ports-demo",
+    "running",
+    "ready",
+    "0",
+    "started",
+  ]
 
   stopped = harbor_env.run("stop", "ports-demo")
   assert stopped.returncode == 0, stopped.stderr
 
-  concise_stopped_row = next(
-    line
-    for line in harbor_env.run("ps").stdout.splitlines()
-    if line.startswith("ports-demo")
-  )
-  assert concise_stopped_row.split() == ["ports-demo", "exited", "stopped"]
+  assert _ps_row(harbor_env.run("ps").stdout, "ports-demo") == [
+    "ports-demo",
+    "-",
+    "ready",
+    "0",
+    "stopped",
+  ]
 
   calls = [
     json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
@@ -101,6 +115,7 @@ def test_rm_removes_run_state_configuration_and_managed_volumes(harbor_env):
   assert removed.returncode == 0, removed.stderr
 
   assert not (harbor_env.run_root / BASIC).exists()
+  assert not harbor_env.app_logtab(BASIC).exists()
   assert not (harbor_env.volumes_root / "data" / BASIC).exists()
   assert not (harbor_env.volumes_root / "temp" / BASIC).exists()
   assert BASIC not in harbor_env.read_db().get("routes", {})
@@ -129,6 +144,8 @@ def test_status_and_inspect(harbor_env):
   inspected = harbor_env.run("inspect", "ports-demo")
   assert inspected.returncode == 0, inspected.stderr
   assert "Containers:  main, image=alpine:latest" in inspected.stdout
+  assert "Config:" not in inspected.stdout
+  assert "Note:" not in inspected.stdout
 
 
 def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
@@ -143,6 +160,45 @@ def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
   happ = harbor_env.root / "apps" / f"{app_id}.happ"
   inspected = harbor_env.run("inspect", str(happ))
   assert inspected.returncode == 0, inspected.stderr
+
+
+def test_inspect_shows_config_status(harbor_env):
+  assert harbor_env.run("stage", BASIC).returncode == 0
+
+  before = harbor_env.run("inspect", BASIC)
+  assert before.returncode == 0, before.stderr
+  assert "admin_user: (required)" in before.stdout
+  assert "admin_pass: (secret)" in before.stdout
+
+  assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
+  after = harbor_env.run("inspect", BASIC)
+  assert after.returncode == 0, after.stderr
+  assert "admin_user: alice" in after.stdout
+  assert "admin_pass: (secret)" in after.stdout
+
+
+def test_inspect_notes_when_the_source_manifest_has_drifted(harbor_env):
+  assert harbor_env.run("stage", BASIC).returncode == 0
+  source = harbor_env.root / "apps" / f"{BASIC}.happ" / "manifest.toml"
+  source.write_text(source.read_text() + "\n# edited after staging\n")
+
+  inspected = harbor_env.run("inspect", BASIC)
+  assert inspected.returncode == 0, inspected.stderr
+  assert "Note:" in inspected.stdout
+  assert (
+    f"manifest has changed, `harbor stage {BASIC}` may be required to reflect "
+    f"changes" in inspected.stdout
+  )
+
+
+def test_inspect_by_path_shows_declared_config_without_installing(harbor_env):
+  happ = harbor_env.root / "apps" / f"{BASIC}.happ"
+  inspected = harbor_env.run("inspect", str(happ))
+  assert inspected.returncode == 0, inspected.stderr
+  assert "admin_user: (required)" in inspected.stdout
+  assert "admin_pass: (secret)" in inspected.stdout
+  assert not harbor_env.app_logtab(BASIC).exists()
+  assert "Note:" not in inspected.stdout
 
 
 def test_logs_accepts_native_flags_before_app(harbor_env):
@@ -786,10 +842,8 @@ cmd = ["true"]
   assert "Set with `harbor config`" in blocked.stderr
   assert (harbor_env.run_root / app_id).is_dir()
 
-  needs_config_row = next(
-    line for line in harbor_env.run("ps").stdout.splitlines() if line.startswith(app_id)
-  )
-  assert needs_config_row.split()[:3] == [app_id, "needs", "config"]
+  needs_config_row = _ps_row(harbor_env.run("ps").stdout, app_id)
+  assert needs_config_row[:4] == [app_id, "-", "missing", "0"]
 
   configured = harbor_env.run("config", app_id, "--set", "api_key=sekrit")
   assert configured.returncode == 0, configured.stderr
@@ -797,7 +851,7 @@ cmd = ["true"]
   assert started.returncode == 0, started.stderr
 
 
-def test_a_required_non_secret_value_blocks_start_and_shows_as_needing_config(
+def test_a_required_non_secret_value_blocks_start_and_shows_as_missing_config(
   harbor_env,
 ):
   """The non-secret counterpart of the missing-secret case.
@@ -835,10 +889,8 @@ cmd = ["true"]
   ]
   assert ["compose", "up", "-d"] not in calls
 
-  row = next(
-    line for line in harbor_env.run("ps").stdout.splitlines() if line.startswith(app_id)
-  )
-  assert row.split()[:3] == [app_id, "needs", "config"]
+  row = _ps_row(harbor_env.run("ps").stdout, app_id)
+  assert row[:4] == [app_id, "-", "missing", "0"]
 
   assert harbor_env.run("config", app_id, "--set", "hostname=box").returncode == 0
   assert harbor_env.run("start", app_id).returncode == 0
@@ -852,8 +904,18 @@ cmd = ["true"]
 # must not be reported as something the operator has to fix.
 
 
-def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
-  """The reported bug: `ps` said "needs config" for an app needing none."""
+def test_ps_reports_config_readiness_and_volume_count(harbor_env):
+  assert harbor_env.run("stage", BASIC).returncode == 0
+  row = _ps_row(harbor_env.run("ps").stdout, BASIC)
+  assert row[1:4] == ["-", "missing", "3"]
+
+  assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
+  row = _ps_row(harbor_env.run("ps").stdout, BASIC)
+  assert row[1:4] == ["-", "ready", "3"]
+
+
+def test_unallocated_routes_are_not_reported_as_missing_config(harbor_env):
+  """Unallocated routes are self-healing; CONFIG must stay ready."""
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
@@ -865,18 +927,14 @@ def test_unallocated_routes_are_not_reported_as_needing_config(harbor_env):
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
-  assert "needs config" not in listed.stdout, listed.stdout
+  assert _ps_row(listed.stdout, app_id)[2] == "ready"
 
   # ...and it is genuinely startable, configuring nothing.
   assert harbor_env.run("start", app_id).returncode == 0
 
 
-def test_an_unmet_bind_is_still_reported_as_needing_config(harbor_env):
-  """The label must keep working for the case it actually describes.
-
-  A host volume whose path has gone is the operator's to fix -- `start`
-  cannot invent it -- so this one really does need `harbor config --bind`.
-  """
+def test_an_unmet_bind_is_reported_as_missing_config(harbor_env):
+  """A host volume whose path has gone is the operator's to fix."""
   app_id = "host-volumes"
   host_path = harbor_env.root / "external-data"
   host_path.mkdir()
@@ -889,11 +947,11 @@ def test_an_unmet_bind_is_still_reported_as_needing_config(harbor_env):
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
-  assert "needs config" in listed.stdout, listed.stdout
+  assert _ps_row(listed.stdout, app_id)[2] == "missing"
 
 
-def test_an_unloadable_app_is_not_reported_as_needing_config(harbor_env):
-  """A staged happ that will not parse is unreadable, not unconfigured."""
+def test_an_unloadable_app_is_not_reported_as_missing_config(harbor_env):
+  """A staged happ that will not parse is unknown, not unconfigured."""
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
@@ -902,8 +960,8 @@ def test_an_unloadable_app_is_not_reported_as_needing_config(harbor_env):
 
   listed = harbor_env.run("ps")
   assert listed.returncode == 0, listed.stderr
-  assert "unreadable" in listed.stdout, listed.stdout
-  assert "needs config" not in listed.stdout, listed.stdout
+  row = _ps_row(listed.stdout, app_id)
+  assert row[1:4] == ["-", "-", "-"]
 
 
 # --- doctor ----------------------------------------------------------------
@@ -912,7 +970,7 @@ def test_an_unloadable_app_is_not_reported_as_needing_config(harbor_env):
 def test_doctor_reports_orphaned_routes(harbor_env):
   """Routes are the only per-app state harbordb still holds.
 
-  Config and binds live in the run directory now, so a harbordb entry with no
+  Config and binds live in config/<app_id>.logtab, so a harbordb entry with no
   run directory can only be a route allocation nothing owns -- which still
   pins a host port and so is worth reporting.
   """
@@ -931,7 +989,7 @@ def test_doctor_reports_orphaned_routes(harbor_env):
   )
 
   ps = harbor_env.run("ps")
-  assert "io.example.abandoned" in ps.stdout
+  assert _ps_row(ps.stdout, "io.example.abandoned")[1:4] == ["-", "-", "-"]
 
   doctor = harbor_env.run("doctor")
   assert doctor.returncode == 1
@@ -1062,6 +1120,7 @@ def test_init_bootstraps_a_usable_root(harbor_env, tmp_path):
   assert (root / "master.key").is_file()
   assert (root / "apps").is_dir()
   assert (root / "run").is_dir()
+  assert (root / "config").is_dir()
   for kind in VOLUME_KINDS:
     assert (root / "volumes" / kind).is_dir(), kind
 

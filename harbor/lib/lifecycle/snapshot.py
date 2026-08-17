@@ -144,7 +144,7 @@ def snapshot(
 
   # Required files for the snapshot. If these don't exist, something is wrong
   # with the app.
-  for file in (paths.manifest_path, paths.config_path):
+  for file in (paths.manifest_path, ctx.config.app_config_path(app)):
     if not file.is_file():
       raise ValueError(
         f"App {app} missing required file: {file}. "
@@ -201,7 +201,7 @@ def snapshot(
     #
     # compose.yml is not captured: its host ports are a photograph of harbordb,
     # which moves on. `restore` regenerates it from the happ below.
-    shutil.copy2(paths.config_path, staging / "config.logtab")
+    shutil.copy2(ctx.config.app_config_path(app), staging / "config.logtab")
     shutil.copytree(paths.happ_path, staging / "happ")
 
     data_vols = paths.run_path / "volumes" / "data"

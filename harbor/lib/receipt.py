@@ -73,6 +73,37 @@ def route_lines(
   return lines
 
 
+def config_lines(stack: AppStack, ctx: HarborCtx, *, installed: bool) -> list[str]:
+  """Per-key config status, same wording as `harbor config`."""
+  if not stack.config:
+    return []
+  store = None
+  if installed and ctx.config.app_config_path(stack.app).is_file():
+    store = ctx.app_store(stack.app)
+  lines: list[str] = []
+  for name, entry in stack.config.items():
+    if store is None:
+      if entry.secret:
+        display = "(secret)"
+      elif entry.has_default():
+        display = f"{entry.default} (default)"
+      else:
+        display = "(required)"
+    else:
+      secret, value = store.get_config(name)
+      if value is None:
+        if entry.has_default():
+          display = f"{entry.default} (default)"
+        else:
+          display = "(required)"
+      elif secret:
+        display = "(secret)"
+      else:
+        display = value
+    lines.append(f"{name}: {display}")
+  return lines
+
+
 def volume_lines(
   stack: AppStack, run_data: AppRunData | None, ctx: HarborCtx
 ) -> list[str]:
@@ -128,6 +159,7 @@ def capability_receipt(
   ctx: HarborCtx,
   *,
   compact: bool = True,
+  notes: tuple[str, ...] = (),
 ) -> str:
   """Manifest capability summary for inspect / first-run up."""
   app_id = stack.app
@@ -170,23 +202,18 @@ def capability_receipt(
       for extra in vols[1:]:
         lines.append(_labeled_line("", extra))
 
-    required = [
-      name
-      for name, cfg in stack.config.items()
-      if not cfg.has_default() and not cfg.secret
-    ]
-    secrets = [name for name, cfg in stack.config.items() if cfg.secret]
-    if required or secrets:
-      parts = []
-      if required:
-        parts.append(f"required={','.join(required)}")
-      if secrets:
-        parts.append(f"secrets={','.join(secrets)}")
-      lines.append(_labeled_line("Config:", " ".join(parts)))
+    configs = config_lines(stack, ctx, installed=run_data is not None)
+    if configs:
+      lines.append(_labeled_line("Config:", configs[0]))
+      for extra in configs[1:]:
+        lines.append(_labeled_line("", extra))
 
   dangers = danger_callouts(stack)
   for danger in dangers:
     lines.append(_labeled_line("Danger:", danger))
+
+  for note in notes:
+    lines.append(_labeled_line("Note:", note))
 
   if compact:
     # Drop the title line when embedding under Running …
@@ -257,6 +284,7 @@ def _format_labeled(title: str, rows: list[tuple[str, str]]) -> str:
 
 __all__ = [
   "capability_receipt",
+  "config_lines",
   "danger_callouts",
   "location_receipt",
   "published_route_urls",

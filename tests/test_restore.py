@@ -36,11 +36,13 @@ def test_restore_rebuilds_a_removed_app_from_its_snapshot(harbor_env):
 
   assert harbor_env.run("rm", app_id, "-y").returncode == 0
   assert not (harbor_env.run_root / app_id).exists()
+  assert not harbor_env.app_logtab(app_id).exists()
   assert app_id not in harbor_env.read_db().get("routes", {})
 
   restored = harbor_env.run("restore", app_id, name, "-y")
   assert restored.returncode == 0, restored.stderr
   assert not (harbor_env.root / "snapshots" / app_id / name).exists()
+  assert harbor_env.app_logtab(app_id).is_file()
 
   # compose.yml is regenerated rather than copied back, so the host ports it
   # publishes are the ones harbordb has just re-allocated.

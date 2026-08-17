@@ -104,6 +104,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
 
   (root / "apps").mkdir(parents=True, exist_ok=True)
   (root / "run").mkdir(parents=True, exist_ok=True)
+  (root / "config").mkdir(parents=True, exist_ok=True)
   for kind in VOLUME_KINDS:
     (root / "volumes" / kind).mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +121,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   conn.out(f"Initialized harbor root at {root}")
   conn.out(f"  apps:        {root / 'apps'}")
   conn.out(f"  run:         {root / 'run'}")
+  conn.out(f"  config:      {root / 'config'}")
   conn.out(f"  volumes:     {root / 'volumes'} ({', '.join(VOLUME_KINDS)})")
   conn.out(f"  master.key:  {master_key_path}")
   conn.out(f"\nTo change your configuration, edit {config_path}")

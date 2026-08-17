@@ -190,6 +190,30 @@ class Config:
   def app_run_path(self, app_id: AppID) -> Path:
     return self.run_root / app_id
 
+  @property
+  def config_root(self) -> Path:
+    return self.harbor_root / "config"
+
+  def app_config_path(self, app_id: AppID | str) -> Path:
+    return self.config_root / f"{app_id}.logtab"
+
+  def app_config_ids(self) -> set[str]:
+    """App ids that have a config logtab under ``config/``."""
+    root = self.config_root
+    if not root.is_dir():
+      return set()
+    found: set[str] = set()
+    for path in root.iterdir():
+      if path.suffix != ".logtab" or not path.is_file():
+        continue
+      app_id = path.name.removesuffix(".logtab")
+      try:
+        AppID(app_id)
+      except ValueError:
+        continue
+      found.add(app_id)
+    return found
+
   def provider_domain(self, tag: str) -> str:
     """Domain for a route-provider tag; placeholder when unassigned/none."""
     if not tag or tag == NONE_ROUTE_PROVIDER_TAG:

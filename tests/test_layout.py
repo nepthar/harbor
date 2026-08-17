@@ -63,7 +63,7 @@ def test_stage_copies_the_happ_into_the_run_dir(harbor_env):
   assert not copied.is_symlink()
   assert copied.read_text() == (catalog / "manifest.toml").read_text()
   assert not (run_dir / "source").exists()
-  assert (run_dir / "config.logtab").is_file()
+  assert (harbor_env.app_logtab(app_id)).is_file()
   assert (run_dir / "compose.yml").is_file()
 
 
@@ -151,19 +151,34 @@ def test_stage_refuses_while_containers_are_running(harbor_env):
 
 
 def test_stage_refuses_when_config_is_gone_but_data_remains(harbor_env):
-  """Deleting the run dir by hand must not silently regenerate secrets.
+  """Deleting the config logtab by hand must not silently regenerate secrets.
 
   Fresh `auto` secrets against data that expects the old ones produce an app
   that fails to authenticate for reasons nothing in the error explains.
   """
   assert harbor_env.run("stage", BASIC).returncode == 0
   (harbor_env.volumes_root / "data" / BASIC / "config" / "db").write_text("rows")
-  shutil.rmtree(harbor_env.run_root / BASIC)
+  harbor_env.app_logtab(BASIC).unlink()
 
   refused = harbor_env.run("stage", BASIC)
   assert refused.returncode == 1
   assert "volume data but no config" in refused.stderr
   assert f"harbor rm {BASIC}" in refused.stderr
+
+
+def test_restaging_after_a_deleted_run_dir_reuses_config(harbor_env):
+  """Config lives in config/, so wiping the run dir does not lose secrets."""
+  assert harbor_env.run("stage", BASIC).returncode == 0
+  minted = harbor_env.run(
+    "config", BASIC, "--get", "admin_pass", "--show-secret"
+  ).stdout.strip()
+  shutil.rmtree(harbor_env.run_root / BASIC)
+
+  assert harbor_env.run("stage", BASIC).returncode == 0
+  again = harbor_env.run(
+    "config", BASIC, "--get", "admin_pass", "--show-secret"
+  ).stdout.strip()
+  assert again == minted
 
 
 # --- volume links -----------------------------------------------------------
@@ -265,11 +280,11 @@ def test_changing_a_volumes_kind_is_refused(harbor_env):
 # --- config -----------------------------------------------------------------
 
 
-def test_config_round_trips_through_the_run_dir(harbor_env):
+def test_config_round_trips_through_config_dir(harbor_env):
   assert harbor_env.run("stage", BASIC).returncode == 0
   assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
 
-  logtab = (harbor_env.run_root / BASIC / "config.logtab").read_text()
+  logtab = harbor_env.app_logtab(BASIC).read_text()
   assert "config/admin_user" in logtab
   assert "meta/origin" in logtab
   assert "meta/staged_at" in logtab
@@ -540,6 +555,7 @@ def test_rm_removes_the_run_dir_volumes_and_routes(harbor_env):
   assert removed.returncode == 0, removed.stderr
 
   assert not (harbor_env.run_root / app_id).exists()
+  assert not harbor_env.app_logtab(app_id).exists()
   for kind in ("data", "temp", "bulk", "logs"):
     assert not (harbor_env.volumes_root / kind / app_id).exists()
   assert app_id not in harbor_env.read_db().get("routes", {})
@@ -560,6 +576,7 @@ def test_rm_needs_confirmation_and_says_it_cannot_be_undone(harbor_env):
   confirmed = harbor_env.run("rm", app_id, input="y\n")
   assert confirmed.returncode == 0, confirmed.stderr
   assert not (harbor_env.run_root / app_id).exists()
+  assert not harbor_env.app_logtab(app_id).exists()
 
 
 def test_rm_reports_host_volumes_it_leaves_alone(harbor_env):

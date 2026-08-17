@@ -371,13 +371,14 @@ def stage(
     )
 
   # Config gone while the data it belongs to is still here means someone
-  # deleted the run dir by hand. Staging would generate fresh `auto` secrets
+  # deleted the logtab by hand. Staging would generate fresh `auto` secrets
   # against data expecting the old ones, so refuse instead.
-  if not paths.config_path.is_file() and _has_volume_data(app, ctx):
+  config_path = ctx.config.app_config_path(app)
+  if not config_path.is_file() and _has_volume_data(app, ctx):
     raise ValueError(
-      f"App {app} has volume data but no config at {paths.config_path}. "
+      f"App {app} has volume data but no config at {config_path}. "
       f"Staging would generate new secrets that its existing data does not "
-      f"expect. Restore the run directory from a backup, or run "
+      f"expect. Restore from a snapshot, or run "
       f"`harbor rm {app}` to delete its config and data together."
     )
 

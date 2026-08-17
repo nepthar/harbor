@@ -7,7 +7,7 @@ from harbor.lib.lifecycle import RemovalPlan, removal_plan, rm
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "rm",
-    help="Stop a happ and delete its run state, managed volumes, and routes",
+    help="Stop a happ and delete its run state, config, managed volumes, and routes",
   )
   parser.add_argument("app_id", help="App ID of the happ to remove")
   parser.add_argument(
@@ -30,7 +30,8 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn) -> bool:
   conn.out(f"Removing {plan.app_id} deletes:")
-  conn.out(f"  {plan.run_path} (config, secrets, compose)")
+  conn.out(f"  {plan.run_path} (happ, compose)")
+  conn.out(f"  {plan.config_path} (config, secrets)")
   for path in plan.volume_paths:
     conn.out(f"  {path}")
   conn.out("  its route and host-port allocations")

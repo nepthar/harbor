@@ -119,9 +119,7 @@ def dev_plan(app: AppID, ctx: HarborCtx, *, publish_routes: bool = False) -> Dev
     mounts=mounts,
     stack=stack,
     run_data=run_data,
-    manifest_stale=(
-      (source / "manifest.toml").read_bytes() != paths.manifest_path.read_bytes()
-    ),
+    manifest_stale=ctx.manifest_stale(app),
     published=published,
   )
 

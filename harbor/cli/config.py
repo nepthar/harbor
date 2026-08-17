@@ -63,8 +63,10 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
+  if not ctx.is_staged(app):
+    raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
   store = ctx.app_store(app)
-  # Schema from the staged run copy; values from the run-dir config store.
+  # Schema from the staged run copy; values from config/<app_id>.logtab.
   # `harbor start --set` is the one-shot for first install.
   stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
 

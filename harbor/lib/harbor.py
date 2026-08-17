@@ -76,10 +76,6 @@ class StagedAppPaths:
     return self.manifest_path.is_file()
 
   @property
-  def config_path(self) -> Path:
-    return self.run_path / "config.logtab"
-
-  @property
   def compose_path(self) -> Path:
     return self.run_path / "compose.yml"
 
@@ -181,15 +177,10 @@ class HarborCtx:
     return self.staged_paths(app).exists()
 
   def app_store(self, app: AppID | str) -> AppStore:
-    """The app's own config store under its run directory.
-
-    Config lives with the app, so an app must be staged before it can be
-    configured. `harbor start --set` covers the one-shot case.
-    """
-    paths = self.staged_paths(app)
-    if not paths.run_path.is_dir():
-      raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
-    return AppStore.from_path(paths.config_path, crypto_from_config(self.config))
+    """The app's own config store at ``config/<app_id>.logtab``."""
+    return AppStore.from_path(
+      self.config.app_config_path(app), crypto_from_config(self.config)
+    )
 
   def app_catalog(self) -> dict[str, tuple[CatalogEntry, ...]]:
     """Every bundle in every app source, keyed by app id, in source order.
@@ -213,11 +204,26 @@ class HarborCtx:
     This is what says *which* bundle is installed when several sources carry
     the id. None when the app is not installed, or predates the record.
     """
-    paths = self.staged_paths(app)
-    if not paths.config_path.is_file():
+    if not self.config.app_config_path(app).is_file():
       return None
     origin = self.app_store(app).get_meta("origin")
     return Path(origin) if origin else None
+
+  def manifest_stale(self, app: AppID | str) -> bool:
+    """Whether the source bundle's manifest no longer matches the staged copy.
+
+    Same check `dev` uses: byte compare of ``manifest.toml``. No origin, or a
+    source that is not a directory happ, is not stale -- there is nothing to
+    compare.
+    """
+    paths = self.staged_paths(app)
+    origin = self.staged_origin(app)
+    if origin is None or not paths.manifest_path.is_file():
+      return False
+    source = origin / "manifest.toml"
+    if not source.is_file():
+      return False
+    return source.read_bytes() != paths.manifest_path.read_bytes()
 
   def known_bundles(self) -> dict[str, Path]:
     """Map app_id -> the one catalog entry harbor would use for it.
@@ -268,14 +274,15 @@ class HarborCtx:
     return self._docker_status
 
   def _observed_app_ids(self) -> set[str]:
-    """Collect every app_id that has left a trace: a bundle dir, a run folder, a
-    container, or a harbordb entry.
+    """Collect every app_id that has left a trace: a bundle dir, a run folder,
+    a config logtab, a container, or a harbordb entry.
     """
     ids = set(self.known_bundles())
     if self.config.run_root.is_dir():
       ids |= {path.name for path in self.config.run_root.iterdir() if path.is_dir()}
     ids |= set(self.docker_container_statuses())
     ids |= set(self.harbor_db().app_ids())
+    ids |= self.config.app_config_ids()
     return ids
 
   def _resolve_state_id(self, app_id: str) -> str:

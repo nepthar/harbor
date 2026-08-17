@@ -7,6 +7,8 @@ from harbor.lib.observations import AppObservation
 from harbor.lib.run_layout import load_run_data
 from harbor.lib.stack import AppStack
 
+EMPTY = "-"
+
 
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
@@ -20,17 +22,20 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   for observation in ctx.observations():
     if not _is_installed(observation):
       continue
+    stack = _staged_stack(observation, ctx)
     rows.append(
       (
         observation.app_id,
-        _status(observation, ctx),
-        observation.last_action or "-",
+        _status(observation),
+        _config(observation, stack, ctx),
+        _volumes(stack),
+        observation.last_action or EMPTY,
       )
     )
   conn.out(
     tabulate(
       rows,
-      headers=["APP_ID", "STATUS", "LAST_ACTION"],
+      headers=["APP_ID", "STATUS", "CONFIG", "VOLUMES", "LAST_ACTION"],
       tablefmt="simple",
     )
   )
@@ -38,24 +43,40 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 def _is_installed(observation: AppObservation) -> bool:
   return bool(
-    observation.run_dir_exists or observation.containers or observation.db_present
+    observation.run_dir_exists
+    or observation.config_exists
+    or observation.containers
+    or observation.db_present
   )
 
 
-def _status(observation: AppObservation, ctx: HarborCtx) -> str:
+def _status(observation: AppObservation) -> str:
   if observation.running_count:
     return "running"
   if observation.containers:
     return "exited"
-  if not observation.compose_exists:
-    return "broken" if observation.run_dir_exists else "orphaned"
+  return EMPTY
 
+
+def _staged_stack(observation: AppObservation, ctx: HarborCtx) -> AppStack | None:
+  paths = ctx.staged_paths(observation.app_id)
+  if not paths.manifest_path.is_file():
+    return None
   try:
-    stack = AppStack.from_file(
-      ctx.staged_paths(observation.app_id).manifest_path, observation.app_id
-    )
+    return AppStack.from_file(paths.manifest_path, observation.app_id)
   except ValueError:
-    # A missing or unparseable staged manifest -- the app could not be loaded
-    # at all, which is not the same as it needing configuration.
-    return "unreadable"
-  return "needs config" if load_run_data(stack, ctx).start_blockers else "exited"
+    return None
+
+
+def _config(observation: AppObservation, stack: AppStack | None, ctx: HarborCtx) -> str:
+  if not observation.config_exists:
+    return EMPTY
+  if stack is None:
+    return EMPTY
+  return "missing" if load_run_data(stack, ctx).start_blockers else "ready"
+
+
+def _volumes(stack: AppStack | None) -> str:
+  if stack is None:
+    return EMPTY
+  return str(len(stack.volumes))

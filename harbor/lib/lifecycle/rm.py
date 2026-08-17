@@ -20,6 +20,7 @@ class RemovalPlan:
 
   app_id: AppID
   run_path: Path
+  config_path: Path
   volume_paths: tuple[Path, ...]
   host_paths: tuple[Path, ...]
   stop_first: bool
@@ -32,8 +33,8 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
     raise ValueError(container_recovery_message(app_id, ctx))
 
   host_paths: tuple[Path, ...] = ()
-  paths = ctx.staged_paths(app_id)
-  if paths.config_path.is_file():
+  config_path = ctx.config.app_config_path(app_id)
+  if config_path.is_file():
     binds = ctx.app_store(app_id).list_binds()
     host_paths = tuple(
       ctx.config.host_volumes[tag].path
@@ -44,6 +45,7 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
   return RemovalPlan(
     app_id=app_id,
     run_path=state.run_path,
+    config_path=config_path,
     volume_paths=tuple(d for d in managed_volume_dirs(app_id, ctx) if d.is_dir()),
     host_paths=host_paths,
     stop_first=state.compose_exists,
@@ -51,7 +53,7 @@ def removal_plan(app_id: AppID, ctx: HarborCtx) -> RemovalPlan:
 
 
 def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
-  """Stop an app and delete its run dir, managed volumes and route claims.
+  """Stop an app and delete its run dir, config, managed volumes and routes.
 
   The catalog entry and any host-volume contents survive, so
   `harbor rm foo; harbor start foo` is a clean reinstall.
@@ -68,6 +70,10 @@ def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
   if plan.run_path.exists():
     shutil.rmtree(plan.run_path)
     logger.info("removed run directory %s", plan.run_path)
+
+  if plan.config_path.is_file():
+    plan.config_path.unlink()
+    logger.info("removed config %s", plan.config_path)
 
   for path in plan.volume_paths:
     if path.is_dir():

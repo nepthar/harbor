@@ -37,6 +37,7 @@ class AppObservation:
   bundle_path: Path | None
   run_dir_exists: bool
   compose_exists: bool
+  config_exists: bool
   containers: tuple[HarborRunUnitStatus, ...]
   db_present: bool
   last_action: str | None
@@ -71,7 +72,8 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
   )
   docker = ctx.docker_container_statuses()
   db_ids = set(ctx.harbor_db().app_ids())
-  app_ids = set(bundles) | run_ids | set(docker) | db_ids
+  config_ids = ctx.config.app_config_ids()
+  app_ids = set(bundles) | run_ids | set(docker) | db_ids | config_ids
 
   actions = read_app_actions(ctx.config)
 
@@ -85,6 +87,7 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
       bundle_path=bundles.get(raw_id),
       run_dir_exists=paths.run_path.is_dir(),
       compose_exists=paths.compose_path.is_file(),
+      config_exists=raw_id in config_ids,
       containers=docker.get(raw_id, ()),
       db_present=raw_id in db_ids,
       last_action=action[1] if action else None,

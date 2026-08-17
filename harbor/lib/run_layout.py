@@ -69,7 +69,7 @@ class ConfigIssue:
   # operator has to act on. Route allocation is the case: `stage()` clears and
   # reallocates every route *before* it evaluates readiness, so an unallocated
   # route is the normal pre-start state. Counting these as blockers made
-  # `harbor ps` report "needs config" for an app that needed no configuration
+  # `harbor ps` report CONFIG as missing for an app that needed no configuration
   # and started fine on the very next `harbor start`.
   self_healing: bool = False
 

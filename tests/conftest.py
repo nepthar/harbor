@@ -136,6 +136,13 @@ class HarborEnv:
     return self.root / "run"
 
   @property
+  def config_root(self) -> Path:
+    return self.root / "config"
+
+  def app_logtab(self, app_id: str) -> Path:
+    return self.config_root / f"{app_id}.logtab"
+
+  @property
   def volumes_root(self) -> Path:
     return self.root / "volumes"
 
@@ -305,6 +312,7 @@ def harbor_env(
   apps = root / "apps"
   apps.mkdir(parents=True)
   (root / "run").mkdir()
+  (root / "config").mkdir()
   (root / "volumes").mkdir()
 
   for _, rel_path in scan_happs(FIXTURES):

@@ -496,8 +496,8 @@ def test_start_blockers_leave_out_what_staging_repairs_itself():
   """`stage()` reallocates every route before judging readiness.
 
   An unallocated route is therefore the normal pre-start state, not something
-  the operator has to fix -- counting it made `harbor ps` report "needs config"
-  for an app that needed none.
+  the operator has to fix -- counting it made `harbor ps` report CONFIG as
+  missing for an app that needed none.
   """
   operator = ConfigIssue("config api_key is unset", "Set with `harbor config`")
   allocation = ConfigIssue("route web: not allocated", "…", self_healing=True)

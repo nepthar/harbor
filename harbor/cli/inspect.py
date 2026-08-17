@@ -11,7 +11,7 @@ from harbor.lib.stack import AppStack
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "inspect",
-    help="Show images, ports, routes, volumes, and sharp edges for a happ",
+    help="Show images, ports, routes, volumes, config, and sharp edges for a happ",
   )
   parser.add_argument(
     "app",
@@ -33,4 +33,9 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   # Pass a path to a .happ to inspect a bundle that is not staged yet.
   stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
   run_data = load_run_data(stack, ctx)
-  conn.out(capability_receipt(stack, run_data, ctx, compact=False))
+  notes = ()
+  if ctx.manifest_stale(app):
+    notes = (
+      f"manifest has changed, `harbor stage {app}` may be required to reflect changes",
+    )
+  conn.out(capability_receipt(stack, run_data, ctx, compact=False, notes=notes))

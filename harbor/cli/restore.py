@@ -66,7 +66,8 @@ def _missing_snapshot_message(app: AppID, ctx: HarborCtx) -> str:
 
 def _confirmed(plan: RestorePlan, snapshot_first: bool, conn: Conn) -> bool:
   conn.out(f"Restoring {plan.app_id} from {plan.snapshot_path} overwrites:")
-  conn.out(f"  {plan.run_path} (config, secrets, happ, compose)")
+  conn.out(f"  {plan.run_path} (happ, compose)")
+  conn.out(f"  {plan.config_path} (config, secrets)")
   for _, dest in plan.data_volumes:
     conn.out(f"  {dest}")
   conn.out("  its route and host-port allocations")

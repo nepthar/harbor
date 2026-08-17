@@ -74,8 +74,8 @@ class HarborStore:
     self._crypto = crypto
     self._port_base = port_base
 
-  # Routes - the only per-app state in this DB. Everything else about an app
-  # lives in its run directory; routes stay central because allocating a host
+  # Routes - the only per-app state in this DB. App config lives in
+  # config/<app_id>.logtab; routes stay central because allocating a host
   # port is contention between apps, not state belonging to one.
   def list_routes(self, app_id: str) -> dict[str, dict[str, Any]]:
     return self._store.scan(f"routes/{app_id}/")
@@ -140,7 +140,7 @@ class HarborStore:
   def app_ids(self) -> list[str]:
     """Every app harbordb still holds state for -- which now means routes.
 
-    Config and binds moved to the run directory, so an id here with no run
+    Config and binds live in config/<app_id>.logtab, so an id here with no run
     directory is an orphaned route allocation, and that is what `doctor`
     reports.
     """
