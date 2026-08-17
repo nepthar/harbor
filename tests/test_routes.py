@@ -794,7 +794,10 @@ def test_pangolin_403_names_the_permission_the_key_is_missing():
 
   assert "'createResource' permission" in message
   assert "PUT /org/acme/public-resource" in message
-  assert "'acme'" in message
+  # Pangolin checks org access before the per-action permission, so reaching
+  # this 403 already proves the key is scoped to the org -- don't send the
+  # operator off to re-check that.
+  assert "'acme'" not in message
 
 
 def test_pangolin_resolves_the_site_name_once():
@@ -1123,7 +1126,11 @@ def test_pangolin_register_attaches_shared_policy_on_reuse():
   assert attach.kwargs["json"] == {"resourcePolicyId": 40}
 
 
-def test_pangolin_register_skips_attach_when_already_applied():
+def test_pangolin_register_reattaches_policy_the_list_endpoint_omits():
+  # Pangolin's list-resources endpoint does not return resourcePolicyId, so a
+  # resource that already carries the policy is indistinguishable from one
+  # that does not. Re-attaching is the idempotent way out; don't skip on a
+  # field the real API never sends.
   provider = _pangolin_provider(shared_policy=POLICY)
   app = AppID("io.test.photos")
   provider._find_resource = Mock(
@@ -1131,7 +1138,6 @@ def test_pangolin_register_skips_attach_when_already_applied():
       "resourceId": 12,
       "name": f"harbor:{app}",
       "fullDomain": "photos.home.example",
-      "resourcePolicyId": 40,
       "targets": [{"targetId": 99}],
     }
   )
@@ -1144,7 +1150,10 @@ def test_pangolin_register_skips_attach_when_already_applied():
 
   provider.register_route(app, 41001, "photos", "home.example")
 
-  assert all(c.args[2] != "updateResource" for c in provider._request.call_args_list)
+  attach = next(
+    c for c in provider._request.call_args_list if c.args[2] == "updateResource"
+  )
+  assert attach.kwargs["json"] == {"resourcePolicyId": 40}
 
 
 def test_pangolin_register_refuses_unknown_shared_policy():

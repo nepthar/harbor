@@ -128,10 +128,16 @@ class PangolinRouteProvider(RouteProvider):
     if resp.status_code == 403:
       # Pangolin's own 403 does not name the action it refused, and the key's
       # permissions are a checklist in the dashboard -- so name it here.
+      #
+      # Don't send the operator off to check org scoping: Pangolin runs its
+      # org-access middleware *before* the per-action one, so a 403 that got
+      # as far as the action check already proves the key is in the org. The
+      # checklist is grouped by noun ("Resource", "Resource Policy", "Site"),
+      # and the group is not always the one the endpoint's URL suggests.
       return (
         f"Pangolin refused {method} {path} ({resp.status_code}: {message}). The "
-        f"API key needs the {action!r} permission; enable it on the key, and "
-        f"check the key is scoped to org {self.org_id!r}"
+        f"API key is missing the {action!r} permission; enable it on the key "
+        f"under the matching group in the dashboard's permission checklist"
       )
     if resp.status_code == 401:
       return (
@@ -224,10 +230,16 @@ class PangolinRouteProvider(RouteProvider):
     return self._resolved_policy_id
 
   def _apply_shared_policy(self, resource: dict) -> None:
+    """Attach the configured policy, unconditionally.
+
+    There is no cheap "already attached?" check to short-circuit on: the list
+    endpoint we get resources from does not return resourcePolicyId, so the
+    only way to read the current one is a per-resource getResource call. That
+    trades the idempotent write we would skip for a read of the same cost, so
+    just do the write.
+    """
     policy_id = self._policy_id()
     if policy_id is None:
-      return
-    if resource.get("resourcePolicyId") == policy_id:
       return
     rid = resource["resourceId"]
     self._request(
