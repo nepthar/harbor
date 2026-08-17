@@ -42,7 +42,7 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   spec, pin = split_pin(args.target)
-  if spec.startswith(("github:", "https:")):
+  if spec.startswith("github:"):
     _install(spec, pin, args.yes, ctx, conn)
   elif is_pathlike(spec):
     raise ValueError(
@@ -113,7 +113,7 @@ def _update(query: str, pin: str | None, ctx: HarborCtx, conn) -> None:
   try:
     app = ctx.resolve_app(query)
   except ValueError as e:
-    raise ValueError(f"{e}. To install a new happ, pass a github: target.") from e
+    raise ValueError(f"{e}. To fetch a new app, pass a github: target.") from e
 
   record = ctx.harbor_db().get_app_source(str(app))
   if not record:

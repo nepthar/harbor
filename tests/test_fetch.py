@@ -744,8 +744,7 @@ def test_the_cli_rejects_a_non_github_target(harbor_env):
   result = harbor_env.run("fetch", "https://happs.example.com/x.happ")
 
   assert result.returncode == 1
-  assert "Unsupported fetch target" in result.stderr
-  assert "github:<user>/<repo>/<ref>" in result.stderr
+  assert "Don't know how to fetch" in result.stderr
 
 
 def test_the_cli_rejects_a_pathlike_target(harbor_env):
