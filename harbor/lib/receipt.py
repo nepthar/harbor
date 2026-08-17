@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG
 from harbor.lib.harbor import HarborCtx
@@ -45,6 +44,8 @@ def route_lines(
   stack: AppStack,
   run_data: AppRunData | None,
   published: Mapping[str, str],
+  *,
+  host: str = "localhost",
 ) -> list[str]:
   """Every declared route, read right to left: where you reach it, then what
   answers.
@@ -58,11 +59,11 @@ def route_lines(
   for name, route in stack.routes.items():
     assigned = run_data.routes.get(name) if run_data else None
     if assigned is not None and assigned.host_port > 0:
-      where = f"http://localhost:{assigned.host_port}"
+      where = f"http://{host}:{assigned.host_port}"
     elif stack.network_mode == "host":
       # Host networking maps nothing, so the container port is the host port
       # and harbor never allocated one.
-      where = f"http://localhost:{route.container_port}"
+      where = f"http://{host}:{route.container_port}"
     else:
       where = "(no host port allocated)"
 
@@ -132,12 +133,17 @@ def location_receipt(
   *,
   heading: str | None = None,
 ) -> str:
-  """Post-up / status location block (Routes, Data, Logs)."""
+  """Post-up location block (Routes, Data, Logs)."""
   app_id = stack.app
   title = heading if heading is not None else f"Running {app_id}"
   rows: list[tuple[str, str]] = []
 
-  routes = route_lines(stack, run_data, published_route_urls(stack, run_data, ctx))
+  routes = route_lines(
+    stack,
+    run_data,
+    published_route_urls(stack, run_data, ctx),
+    host=ctx.config.harbor_address or "localhost",
+  )
   for i, line in enumerate(routes):
     rows.append(("Routes:" if i == 0 else "", line))
 
@@ -160,10 +166,20 @@ def capability_receipt(
   *,
   compact: bool = True,
   notes: tuple[str, ...] = (),
+  state_line: str | None = None,
+  last_action: str | None = None,
+  show_logs: bool = False,
 ) -> str:
-  """Manifest capability summary for inspect / first-run up."""
+  """Happ card for inspect / first-run up.
+
+  Live fields (state, reachability, last action, logs) are omitted unless the
+  caller passes them -- inspect-by-path is the capability card only.
+  """
   app_id = stack.app
   lines: list[str] = [f"{app_id}"]
+
+  if state_line is not None:
+    lines.append(_labeled_line("State:", state_line))
 
   containers = [f"{name}, image={unit.image}" for name, unit in stack.run_units.items()]
   if containers:
@@ -187,11 +203,16 @@ def capability_receipt(
       for extra in declared_ports[1:]:
         lines.append(_labeled_line("", extra))
 
-    if stack.subdomain and run_data is not None:
-      pubs = published_urls(stack, run_data, ctx)
-      if pubs:
-        lines.append(_labeled_line("Routes:", pubs[0]))
-        for extra in pubs[1:]:
+    if run_data is not None:
+      reach = route_lines(
+        stack,
+        run_data,
+        published_route_urls(stack, run_data, ctx),
+        host=ctx.config.harbor_address or "localhost",
+      )
+      if reach:
+        lines.append(_labeled_line("Routes:", reach[0]))
+        for extra in reach[1:]:
           lines.append(_labeled_line("", extra))
     elif stack.subdomain:
       lines.append(_labeled_line("Routes:", f"subdomain={stack.subdomain}"))
@@ -207,6 +228,11 @@ def capability_receipt(
       lines.append(_labeled_line("Config:", configs[0]))
       for extra in configs[1:]:
         lines.append(_labeled_line("", extra))
+
+    if last_action is not None:
+      lines.append(_labeled_line("Last action:", last_action))
+    if show_logs:
+      lines.append(_labeled_line("Logs:", f"harbor logs -f {app_id}"))
 
   dangers = danger_callouts(stack)
   for danger in dangers:
@@ -232,43 +258,6 @@ def danger_callouts(stack: AppStack) -> list[str]:
   return callouts
 
 
-def status_receipt(
-  stack: AppStack,
-  run_data: AppRunData,
-  ctx: HarborCtx,
-  *,
-  state_line: str,
-  source: Path | str,
-  last_action: str | None,
-) -> str:
-  """Full ``harbor status APP`` card."""
-  app_id = stack.app
-  rows: list[tuple[str, str]] = [
-    ("State:", state_line),
-    ("Source:", str(source)),
-  ]
-
-  routes = route_lines(stack, run_data, published_route_urls(stack, run_data, ctx))
-  for i, line in enumerate(routes):
-    rows.append(("Routes:" if i == 0 else "", line))
-
-  if run_data.start_blockers:
-    rows.append(("Config:", f"incomplete ({len(run_data.start_blockers)} issue(s))"))
-  else:
-    rows.append(("Config:", "complete"))
-
-  vols = volume_lines(stack, run_data, ctx)
-  if vols:
-    rows.append(("Volumes:", vols[0]))
-    for extra in vols[1:]:
-      rows.append(("", extra))
-
-  rows.append(("Last action:", last_action or "-"))
-  rows.append(("Logs:", f"harbor logs -f {app_id}"))
-
-  return _format_labeled(app_id, rows)
-
-
 def _labeled_line(label: str, value: str) -> str:
   return f"  {label:<{LABEL_WIDTH}}  {value}"
 
@@ -290,6 +279,5 @@ __all__ = [
   "published_route_urls",
   "published_urls",
   "route_lines",
-  "status_receipt",
   "volume_lines",
 ]

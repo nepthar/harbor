@@ -28,7 +28,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
     conn.out("Nothing started.")
     return
 
-  conn.out(_receipt(plan))
+  conn.out(_receipt(plan, ctx))
 
   code = dev(plan, ctx)
   if code:
@@ -56,7 +56,7 @@ def _confirmed(plan: DevPlan, conn: Conn) -> bool:
   return answer.strip().lower() in ("y", "yes")
 
 
-def _receipt(plan: DevPlan) -> str:
+def _receipt(plan: DevPlan, ctx: HarborCtx) -> str:
   """What is mounted live, and what a dev run deliberately does not do."""
   rows: list[tuple[str, str]] = [("Source:", str(plan.source))]
   for name, path in plan.mounts.items():
@@ -65,7 +65,14 @@ def _receipt(plan: DevPlan) -> str:
     rows.append(("", "(no app volumes: nothing is mounted from it)"))
 
   # The same block `harbor start` prints; only what is published differs.
-  for i, line in enumerate(route_lines(plan.stack, plan.run_data, plan.published)):
+  for i, line in enumerate(
+    route_lines(
+      plan.stack,
+      plan.run_data,
+      plan.published,
+      host=ctx.config.harbor_address or "localhost",
+    )
+  ):
     rows.append(("Routes:" if i == 0 else "", line))
 
   # compose.yml came from the staged manifest, so an edited source manifest is

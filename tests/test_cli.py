@@ -104,6 +104,19 @@ def test_start_ps_stop_tracks_docker_reality(harbor_env):
   assert ["compose", "down"] in calls
 
 
+def test_start_receipt_uses_harbor_address_for_local_urls(harbor_env):
+  harbor_env.config.write_text(
+    harbor_env.config.read_text().replace(
+      "port_base = 41000\n",
+      'port_base = 41000\nharbor_address = "10.0.0.5"\n',
+    )
+  )
+  started = harbor_env.run("start", "ports-demo")
+  assert started.returncode == 0, started.stderr
+  assert "http://10.0.0.5:41000" in started.stdout
+  assert "http://localhost:41000" not in started.stdout
+
+
 def test_rm_removes_run_state_configuration_and_managed_volumes(harbor_env):
   started = harbor_env.run("start", BASIC, "--set", "admin_user=alice")
   assert started.returncode == 0, started.stderr
@@ -132,18 +145,15 @@ def test_rm_leaves_the_catalog_entry_alone(harbor_env):
   assert bundle.is_dir()
 
 
-def test_status_and_inspect(harbor_env):
+def test_inspect_shows_live_state_for_an_installed_app(harbor_env):
   assert harbor_env.run("start", "ports-demo").returncode == 0
-  status = harbor_env.run("status", "ports-demo")
-  assert status.returncode == 0, status.stderr
-  assert "running" in status.stdout
-  # The same route block `start` prints, so both read alike.
-  assert "main:8080/tcp <- http://localhost:41000" in status.stdout
-  assert "harbor logs -f ports-demo" in status.stdout
-
   inspected = harbor_env.run("inspect", "ports-demo")
   assert inspected.returncode == 0, inspected.stderr
+  assert "running" in inspected.stdout
   assert "Containers:  main, image=alpine:latest" in inspected.stdout
+  assert "main:8080/tcp <- http://localhost:41000" in inspected.stdout
+  assert "harbor logs -f ports-demo" in inspected.stdout
+  assert "Last action:" in inspected.stdout
   assert "Config:" not in inspected.stdout
   assert "Note:" not in inspected.stdout
 
@@ -199,6 +209,8 @@ def test_inspect_by_path_shows_declared_config_without_installing(harbor_env):
   assert "admin_pass: (secret)" in inspected.stdout
   assert not harbor_env.app_logtab(BASIC).exists()
   assert "Note:" not in inspected.stdout
+  assert "Last action:" not in inspected.stdout
+  assert "State:" not in inspected.stdout
 
 
 def test_logs_accepts_native_flags_before_app(harbor_env):

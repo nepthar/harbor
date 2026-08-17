@@ -1,8 +1,10 @@
 import argparse
 from pathlib import Path
 
+from harbor.lib.apps import read_last_app_action
 from harbor.lib.happ import is_pathlike, load_happ
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.observations import RunState
 from harbor.lib.receipt import capability_receipt
 from harbor.lib.run_layout import load_run_data
 from harbor.lib.stack import AppStack
@@ -11,7 +13,7 @@ from harbor.lib.stack import AppStack
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "inspect",
-    help="Show images, ports, routes, volumes, config, and sharp edges for a happ",
+    help="Show state, images, ports, routes, volumes, config, and sharp edges",
   )
   parser.add_argument(
     "app",
@@ -38,4 +40,24 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     notes = (
       f"manifest has changed, `harbor stage {app}` may be required to reflect changes",
     )
-  conn.out(capability_receipt(stack, run_data, ctx, compact=False, notes=notes))
+  conn.out(
+    capability_receipt(
+      stack,
+      run_data,
+      ctx,
+      compact=False,
+      notes=notes,
+      state_line=_state_line(ctx.run_state(app)),
+      last_action=read_last_app_action(app, ctx.config) or "-",
+      show_logs=True,
+    )
+  )
+
+
+def _state_line(state: RunState) -> str:
+  total = len(state.containers)
+  if state.running_count:
+    return f"running, {state.running_count}/{total or state.running_count} containers"
+  if total:
+    return f"exited, 0/{total} containers"
+  return "-"
