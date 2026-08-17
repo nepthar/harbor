@@ -420,16 +420,15 @@ def ensure_destination_for(
   """Where `app_id` will install, refusing to disturb anything already there.
 
   Both bundle flavors are checked: one id maps to one catalog entry, whatever
-  its suffix.
+  its suffix. A symlink counts even when its target is gone: `Path.exists`
+  follows the link and would miss it, then `os.replace` fails with ENOTDIR.
   """
   for flavor in (HAPP_SUFFIX, HAPP_MD_SUFFIX):
     existing = apps_root / f"{app_id}{flavor}"
-    if existing.exists():
+    if existing.is_symlink() or existing.exists():
       raise ValueError(
-        f"{app_id} is already installed at {existing}.\n"
-        f"Update a previously fetched happ with `harbor fetch {app_id}`. "
-        f"Remove it first if you mean to replace it; a github: fetch never "
-        f"overwrites an installed happ."
+        f"Something already exists at {existing}, can't fetch {app_id} over it.\n"
+        f"Remove it first if you mean to replace it."
       )
   return apps_root / f"{app_id}{suffix}"
 
@@ -542,8 +541,8 @@ def replace_happ(fetched: FetchedHapp, dest: Path) -> Path:
   """
   if dest.is_symlink():
     raise ValueError(
-      f"{fetched.app_id} is a symlink at {dest}; harbor fetch will not "
-      f"overwrite a linked working tree."
+      f"Something already exists at {dest}, can't fetch {fetched.app_id} over it.\n"
+      f"Remove it first if you mean to replace it."
     )
   if dest.name != fetched.path.name:
     raise ValueError(

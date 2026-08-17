@@ -321,6 +321,12 @@ def test_github_names_are_validated(raw):
     parse_target(raw)
 
 
+def test_a_repo_name_may_start_and_end_with_underscores():
+  target = parse_target("github:nepthar/_vibes_/main/io.nthr.jrnl.happ")
+  assert target.repo == "_vibes_"
+  assert target.app_id == "io.nthr.jrnl"
+
+
 # --- ref resolution --------------------------------------------------------
 
 
@@ -519,8 +525,24 @@ def test_a_blob_larger_than_its_listing_is_cut_off(github, harbor_env):
 def test_an_installed_app_is_never_overwritten(harbor_env):
   apps_root = harbor_env.root / "apps"
 
-  with pytest.raises(ValueError, match="already installed"):
+  with pytest.raises(ValueError, match="already exists"):
     ensure_destination_for("ports-demo", apps_root)
+
+
+def test_a_symlink_catalog_entry_is_not_overwritten(harbor_env):
+  """`stage <path>` leaves a link in apps/; fetch must not clobber it.
+
+  A broken link is the sharp case: `exists()` follows it and returns False,
+  so a naive occupancy check would fall through to `os.replace` and ENOTDIR.
+  """
+  apps_root = harbor_env.root / "apps"
+  dest = apps_root / "hello-world.happ"
+  dest.symlink_to("/no/such/working-tree")
+
+  with pytest.raises(ValueError, match="already exists at .*hello-world.happ"):
+    ensure_destination_for("hello-world", apps_root)
+
+  assert dest.is_symlink()
 
 
 # --- the command ------------------------------------------------------------
@@ -613,7 +635,7 @@ def test_a_collision_fails_before_spending_rate_limit(github, ctx):
   conn = FakeConn()
   target = f"github:nepthar/harbor/main/{Path(REPO_PATH).parent}/ports-demo.happ"
 
-  with pytest.raises(ValueError, match="already installed"):
+  with pytest.raises(ValueError, match="already exists"):
     fetch(ctx, conn, target)
 
   assert github.requests == []
@@ -723,7 +745,7 @@ def test_an_md_target_colliding_with_a_folder_happ_is_refused(github, ctx):
   conn = FakeConn()
   target = "github:nepthar/harbor/main/examples/ports-demo.happ.md"
 
-  with pytest.raises(ValueError, match="already installed"):
+  with pytest.raises(ValueError, match="already exists"):
     fetch(ctx, conn, target)
 
   assert github.requests == []
@@ -733,7 +755,7 @@ def test_a_folder_target_colliding_with_an_md_happ_is_refused(harbor_env):
   apps_root = harbor_env.root / "apps"
   (apps_root / "solo.happ.md").write_bytes(MD_HAPP)
 
-  with pytest.raises(ValueError, match="already installed"):
+  with pytest.raises(ValueError, match="already exists"):
     ensure_destination_for("solo", apps_root)
 
 

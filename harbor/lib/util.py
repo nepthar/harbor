@@ -9,8 +9,10 @@ from pydantic import AfterValidator
 _IDENTIFIER_RE = re.compile(r"[a-zA-Z0-9_-]+\Z")
 _IDENTIFIER_MAX_LEN = 64
 
-# GitHub owner and repo names: start and end alphanumeric, `._-` in between.
-_GITHUB_SEGMENT_RE = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?\Z")
+# GitHub usernames start and end alphanumeric; `._-` allowed in between.
+# Repo names may also start or end with `._-` (`_vibes_` is a real repo).
+_GITHUB_USER_RE = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?\Z")
+_GITHUB_REPO_RE = re.compile(r"[a-zA-Z0-9._-]+\Z")
 _GITHUB_SEGMENT_MAX_LEN = 100
 
 
@@ -27,10 +29,12 @@ def validate_identifier(value: str) -> str:
 
 def validate_github_segment(value: str, kind: str) -> str:
   """Validate a GitHub user or repo name and return it unchanged."""
+  pattern = _GITHUB_REPO_RE if kind == "repo" else _GITHUB_USER_RE
   if (
     not value
     or len(value) > _GITHUB_SEGMENT_MAX_LEN
-    or _GITHUB_SEGMENT_RE.fullmatch(value) is None
+    or (kind == "repo" and value in (".", ".."))
+    or pattern.fullmatch(value) is None
   ):
     raise ValueError(f"Invalid GitHub {kind}: {value!r}")
   return value
