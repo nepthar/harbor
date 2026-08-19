@@ -48,6 +48,7 @@ to 0.25s.
 | `test_lock.py` | One lock per invocation; who holds it and for how long |
 | `test_restore.py` | Snapshot and restore, including data volumes |
 | `test_docker.py` | That the docker guard actually fails a stray call |
+| `test_api.py` | harbord's routes, its refusals, and jobs run to completion |
 
 `test_stack.py` and `test_compose.py` share `stack_of` from `conftest.py`:
 manifest TOML in, `AppStack` out, through the real parse-and-validate path.

@@ -119,11 +119,7 @@ class AppStack:
   """
 
   app: AppID
-  version: str
-  display_name: str
-  description: str
-  network_mode: str
-  subdomain: str | None
+  manifest: Manifest
   run_units: Mapping[str, AppRunUnit]
   routes: Mapping[str, AppRoute]
   config: Mapping[str, AppConfig]
@@ -150,6 +146,30 @@ class AppStack:
     except OSError as e:
       raise ConfigError(f"cannot read manifest {manifest_path}: {e}") from e
     return cls.from_bytes(data, app_id, manifest_path)
+
+  # `[app]` metadata is the manifest's to state and nobody else's to restate.
+  # Anything derived -- run units, routes, resolved volumes -- is built once
+  # in `_build`; anything verbatim is read straight through from here.
+
+  @property
+  def version(self) -> str:
+    return self.manifest.app.version
+
+  @property
+  def display_name(self) -> str:
+    return self.manifest.app.display_name
+
+  @property
+  def description(self) -> str:
+    return self.manifest.app.description
+
+  @property
+  def network_mode(self) -> str:
+    return self.manifest.app.network_mode
+
+  @property
+  def subdomain(self) -> str | None:
+    return self.manifest.app.subdomain
 
 
 def _build(manifest: Manifest, app: AppID) -> AppStack:
@@ -189,11 +209,7 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
 
   return AppStack(
     app=app,
-    version=manifest.app.version,
-    display_name=manifest.app.display_name,
-    description=manifest.app.description,
-    network_mode=manifest.app.network_mode,
-    subdomain=manifest.app.subdomain,
+    manifest=manifest,
     run_units=run_units,
     # Route names are unique across units -- `_validate_routes` rejected
     # anything else before we got here.
