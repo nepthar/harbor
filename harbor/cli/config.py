@@ -5,6 +5,7 @@ from tabulate import tabulate
 
 from harbor.cli.kv import parse_kv
 from harbor.lib.apps import AppID
+from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
 from harbor.lib.routes import RouteProviderError
@@ -21,7 +22,7 @@ def register(subparsers) -> None:
   parser.add_argument(
     "app",
     metavar="APP",
-    help="App ID of a staged happ",
+    help="App ID of a staged happ, or of one in an app source",
   )
   parser.add_argument(
     "--set",
@@ -63,12 +64,8 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
-  if not ctx.is_staged(app):
-    raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
   store = ctx.app_store(app)
-  # Schema from the staged run copy; values from config/<app_id>.logtab.
-  # `harbor start --set` is the one-shot for first install.
-  stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
+  stack = _config_stack(app, ctx)
 
   if args.get_name is not None:
     if args.sets or args.binds or args.routes:
@@ -84,6 +81,23 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     return
 
   _list(app, stack, store, conn)
+
+
+def _config_stack(app: AppID, ctx: HarborCtx) -> AppStack:
+  """The manifest this command reads its schema from.
+
+  A staged app is read from its run copy, because that is the manifest it will
+  actually start with -- a source that has moved on since is not what is
+  installed. An app that is only in a source is read from its bundle, so
+  values and binds can be set before the first stage; `stage` keeps whatever
+  is already on file. Values themselves always come from
+  config/<app_id>.logtab, which does not depend on either.
+  """
+  paths = ctx.staged_paths(app)
+  if paths.exists():
+    return AppStack.from_file(paths.manifest_path, app)
+  # Refuses an id carried by two sources, and a bundle with no manifest.
+  return load_happ(ctx.bundle_path(app)).app_stack()
 
 
 def _get(

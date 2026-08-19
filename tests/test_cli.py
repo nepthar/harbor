@@ -473,20 +473,65 @@ def test_missing_config_is_an_actionable_error(harbor_env, monkeypatch, tmp_path
 # --- config ----------------------------------------------------------------
 
 
-def test_config_requires_staging_first(harbor_env):
-  """Config lives in the run dir, so there is nowhere to put it until staged."""
-  too_early = harbor_env.run("config", BASIC, "--set", "admin_user=alice")
-  assert too_early.returncode == 1
-  assert f"harbor stage {BASIC}" in too_early.stderr
-
-  assert harbor_env.run("stage", BASIC).returncode == 0
-
+def test_config_before_staging_reads_the_bundle(harbor_env):
+  """Values can be set before the first stage; the source is the only manifest
+  there is, and `stage` keeps whatever is already on file."""
   listed = harbor_env.run("config", BASIC)
   assert listed.returncode == 0, listed.stderr
   assert "admin_user" in listed.stdout
 
-  set_result = harbor_env.run("config", BASIC, "--set", "admin_user=alice")
-  assert set_result.returncode == 0, set_result.stderr
+  early = harbor_env.run("config", BASIC, "--set", "admin_user=alice")
+  assert early.returncode == 0, early.stderr
+
+  assert harbor_env.run("stage", BASIC).returncode == 0
+  kept = harbor_env.run("config", BASIC, "--get", "admin_user")
+  assert kept.stdout.strip() == "alice"
+
+
+def test_binding_before_staging_applies_at_the_first_start(harbor_env):
+  """The bind is recorded against the source's manifest, so the very first
+  stage already has it -- no start-then-bind-then-restage round trip."""
+  app_id = "host-volumes"
+  host_path = harbor_env.root / "external-data"
+  host_path.mkdir()
+
+  bound = harbor_env.run("config", app_id, "--bind", "hostvol1=media")
+  assert bound.returncode == 0, bound.stderr
+
+  assert harbor_env.run("start", app_id).returncode == 0
+  link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
+  assert link.resolve() == host_path
+
+
+def test_config_of_a_staged_app_reads_the_run_copy(harbor_env):
+  """Not the source, which may have moved on since: the run copy is what the
+  app will actually start with."""
+  assert harbor_env.run("stage", BASIC).returncode == 0
+
+  manifest = harbor_env.root / "apps" / f"{BASIC}.happ" / "manifest.toml"
+  manifest.write_text(
+    manifest.read_text().replace("[volumes]", "since_staging = {}\n\n[volumes]")
+  )
+  # The source now declares it; the installed app does not.
+  assert "since_staging" in harbor_env.run("inspect", str(manifest.parent)).stdout
+  assert "since_staging" not in harbor_env.run("config", BASIC).stdout
+
+  refused = harbor_env.run("config", BASIC, "--set", "since_staging=x")
+  assert refused.returncode == 1
+  assert "No config since_staging" in refused.stderr
+
+
+def test_config_refuses_an_app_it_has_no_manifest_for(harbor_env):
+  gone = harbor_env.run("config", "no-such-app")
+  assert gone.returncode == 1
+  assert "No app found" in gone.stderr
+
+
+def test_assigning_a_route_still_needs_staging(harbor_env):
+  """A provider needs the allocated host port, which only staging hands out."""
+  too_early = harbor_env.run("config", "routes-demo", "--route", "main=web")
+  assert too_early.returncode == 1
+  assert "harbor stage routes-demo" in too_early.stderr
 
 
 def test_config_set_secret(harbor_env):

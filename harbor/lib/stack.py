@@ -155,6 +155,18 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
     name: AppConfig(name, entry.secret, entry.default, entry.desc, entry.hidden)
     for name, entry in manifest.config.items()
   }
+  # An app that names a subdomain gets it as a config key too, so the operator
+  # can move it off the label the happ shipped with -- `resolved_subdomain`
+  # reads the stored value back. Only when the manifest names one: an app with
+  # no routes has nothing to label, and a key with no default would read as
+  # unset configuration and block every start.
+  if manifest.app.subdomain and "subdomain" not in config:
+    config["subdomain"] = AppConfig(
+      name="subdomain",
+      secret=False,
+      default=manifest.app.subdomain,
+      desc="DNS label these routes are published under",
+    )
   # `app` volumes carry the happ's own files and are always read-only, so a
   # container write fails at mount time instead of being silently discarded
   # by the next `stage` (docs/run-layout.md L4).
