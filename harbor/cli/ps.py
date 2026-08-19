@@ -22,7 +22,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   for observation in ctx.observations():
     if not observation.installed:
       continue
-    stack = _staged_stack(observation, ctx)
+    stack = ctx.staged_stack(observation.app_id)
     rows.append(
       (
         observation.app_id,
@@ -39,16 +39,6 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
       tablefmt="simple",
     )
   )
-
-
-def _staged_stack(observation: AppObservation, ctx: HarborCtx) -> AppStack | None:
-  paths = ctx.staged_paths(observation.app_id)
-  if not paths.manifest_path.is_file():
-    return None
-  try:
-    return AppStack.from_file(paths.manifest_path, observation.app_id)
-  except ValueError:
-    return None
 
 
 def _config(observation: AppObservation, stack: AppStack | None, ctx: HarborCtx) -> str:

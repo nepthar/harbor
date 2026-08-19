@@ -120,6 +120,8 @@ class AppStack:
 
   app: AppID
   version: str
+  display_name: str
+  description: str
   network_mode: str
   subdomain: str | None
   run_units: Mapping[str, AppRunUnit]
@@ -188,6 +190,8 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
   return AppStack(
     app=app,
     version=manifest.app.version,
+    display_name=manifest.app.display_name,
+    description=manifest.app.description,
     network_mode=manifest.app.network_mode,
     subdomain=manifest.app.subdomain,
     run_units=run_units,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import string
+from pathlib import Path
 from typing import Annotated, Protocol
 
 from pydantic import AfterValidator
@@ -92,6 +93,16 @@ def fmt_size(n: float) -> str:
       return f"{n:.1f} {unit}"
     n /= 1024
   return f"{n:.1f} PB"
+
+
+def path_size(path: Path) -> int:
+  """Total bytes under `path`. Walks every file, so callers building a list
+  should think twice before calling it per row."""
+  if not path.exists():
+    return 0
+  if path.is_file():
+    return path.stat().st_size
+  return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
 class Conn(Protocol):

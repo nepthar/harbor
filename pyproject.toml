@@ -26,6 +26,7 @@ Repository = "https://git.zyx.pw/P2Project/harbor"
 
 [project.scripts]
 harbor = "harbor.cli.main:main"
+harbord = "harbor.daemon:main"
 
 [build-system]
 requires = ["hatchling"]

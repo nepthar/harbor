@@ -1,10 +1,9 @@
 import argparse
-from pathlib import Path
 
 from tabulate import tabulate
 
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.util import fmt_size
+from harbor.lib.util import fmt_size, path_size
 
 
 def register(subparsers) -> None:
@@ -29,7 +28,7 @@ def run(_args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
             app_dir.name,
             volume_dir.name,
             volume_type,
-            fmt_size(_path_size(volume_dir)),
+            fmt_size(path_size(volume_dir)),
           )
         )
 
@@ -37,15 +36,3 @@ def run(_args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   conn.out(
     tabulate(rows, headers=["app_id", "volume", "type", "size"], tablefmt="simple")
   )
-
-
-def _path_size(path: Path) -> int:
-  if not path.exists():
-    return 0
-  if path.is_file():
-    return path.stat().st_size
-  total = 0
-  for p in path.rglob("*"):
-    if p.is_file():
-      total += p.stat().st_size
-  return total

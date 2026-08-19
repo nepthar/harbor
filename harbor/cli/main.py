@@ -3,6 +3,7 @@ import gc
 import logging
 import sys
 
+from harbor import VERSION
 from harbor.cli import (
   catalog,
   cmd,
@@ -28,9 +29,6 @@ from harbor.cli import (
 from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.util import Conn, refuse_root
-
-VERSION = "0.1.0"
-
 
 for level, name in [
   (logging.DEBUG, "debug"),

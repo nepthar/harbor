@@ -191,6 +191,16 @@ class Config:
     return self.run_root / app_id
 
   @property
+  def conn_root(self) -> Path:
+    """Where harbord's sockets live. Under the harbor root so that a happ
+    granted admin access is granted it by mounting one path."""
+    return self.harbor_root / "conn"
+
+  @property
+  def admin_socket_path(self) -> Path:
+    return self.conn_root / "admin.sock"
+
+  @property
   def config_root(self) -> Path:
     return self.harbor_root / "config"
 
