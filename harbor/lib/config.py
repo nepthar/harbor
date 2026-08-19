@@ -132,6 +132,7 @@ class HostVolume:
 
 
 class Config:
+  config_path: Path
   harbor_root: Path
   volume_roots: dict[str, Path]
   apps_root: Path
@@ -147,6 +148,7 @@ class Config:
 
   def __init__(
     self,
+    config_path: Path,
     harbor_root: Path,
     volume_roots: dict[str, Path],
     apps_root: Path,
@@ -161,6 +163,10 @@ class Config:
     extra_app_sources: dict[str, Path] | None = None,
     host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
+    # Where this config was read from. Not derivable from harbor_root: an
+    # explicit --config may be named anything, and editing has to write back
+    # to the file harbor actually loaded.
+    self.config_path = config_path
     self.harbor_root = harbor_root
     self.volume_roots = volume_roots
     self.apps_root = apps_root
@@ -300,6 +306,7 @@ def load_config_file(config_file: str | Path) -> Config:
   }
 
   return Config(
+    config_path=config_path,
     harbor_root=harbor_root,
     volume_roots=volume_roots,
     apps_root=apps_root,

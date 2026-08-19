@@ -477,6 +477,7 @@ def _npm_provider():
 
 def test_documented_route_provider_config_constructs():
   config = Config(
+    config_path=Path("/tmp/config.toml"),
     harbor_root=Path("/tmp"),
     volume_roots={},
     apps_root=Path("/tmp/apps"),
@@ -658,6 +659,7 @@ def _pangolin_provider(
 
 def _pangolin_config(args: dict[str, str]):
   return Config(
+    config_path=Path("/tmp/config.toml"),
     harbor_root=Path("/tmp"),
     volume_roots={},
     apps_root=Path("/tmp/apps"),

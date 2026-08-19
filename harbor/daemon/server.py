@@ -43,6 +43,9 @@ MAX_SOCKET_PATH = 104
 
 BACKLOG = 128
 
+# Addresses that only a process on this machine can reach.
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
 
 def _claim_socket_path(path: Path) -> None:
   """Make `path` free to bind, or refuse and say who has it.
@@ -92,10 +95,21 @@ def _bind_unix(path: Path) -> socket.socket:
   return sock
 
 
-def _bind_tcp(port: int) -> socket.socket:
+def _bind_tcp(host: str, port: int) -> socket.socket:
+  if host not in LOOPBACK:
+    # The admin API has no authentication: whoever reaches it runs harbor
+    # verbs. Off loopback that is the whole network, so say so rather than
+    # letting a dev convenience turn into an open door quietly.
+    logger.warning(
+      "harbord is listening on %s:%d, which is NOT loopback. The admin API "
+      "has no authentication -- anything that can reach this port can run "
+      "harbor verbs. Use this only on a trusted network.",
+      host,
+      port,
+    )
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-  sock.bind(("127.0.0.1", port))
+  sock.bind((host, port))
   sock.listen(BACKLOG)
   return sock
 
@@ -105,6 +119,7 @@ def serve(
   config_args: dict[str, str | None],
   *,
   socket_path: Path | None = None,
+  host: str = "127.0.0.1",
   port: int | None = None,
 ) -> None:
   socket_path = socket_path or config.admin_socket_path
@@ -123,8 +138,8 @@ def serve(
   sockets = [_bind_unix(socket_path)]
   logger.warning("harbord %s listening on %s", VERSION, socket_path)
   if port is not None:
-    sockets.append(_bind_tcp(port))
-    logger.warning("harbord also listening on http://127.0.0.1:%d", port)
+    sockets.append(_bind_tcp(host, port))
+    logger.warning("harbord also listening on http://%s:%d", host, port)
 
   server = uvicorn.Server(
     uvicorn.Config(
@@ -154,7 +169,17 @@ def build_parser() -> argparse.ArgumentParser:
     "--port",
     type=int,
     metavar="N",
-    help="Also listen on 127.0.0.1:N, for reaching the API over an ssh tunnel",
+    help="Also listen on TCP port N, for an ssh tunnel or a container",
+  )
+  parser.add_argument(
+    "--host",
+    default="127.0.0.1",
+    metavar="ADDR",
+    help=(
+      "Address for --port (default: 127.0.0.1). A container reaching the host "
+      "does not arrive on loopback, so serving one needs 0.0.0.0 -- and the "
+      "admin API has no authentication, so only on a trusted network"
+    ),
   )
   return parser
 
@@ -174,6 +199,7 @@ def main() -> None:
       config,
       config_args,
       socket_path=Path(args.socket).expanduser() if args.socket else None,
+      host=args.host,
       port=args.port,
     )
   except KeyboardInterrupt:
