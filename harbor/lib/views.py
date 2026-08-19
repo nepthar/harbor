@@ -36,6 +36,68 @@ def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   ]
 
 
+def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]:
+  """Every harbor-managed volume on disk, whatever declared it.
+
+  Read from the volume roots rather than from manifests, so data an app left
+  behind still shows up -- `rm` deletes the run dir and keeps the volume, and
+  that data is invisible everywhere else.
+
+  `sizes` walks every file under every volume. The cost tracks file *count*,
+  not bytes, so it is usually quick and occasionally not; the caller decides
+  when to pay it.
+  """
+  running = {
+    observation.app_id
+    for observation in ctx.observations()
+    if observation.running_count
+  }
+  declared: dict[str, set[str]] = {}
+  volumes = []
+
+  for kind, root in sorted(ctx.config.volume_roots.items()):
+    if not root.is_dir():
+      continue
+    for app_dir in sorted(root.iterdir()):
+      if not app_dir.is_dir():
+        continue
+      app_id = app_dir.name
+      if app_id not in declared:
+        stack = ctx.staged_stack(app_id)
+        declared[app_id] = set(stack.volumes) if stack else set()
+      for volume_dir in sorted(app_dir.iterdir()):
+        if not volume_dir.is_dir():
+          continue
+        volumes.append(
+          {
+            "app_id": app_id,
+            "name": volume_dir.name,
+            "kind": kind,
+            "path": str(volume_dir),
+            "in_use": app_id in running,
+            # False means the data outlived whatever declared it: either the
+            # app is gone, or its manifest stopped naming this volume.
+            "declared": volume_dir.name in declared[app_id],
+            "bytes": path_size(volume_dir) if sizes else None,
+          }
+        )
+  return volumes
+
+
+def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """The `[host_volume]` entries config.toml declares, in tag order."""
+  return [
+    {
+      "tag": tag,
+      "path": str(volume.path),
+      "readonly": volume.readonly,
+      "require_mount": volume.require_mount,
+      "exists": volume.path.is_dir(),
+    }
+    for tag, volume in sorted(ctx.config.host_volumes.items())
+  ]
+
+
 def app_view(app_id: AppID, ctx: HarborCtx) -> dict[str, Any]:
   """One app in full: what `harbor inspect` shows, as data."""
   observation = _observation(app_id, ctx)

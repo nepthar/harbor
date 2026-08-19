@@ -239,3 +239,95 @@ def test_verbs_reject_arguments_they_do_not_declare(harbor_env, client):
   )
   assert response.status_code == 400
   assert "no argument 'bundle'" in response.json()["error"]
+
+
+# --- host volumes ----------------------------------------------------------
+
+
+def test_host_volumes_round_trip_over_the_api(harbor_env, client):
+  fresh = harbor_env.root / "extra-data"
+  fresh.mkdir()
+
+  listed = client.get("/host-volumes").json()["host_volumes"]
+  assert [v["tag"] for v in listed] == ["media", "other"]
+
+  created = client.post(
+    "/host-volumes", json={"tag": "extra", "path": str(fresh), "readonly": True}
+  )
+  assert created.status_code == 201, created.text
+  entry = {v["tag"]: v for v in created.json()["host_volumes"]}["extra"]
+  assert entry["path"] == str(fresh)
+  assert entry["readonly"] is True
+  assert entry["exists"] is True
+
+  # The response reflects config.toml after the write, not the request's own
+  # stale read of it.
+  assert "extra" in harbor_env.config.read_text()
+
+  replaced = client.put("/host-volumes/extra", json={"path": str(fresh)})
+  assert replaced.status_code == 200
+  assert {v["tag"]: v for v in replaced.json()["host_volumes"]}["extra"][
+    "readonly"
+  ] is False
+
+  removed = client.delete("/host-volumes/extra")
+  assert removed.status_code == 200
+  assert "extra" not in [v["tag"] for v in removed.json()["host_volumes"]]
+  assert "[host_volume.extra]" not in harbor_env.config.read_text()
+
+
+def test_host_volume_refusals_keep_config_intact(harbor_env, client):
+  before = harbor_env.config.read_text()
+
+  missing = client.post("/host-volumes", json={"tag": "x", "path": "/no/such/dir"})
+  assert missing.status_code == 400
+  assert "No such directory" in missing.json()["error"]
+
+  duplicate = client.post(
+    "/host-volumes", json={"tag": "media", "path": str(harbor_env.root)}
+  )
+  assert duplicate.status_code == 400
+  assert "already exists" in duplicate.json()["error"]
+
+  assert client.put("/host-volumes/nope", json={"path": "/tmp"}).status_code == 404
+  assert client.delete("/host-volumes/nope").status_code == 404
+
+  assert harbor_env.config.read_text() == before
+
+
+def test_volumes_view_reports_ownership_and_use(harbor_env, client):
+  assert harbor_env.run("start", APP, "--set", "admin_user=root").returncode == 0
+  (harbor_env.volumes_root / "data" / APP / "config" / "db.txt").write_text("xy")
+
+  volumes = {v["name"]: v for v in client.get("/volumes").json()["volumes"]}
+  assert volumes["config"]["app_id"] == APP
+  assert volumes["config"]["kind"] == "data"
+  assert volumes["config"]["in_use"] is True
+  assert volumes["config"]["declared"] is True
+  # Sizes are opt-in, because measuring walks every file under every volume.
+  assert volumes["config"]["bytes"] is None
+
+  sized = {v["name"]: v for v in client.get("/volumes?sizes=1").json()["volumes"]}
+  assert sized["config"]["bytes"] == 2
+
+
+def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
+  """Re-staging drops the link of a volume the manifest stopped declaring and
+  leaves the data. Nothing else would ever tell you it is still on disk."""
+  assert harbor_env.run("start", APP, "--set", "admin_user=root").returncode == 0
+  assert harbor_env.run("stop", APP).returncode == 0
+  assert {v["name"] for v in client.get("/volumes").json()["volumes"]} == {
+    "config",
+    "cache",
+  }
+
+  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  # Dropped from [volumes] *and* from the unit that mounted it -- a manifest
+  # that declares neither is what re-staging leaves data behind for.
+  text = manifest.read_text().replace('config = { kind = "data" }', "")
+  manifest.write_text(text.replace('config = "/myapp/config", ', ""))
+  assert harbor_env.run("stage", APP).returncode == 0
+
+  volumes = {v["name"]: v for v in client.get("/volumes").json()["volumes"]}
+  assert volumes["config"]["declared"] is False, "data left behind, flagged"
+  assert volumes["cache"]["declared"] is True

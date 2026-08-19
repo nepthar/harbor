@@ -27,6 +27,12 @@ from harbor import VERSION
 from harbor.daemon.jobs import JobRunner, validate
 from harbor.lib import views
 from harbor.lib.apps import AppID
+from harbor.lib.config import load_config_file
+from harbor.lib.config_edit import (
+  add_host_volume,
+  remove_host_volume,
+  set_host_volume,
+)
 from harbor.lib.harbor import HarborCtx
 
 # Bumped when a response shape changes in a way a client would notice. The web
@@ -34,6 +40,25 @@ from harbor.lib.harbor import HarborCtx
 API_VERSION = 1
 
 CtxFactory = Callable[[], HarborCtx]
+
+
+class HostVolumeBody(BaseModel):
+  """A `[host_volume]` entry, as the UI declares one.
+
+  `path` is a host path, which is the one kind of argument the rest of this
+  API refuses to take. That is deliberate here: declaring where apps may bind
+  is the point of the endpoint, and it cannot be done without naming a path.
+  """
+
+  model_config = ConfigDict(extra="forbid")
+
+  path: str
+  readonly: bool = False
+  require_mount: bool = False
+
+
+class NewHostVolume(HostVolumeBody):
+  tag: str
 
 
 class JobSubmission(BaseModel):
@@ -62,6 +87,15 @@ def _runner(request: Request) -> JobRunner:
 
 Ctx = Annotated[HarborCtx, Depends(_ctx)]
 Jobs = Annotated[JobRunner, Depends(_runner)]
+
+
+def _ctx_again(ctx: HarborCtx) -> HarborCtx:
+  """A context reading config.toml as it is *after* an edit.
+
+  The request's own context loaded the file before the write, and every
+  attribute on it is from that read.
+  """
+  return HarborCtx(load_config_file(ctx.config.config_path))
 
 
 def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
@@ -107,6 +141,58 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
       return views.app_view(resolved, ctx)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(404, str(e)) from e
+
+  @app.get("/volumes", tags=["volumes"])
+  def list_volumes(ctx: Ctx, sizes: bool = False) -> dict:
+    """Harbor-managed volumes. `sizes=1` walks every file, so it is opt-in."""
+    return {"volumes": views.volumes_view(ctx, sizes=sizes)}
+
+  @app.get("/host-volumes", tags=["host volumes"])
+  def list_host_volumes(ctx: Ctx) -> dict:
+    return {"host_volumes": views.host_volumes_view(ctx)}
+
+  @app.post("/host-volumes", status_code=201, tags=["host volumes"])
+  def create_host_volume(body: NewHostVolume, ctx: Ctx) -> dict:
+    # Config edits are milliseconds, so they answer inline rather than as a
+    # job. They still take the harbor lock, so one running behind a snapshot
+    # waits and then fails naming the holder.
+    try:
+      add_host_volume(
+        ctx,
+        body.tag,
+        body.path,
+        readonly=body.readonly,
+        require_mount=body.require_mount,
+      )
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
+    return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
+
+  @app.put("/host-volumes/{tag}", tags=["host volumes"])
+  def replace_host_volume(tag: str, body: HostVolumeBody, ctx: Ctx) -> dict:
+    if tag not in ctx.config.host_volumes:
+      raise HTTPException(404, f"No host volume {tag!r}")
+    try:
+      set_host_volume(
+        ctx,
+        tag,
+        body.path,
+        readonly=body.readonly,
+        require_mount=body.require_mount,
+      )
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
+    return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
+
+  @app.delete("/host-volumes/{tag}", tags=["host volumes"])
+  def delete_host_volume(tag: str, ctx: Ctx) -> dict:
+    if tag not in ctx.config.host_volumes:
+      raise HTTPException(404, f"No host volume {tag!r}")
+    try:
+      remove_host_volume(ctx, tag)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
+    return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
 
   @app.get("/jobs", tags=["jobs"])
   def list_jobs(jobs: Jobs) -> dict:

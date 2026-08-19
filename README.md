@@ -95,6 +95,8 @@ At the moment, I would love feedback on your experience using harbor or creating
 
 ## Development status and Roadmap
 
+Known gaps and decided-but-unbuilt work live in [docs/next-steps.md](docs/next-steps.md).
+
 Harbor is currently in a **pre-beta** stage. I do not yet consider it feature complete for a v1.0 release. I am regularly making structural changes without a forward migration path. You are welcome to join development if you like!
 
 (in rough order of priority)
