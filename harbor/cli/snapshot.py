@@ -28,5 +28,6 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
   app = ctx.resolve_app(args.app)
+  conn.out(f"Snapshotting {app}...")
   path = snapshot(app, ctx, label=args.label)
   conn.out(f"Snapshot of {app} written to {path}")

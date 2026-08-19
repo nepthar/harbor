@@ -61,6 +61,10 @@ def run_as_root(
 
   cmd = [DOCKER, "run", "--rm", *binds, ROOTFS_IMAGE, "sh", "-c", script]
 
+  # At warning level because this is the only sign of life during a step that
+  # can take minutes -- a big volume to copy, or a first-run image pull. The
+  # sudo prompt this replaced used to serve that purpose by accident.
+  logger.warning("Using a throwaway %s container to %s", ROOTFS_IMAGE, what)
   logger.debug("running as root in a container: %s", " ".join(cmd))
   # stderr is captured rather than streamed so it can go into the error below.
   # The cost is that a first-run image pull is silent, which alpine's few MB
