@@ -4,22 +4,24 @@ Reads do not take the harbor lock. They walk the filesystem the same way
 `harbor ps` does, and the worst a concurrent write can do is show a listing
 that was true a moment ago. Writes go through `JobRunner`, which does lock.
 
-Handlers are sync on purpose: `harbor.lib` blocks, and starlette runs a
-non-async endpoint in a threadpool, which is exactly the behaviour a blocking
-call wants. The one exception is reading a request body, which is async.
+Every handler is a plain `def`: `harbor.lib` blocks, and FastAPI runs a
+non-async endpoint in a threadpool, which is what a blocking call wants.
+
+Errors have one shape, `{"error": "..."}`, whether they come from harbor, from
+a route that does not exist, or from pydantic rejecting a body. A client that
+has to branch on two error shapes will get one of them wrong.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated
 
-from starlette.applications import Starlette
-from starlette.concurrency import run_in_threadpool
-from starlette.exceptions import HTTPException
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from harbor import VERSION
 from harbor.daemon.jobs import JobRunner, validate
@@ -34,98 +36,95 @@ API_VERSION = 1
 CtxFactory = Callable[[], HarborCtx]
 
 
+class JobSubmission(BaseModel):
+  """What `POST /jobs` accepts.
+
+  Shape only. Whether the verb exists, whether its arguments are the ones it
+  declares, and whether the app is installed are harbor questions, and
+  `jobs.validate` answers them against a live context.
+  """
+
+  model_config = ConfigDict(extra="forbid")
+
+  verb: str
+  args: dict[str, str] = Field(default_factory=dict)
+
+
 def _ctx(request: Request) -> HarborCtx:
   """A context per request. Harbor's state is the filesystem, and a request is
   the daemon's equivalent of an invocation -- nothing is carried between."""
   return request.app.state.ctx_factory()
 
 
-def _jobs(request: Request) -> JobRunner:
+def _runner(request: Request) -> JobRunner:
   return request.app.state.jobs
 
 
-def get_version(request: Request) -> JSONResponse:
-  return JSONResponse({"harbor": VERSION, "api": API_VERSION})
+Ctx = Annotated[HarborCtx, Depends(_ctx)]
+Jobs = Annotated[JobRunner, Depends(_runner)]
 
 
-def list_apps(request: Request) -> JSONResponse:
-  return JSONResponse({"apps": views.apps_view(_ctx(request))})
-
-
-def get_app(request: Request) -> JSONResponse:
-  raw = request.path_params["app_id"]
-  try:
-    app_id = AppID(raw)
-  except ValueError:
-    raise HTTPException(404, f"No app {raw!r}") from None
-  try:
-    return JSONResponse(views.app_view(app_id, _ctx(request)))
-  except (ValueError, RuntimeError) as e:
-    raise HTTPException(404, str(e)) from e
-
-
-def list_jobs(request: Request) -> JSONResponse:
-  return JSONResponse({"jobs": _jobs(request).list()})
-
-
-def get_job(request: Request) -> JSONResponse:
-  job_id = request.path_params["job_id"]
-  job = _jobs(request).get(job_id)
-  if job is None:
-    raise HTTPException(404, f"No job {job_id!r}")
-  return JSONResponse(job)
-
-
-async def submit_job(request: Request) -> JSONResponse:
-  try:
-    body = await request.json()
-  except ValueError as e:
-    raise HTTPException(400, f"Body is not valid JSON: {e}") from e
-  return await run_in_threadpool(_submit, request, body)
-
-
-def _submit(request: Request, body: Any) -> JSONResponse:
-  if not isinstance(body, dict):
-    raise HTTPException(400, 'Body must be a JSON object: {"verb": …, "args": {…}}')
-
-  verb = body.get("verb")
-  args = body.get("args", {})
-  if not isinstance(verb, str):
-    raise HTTPException(400, 'Body needs a "verb" string')
-  if not isinstance(args, dict) or not all(
-    isinstance(k, str) and isinstance(v, str) for k, v in args.items()
-  ):
-    raise HTTPException(400, '"args" must be an object of string values')
-
-  try:
-    validate(verb, args, _ctx(request))
-  except (ValueError, RuntimeError) as e:
-    raise HTTPException(400, str(e)) from e
-
-  return JSONResponse(_jobs(request).submit(verb, args), status_code=202)
-
-
-async def _render_error(request: Request, exc: HTTPException) -> JSONResponse:
-  """One error shape for the whole API, including starlette's own 404s/405s."""
-  return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
-
-
-ROUTES = [
-  Route("/", get_version),
-  Route("/version", get_version),
-  Route("/apps", list_apps),
-  Route("/apps/{app_id}", get_app),
-  Route("/jobs", list_jobs, methods=["GET"]),
-  Route("/jobs", submit_job, methods=["POST"]),
-  Route("/jobs/{job_id}", get_job),
-]
-
-
-def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> Starlette:
-  app = Starlette(
-    routes=ROUTES,
-    exception_handlers={HTTPException: _render_error},
+def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
+  app = FastAPI(
+    title="Harbor admin API",
+    version=f"{VERSION} (api {API_VERSION})",
+    description="Read harbor state, and run harbor verbs as jobs.",
   )
   app.state.ctx_factory = ctx_factory
   app.state.jobs = jobs
+
+  @app.exception_handler(StarletteHTTPException)
+  def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+  @app.exception_handler(RequestValidationError)
+  def _bad_body(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # 400 rather than FastAPI's 422: a malformed body is a bad request, and one
+    # status for "you sent something wrong" is easier to consume than two.
+    problems = "; ".join(
+      f"{'.'.join(str(p) for p in error['loc'] if p != 'body') or 'body'}: "
+      f"{error['msg']}"
+      for error in exc.errors()
+    )
+    return JSONResponse({"error": f"Invalid request body: {problems}"}, 400)
+
+  @app.get("/", tags=["meta"])
+  @app.get("/version", tags=["meta"])
+  def get_version() -> dict:
+    return {"harbor": VERSION, "api": API_VERSION}
+
+  @app.get("/apps", tags=["apps"])
+  def list_apps(ctx: Ctx) -> dict:
+    return {"apps": views.apps_view(ctx)}
+
+  @app.get("/apps/{app_id}", tags=["apps"])
+  def get_app(app_id: str, ctx: Ctx) -> dict:
+    try:
+      resolved = AppID(app_id)
+    except ValueError:
+      raise HTTPException(404, f"No app {app_id!r}") from None
+    try:
+      return views.app_view(resolved, ctx)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(404, str(e)) from e
+
+  @app.get("/jobs", tags=["jobs"])
+  def list_jobs(jobs: Jobs) -> dict:
+    return {"jobs": jobs.list()}
+
+  @app.post("/jobs", status_code=202, tags=["jobs"])
+  def submit_job(submission: JobSubmission, ctx: Ctx, jobs: Jobs) -> dict:
+    try:
+      validate(submission.verb, submission.args, ctx)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
+    return jobs.submit(submission.verb, submission.args)
+
+  @app.get("/jobs/{job_id}", tags=["jobs"])
+  def get_job(job_id: str, jobs: Jobs) -> dict:
+    job = jobs.get(job_id)
+    if job is None:
+      raise HTTPException(404, f"No job {job_id!r}")
+    return job
+
   return app

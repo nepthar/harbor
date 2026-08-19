@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from starlette.testclient import TestClient
+from fastapi.testclient import TestClient
 
 from harbor.daemon.api import API_VERSION, create_app
 from harbor.daemon.jobs import JobRunner
@@ -168,23 +168,49 @@ def test_unknown_job_is_404(harbor_env, client):
 @pytest.mark.parametrize(
   ("body", "expected"),
   [
-    ([1, 2], "JSON object"),
-    ({"args": {"app": "basic-features"}}, '"verb" string'),
+    # Shape, rejected by the JobSubmission model...
+    ([1, 2], "valid dictionary"),
+    ({"args": {"app": "basic-features"}}, "verb: Field required"),
+    ({"verb": "stop", "args": {"app": 3}}, "args.app: Input should be a valid str"),
+    ({"verb": "stop", "app": "basic-features"}, "app: Extra inputs"),
+    # ...and meaning, which only a live context can judge.
     ({"verb": "rm", "args": {"app": "basic-features"}}, "Unknown verb"),
     ({"verb": "stop", "args": {}}, "requires argument"),
-    ({"verb": "stop", "args": {"app": 3}}, "string values"),
   ],
 )
 def test_submission_is_refused_with_a_reason(harbor_env, client, body, expected):
   response = client.post("/jobs", json=body)
-  assert response.status_code == 400
+  assert response.status_code == 400, response.text
   assert expected in response.json()["error"]
 
 
 def test_empty_body_is_refused(harbor_env, client):
   response = client.post("/jobs")
   assert response.status_code == 400
-  assert "not valid JSON" in response.json()["error"]
+  assert "error" in response.json()
+
+
+def test_every_error_has_the_same_shape(harbor_env, client):
+  """One key to read, whether harbor refused, the route is missing, or the
+  body was malformed. Two shapes means a client gets one of them wrong."""
+  for response in (
+    client.get("/apps/nope"),
+    client.get("/nowhere"),
+    client.delete("/apps"),
+    client.post("/jobs", json={"nonsense": True}),
+  ):
+    assert response.status_code >= 400
+    assert set(response.json()) == {"error"}, response.text
+
+
+def test_openapi_documents_the_surface(harbor_env, client):
+  """Free with FastAPI, and the web UI is a separate codebase that has to
+  discover this API somehow."""
+  spec = client.get("/openapi.json")
+  assert spec.status_code == 200
+  paths = spec.json()["paths"]
+  assert {"/apps", "/apps/{app_id}", "/jobs", "/jobs/{job_id}"} <= set(paths)
+  assert "post" in paths["/jobs"]
 
 
 @pytest.mark.parametrize(
