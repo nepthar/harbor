@@ -61,6 +61,7 @@ path = "other-data"
 FAKE_DOCKER = """#!/usr/bin/env python3
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -101,6 +102,16 @@ elif args[:2] == ["compose", "down"]:
         state.write_text(json.dumps(containers))
     else:
         state.unlink(missing_ok=True)
+elif args[0] == "run":
+    # `docker run --rm -v HOST:HOST ... IMAGE sh -c SCRIPT`, harbor's stand-in
+    # for sudo (harbor/lib/lifecycle/rootfs.py). Every bind maps a host path to
+    # itself, so running the script right here is faithful to what the
+    # container would do -- the only thing the real one adds is root, which a
+    # test has no way to want. stdout is inherited, so the caller still gets
+    # the tar stream it redirects into the archive.
+    if args[-3:-1] != ["sh", "-c"]:
+        sys.exit("fake docker: unexpected `docker run` shape: " + " ".join(args))
+    sys.exit(subprocess.run(["sh", "-c", args[-1]]).returncode)
 elif args[:2] == ["ps", "-a"]:
     for container in containers:
         print(json.dumps({

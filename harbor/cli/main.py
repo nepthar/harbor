@@ -27,7 +27,7 @@ from harbor.cli import (
 )
 from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.util import Conn
+from harbor.lib.util import Conn, refuse_root
 
 VERSION = "0.1.0"
 
@@ -112,12 +112,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _dispatch(args: argparse.Namespace, conn: Conn) -> None:
-  if args.command is None:
-    args.func(args, None, conn)
-    return
-
   try:
-    if args.command == "init":
+    # Before anything else, and before `init` in particular: the first command
+    # is the one that would create the harbor root with the wrong owner.
+    refuse_root("harbor")
+    if args.command is None or args.command == "init":
       args.func(args, None, conn)
     else:
       cfg = load_config(

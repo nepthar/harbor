@@ -9,6 +9,7 @@ instead.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from harbor.lib.happ import scan_happs
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.logtab import LogTab
 from harbor.lib.store import HarborStore
+from harbor.lib.util import refuse_root
 
 BASIC = "io.p2net.basic-features"
 
@@ -1260,3 +1262,28 @@ def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
   assert not (harbor_env.run_root / app_id).exists()
   assert read_last_app_action(app_id, config) == "removed"
   assert f"apps/{app_id}/status" in LogTab(config.activity_log).load()
+
+
+# --- running as root -------------------------------------------------------
+
+
+def test_refuse_root_is_quiet_for_an_ordinary_user(monkeypatch):
+  monkeypatch.setattr(os, "geteuid", lambda: 1000)
+  assert refuse_root("harbor") is None
+
+
+def test_refuse_root_names_who_and_what_to_do(monkeypatch):
+  monkeypatch.setattr(os, "geteuid", lambda: 0)
+  with pytest.raises(RuntimeError) as raised:
+    refuse_root("the harbor daemon")
+  assert "the harbor daemon" in str(raised.value)
+  assert "sudo" in str(raised.value)
+
+
+def test_every_command_refuses_to_run_as_root(harbor_env, monkeypatch):
+  """`init` included: it is the command that would create the root-owned tree."""
+  monkeypatch.setattr(os, "geteuid", lambda: 0)
+  for argv in (["init"], ["ps"], ["snapshot", BASIC]):
+    refused = harbor_env.run(*argv)
+    assert refused.returncode == 1, argv
+    assert "refuses to run as root" in refused.stderr, argv

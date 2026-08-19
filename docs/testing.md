@@ -46,7 +46,7 @@ to 0.25s.
 | `test_layout.py` | Staging: the run dir, volume links, re-staging |
 | `test_cli.py` | The command surface — exit codes, output, disk state |
 | `test_lock.py` | One lock per invocation; who holds it and for how long |
-| `test_restore.py` | Snapshot and restore, for an app with no volumes |
+| `test_restore.py` | Snapshot and restore, including data volumes |
 | `test_docker.py` | That the docker guard actually fails a stray call |
 
 `test_stack.py` and `test_compose.py` share `stack_of` from `conftest.py`:
@@ -61,16 +61,22 @@ thing being tested, and a fake would only assert that the fake works. Run them
 by hand against a real harbor root before a release or after touching the
 relevant area.
 
-**Snapshot and restore of real volume data.** `lifecycle/snapshot.py` shells
-out to `sudo cp -a` because containers write files as root; that copy is the
-whole reason the code is shaped the way it is, and nothing in `test_restore.py`
-reaches it (`ports-demo` declares no volumes). Check: a snapshot of an app with
-root-owned files in a data volume, the single sudo prompt, ownership and modes
-preserved on the way in, symlinks *inside* a volume not dereferenced, and a
-restore that brings the data back intact. Also that an interrupted snapshot
-leaves the staging dir with the message that names it.
+**Snapshot and restore of real volume data.** Containers write their files as
+root, so `lifecycle/rootfs.py` does the `tar`, `cp -a` and `rm -rf` in a
+throwaway container instead of on the host. `test_restore.py` pins down the
+docker command harbor builds, but the fake runs that command's script on the
+host as an ordinary user, so the part that actually needs root is untested.
+Check: a snapshot of an app with genuinely root-owned files in a data volume,
+ownership and modes preserved on the way in, symlinks *inside* a volume not
+dereferenced, an archive left owned by the invoking user rather than root, and
+a restore that brings the data back intact. Also that an interrupted snapshot
+leaves the staging dir with the message that names it, and that harbor pulls
+the pinned image on a host that does not have it yet.
 
-**Real `docker compose up` / `down`.** The fake in `conftest.py` knows three
+**Refusing to run as root.** `refuse_root` is unit-tested against a faked uid;
+that it fires for a genuine `sudo harbor …` is not.
+
+**Real `docker compose up` / `down`.** The fake in `conftest.py` knows four
 argument shapes. Untested against it: image pull, `${__HARBOR_CONFIG__*}`
 interpolation actually reaching the container, restart policies, `depends_on`
 ordering, and drift between compose versions.

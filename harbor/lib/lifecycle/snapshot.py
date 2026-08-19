@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import shlex
 import shutil
-import subprocess
 from datetime import UTC, datetime
 from logging import getLogger
 from pathlib import Path
 
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.lifecycle.rootfs import run_as_root
 from harbor.lib.stack import AppStack
 from harbor.lib.util import validate_identifier
 
@@ -49,64 +50,49 @@ def snapshot_archive(root: Path, app: AppID, name: str) -> Path:
   return root / app / f"{name}{SNAPSHOT_TAR_SUFFIX}"
 
 
-def _tar_create(folder: Path, archive: Path, *, sudo: bool) -> None:
-  cmd = ["tar", "-czf", "-", "-C", str(folder.parent), folder.name]
-  if sudo:
-    logger.warning("Asking for sudo access to compress the snapshot.")
-    cmd = ["sudo", *cmd]
-  with open(archive, "wb") as out:
-    result = subprocess.run(cmd, stdout=out, stderr=subprocess.PIPE)
-  if result.returncode != 0:
+def _tar_create(folder: Path, archive: Path) -> None:
+  """Archive `folder` into `archive`, with the *host* owning the archive file.
+
+  The container only writes the compressed stream to stdout; this process opens
+  the destination, so the archive belongs to the operator and not to root.
+  """
+  folder = folder.resolve()
+  parent = shlex.quote(str(folder.parent))
+  script = f"tar -czf - -C {parent} {shlex.quote(folder.name)}"
+  try:
+    with open(archive, "wb") as out:
+      run_as_root(f"compress the snapshot at {folder}", script, [folder], stdout=out)
+  except Exception:
     archive.unlink(missing_ok=True)
-    detail = (result.stderr or b"").decode().strip()
-    message = f"Unable to compress snapshot at {folder}."
-    if sudo:
-      message = (
-        "Unable to compress snapshot — sudo is required to read "
-        "root-owned volume files in the snapshot. "
-        "Ensure sudo is available and that you can authenticate when prompted."
-      )
-    raise RuntimeError(f"{message}\n{detail}" if detail else message)
+    raise
 
 
-def _tar_extract(archive: Path, dest_parent: Path, *, sudo: bool) -> None:
-  cmd = ["tar", "-xzf", str(archive), "-C", str(dest_parent)]
-  if sudo:
-    logger.warning("Asking for sudo access to extract the snapshot.")
-    cmd = ["sudo", *cmd]
-  result = subprocess.run(cmd, capture_output=True, text=True)
-  if result.returncode != 0:
-    detail = (result.stderr or result.stdout or "").strip()
-    message = f"Unable to extract snapshot {archive}."
-    if sudo:
-      message = (
-        "Unable to extract snapshot — sudo is required to restore "
-        "root-owned volume files. "
-        "Ensure sudo is available and that you can authenticate when prompted."
-      )
-    raise RuntimeError(f"{message}\n{detail}" if detail else message)
+def _tar_extract(archive: Path, dest_parent: Path) -> None:
+  archive = archive.resolve()
+  dest_parent = dest_parent.resolve()
+  script = f"tar -xzf {shlex.quote(str(archive))} -C {shlex.quote(str(dest_parent))}"
+  run_as_root(f"extract the snapshot {archive}", script, [archive.parent, dest_parent])
 
 
-def remove_snapshot_dir(folder: Path, *, sudo: bool) -> None:
+def remove_snapshot_dir(folder: Path) -> None:
+  """Delete an uncompressed snapshot folder.
+
+  Only its volume tree can hold root-owned files -- the manifest, config and
+  happ copy were written by this process. A snapshot of an app with no data
+  volumes is therefore ours to delete, and paying for a container to do it
+  would make cleanup fail whenever docker is down.
+  """
   if not folder.exists():
     return
-  if not sudo:
+  folder = folder.resolve()
+  if not any((folder / "volumes").rglob("*")):
     shutil.rmtree(folder)
     return
-  result = subprocess.run(
-    ["sudo", "rm", "-rf", "--", str(folder)],
-    capture_output=True,
-    text=True,
-  )
-  if result.returncode != 0:
-    detail = (result.stderr or result.stdout or "").strip()
-    raise RuntimeError(
-      f"Unable to remove {folder}; remove it with `sudo rm -rf {folder}`."
-      + (f"\n{detail}" if detail else "")
-    )
+  script = f"rm -rf -- {shlex.quote(str(folder))}"
+  run_as_root(f"remove {folder}", script, [folder.parent])
 
 
-def extract_snapshot(archive: Path, *, sudo: bool) -> Path:
+def extract_snapshot(archive: Path) -> Path:
   name = archive.name.removesuffix(SNAPSHOT_TAR_SUFFIX)
   folder = archive.parent / name
   if folder.exists():
@@ -115,9 +101,17 @@ def extract_snapshot(archive: Path, *, sudo: bool) -> Path:
       f"remove it with `rm -rf {folder}` before retrying."
     )
   try:
-    _tar_extract(archive, archive.parent, sudo=sudo)
+    _tar_extract(archive, archive.parent)
   except Exception:
-    remove_snapshot_dir(folder, sudo=sudo)
+    # Cleanup must not speak over the failure it is cleaning up after: when
+    # docker is the thing that broke, removal fails too, and its message would
+    # replace the only one that says what actually went wrong.
+    try:
+      remove_snapshot_dir(folder)
+    except Exception as cleanup_error:
+      logger.warning(
+        "could not remove %s after a failed extract: %s", folder, cleanup_error
+      )
     raise
   return folder
 
@@ -177,7 +171,6 @@ def snapshot(
     )
 
   staging.mkdir(parents=True, mode=0o700)
-  included: list[str] = []
 
   try:
     included, excluded = _volume_names(paths.run_path / "volumes")
@@ -221,33 +214,19 @@ def snapshot(
         sources.append(source)
 
       if sources:
-        # One sudo invocation so the operator sees at most one password prompt.
-        # -a: recursive, keep ownership/mode/times, preserve inner symlinks & hardlinks.
-        logger.warning("Asking for sudo access to copy data volumes into snapshot.")
-        sudo_cmd = [
-          "sudo",
-          "cp",
-          "-a",
-          "--",
-          *[str(s) for s in sources],
-          str(data_dest),
-        ]
-        logger.warning("Command is: %s", " ".join(sudo_cmd))
-        result = subprocess.run(
-          sudo_cmd,
-          capture_output=True,
-          text=True,
-        )
-        if result.returncode != 0:
-          detail = (result.stderr or result.stdout or "").strip()
-          message = (
-            "Unable to create snapshot — because docker containers often write "
-            "files as root, sudo is required to read volume contents. "
-            "Ensure sudo is available and that you can authenticate when prompted."
+        # -a: recursive, keep ownership/mode/times, preserve inner symlinks &
+        # hardlinks. The sources are already-resolved link targets; -a must not
+        # dereference the symlinks *inside* them.
+        quoted = " ".join(shlex.quote(str(s)) for s in sources)
+        script = f"cp -a -- {quoted} {shlex.quote(str(data_dest.resolve()))}"
+        try:
+          run_as_root(
+            f"copy the data volumes of {app} into the snapshot",
+            script,
+            [*sources, data_dest],
           )
-          if detail:
-            message = f"{message}\n{detail}"
-          raise _staging_failure(staging, message)
+        except RuntimeError as e:
+          raise _staging_failure(staging, str(e)) from e
 
     snapshot_folder.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     shutil.move(str(staging), str(snapshot_folder))
@@ -258,10 +237,9 @@ def snapshot(
   except Exception as e:
     raise _staging_failure(staging, str(e)) from e
 
-  sudo = bool(included)
   try:
-    _tar_create(snapshot_folder, archive, sudo=sudo)
-    remove_snapshot_dir(snapshot_folder, sudo=sudo)
+    _tar_create(snapshot_folder, archive)
+    remove_snapshot_dir(snapshot_folder)
   except Exception as e:
     raise RuntimeError(
       f"{e}\n"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import string
 from typing import Annotated, Protocol
@@ -14,6 +15,22 @@ _IDENTIFIER_MAX_LEN = 64
 _GITHUB_USER_RE = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?\Z")
 _GITHUB_REPO_RE = re.compile(r"[a-zA-Z0-9._-]+\Z")
 _GITHUB_SEGMENT_MAX_LEN = 100
+
+
+def refuse_root(who: str) -> None:
+  """Refuse to keep going when the effective uid is 0.
+
+  Harbor creates the harbor root, run dirs and config files as whoever runs it,
+  so running once as root leaves files the real owner cannot rewrite. Nothing
+  here needs the privilege: root-owned volume files are handled by a throwaway
+  container (see lifecycle/rootfs.py), not by this process.
+  """
+  if os.geteuid() == 0:
+    raise RuntimeError(
+      f"{who} refuses to run as root: it would leave root-owned files in the "
+      f"harbor root. Re-run it without `sudo`, as the user that owns the "
+      f"harbor root."
+    )
 
 
 def validate_identifier(value: str) -> str:

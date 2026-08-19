@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import shlex
 import shutil
-import subprocess
 import tarfile
 import tomllib
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from pathlib import Path
 
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.lifecycle.rootfs import run_as_root
 from harbor.lib.lifecycle.snapshot import (
   SNAPSHOT_TAR_SUFFIX,
   extract_snapshot,
@@ -193,32 +193,30 @@ def _restore_data_volumes(plan: RestorePlan, ctx: HarborCtx) -> None:
   data_root = ctx.config.volume_roots["data"] / plan.app_id
   data_root.mkdir(parents=True, exist_ok=True)
 
-  # Containers write as root, so both the removal and the copy need sudo. One
-  # `sh -c` keeps it to a single password prompt, and means a refused password
-  # fails before anything has been deleted. -a: recursive, keep
-  # ownership/mode/times, preserve inner symlinks and hardlinks rather than
-  # dereferencing them.
-  targets = " ".join(shlex.quote(str(dest)) for _, dest in plan.data_volumes)
-  sources = " ".join(shlex.quote(str(src)) for src, _ in plan.data_volumes)
-  script = (
-    f"set -e; rm -rf -- {targets}; cp -a -- {sources} {shlex.quote(str(data_root))}"
+  # Containers write as root, so neither the removal nor the copy can be done
+  # by this process. One `sh -c` in one container keeps it to a single step, so
+  # a failure to start that container fails before anything has been deleted.
+  # -a: recursive, keep ownership/mode/times, preserve inner symlinks and
+  # hardlinks rather than dereferencing them.
+  # Targets are named under the *resolved* data root rather than resolved
+  # themselves: they have to match the bind mount, and a target that is itself
+  # a symlink should be replaced, not followed.
+  resolved_root = data_root.resolve()
+  sources = [src.resolve() for src, _ in plan.data_volumes]
+  targets = " ".join(
+    shlex.quote(str(resolved_root / dest.name)) for _, dest in plan.data_volumes
   )
+  quoted_sources = " ".join(shlex.quote(str(src)) for src in sources)
+  root = shlex.quote(str(resolved_root))
+  script = f"set -e; rm -rf -- {targets}; cp -a -- {quoted_sources} {root}"
 
-  logger.warning("Asking for sudo access to copy data volumes out of the snapshot.")
-  logger.warning("Command is: sudo sh -c %s", shlex.quote(script))
-  result = subprocess.run(
-    ["sudo", "sh", "-c", script],
-    capture_output=True,
-    text=True,
+  # The targets live under data_root and may not exist yet, so data_root is
+  # what gets bound rather than each target.
+  run_as_root(
+    f"restore the data volumes of {plan.app_id}",
+    script,
+    [data_root, *sources],
   )
-  if result.returncode != 0:
-    detail = (result.stderr or result.stdout or "").strip()
-    message = (
-      "Unable to restore data volumes — because docker containers often write "
-      "files as root, sudo is required to replace volume contents. "
-      "Ensure sudo is available and that you can authenticate when prompted."
-    )
-    raise RuntimeError(f"{message}\n{detail}" if detail else message)
 
 
 def restore(
@@ -234,16 +232,15 @@ def restore(
   There is no scratch-and-swap: the pre-restore snapshot is the undo, so a
   failure partway leaves a broken run dir that another restore repairs.
   """
-  sudo = bool(plan.data_volumes)
   archive = plan.snapshot_path.with_name(
     f"{plan.snapshot_path.name}{SNAPSHOT_TAR_SUFFIX}"
   )
-  extract_snapshot(archive, sudo=sudo)
+  extract_snapshot(archive)
 
   try:
     return _restore_extracted(plan, ctx, snapshot_first=snapshot_first)
   finally:
-    remove_snapshot_dir(plan.snapshot_path, sudo=sudo)
+    remove_snapshot_dir(plan.snapshot_path)
 
 
 def _restore_extracted(
@@ -272,8 +269,8 @@ def _restore_extracted(
       ) from e
     logger.info("pre-restore snapshot written to %s", pre)
 
-  # Volumes before the run dir: this is the step that can be refused at a sudo
-  # password prompt, and refusal leaves the run dir untouched.
+  # Volumes before the run dir: this is the step most likely to fail outright,
+  # and failing here leaves the run dir untouched.
   _restore_data_volumes(plan, ctx)
 
   _rebuild_run_dir(plan)

@@ -21,8 +21,8 @@ def register(subparsers) -> None:
     metavar="LABEL",
     help="Optional label appended to the snapshot name",
   )
-  # Default holds_lock=True: the whole copy (including sudo volume cp) runs under
-  # the harbor lock so nothing else mutates the app mid-snapshot.
+  # Default holds_lock=True: the whole copy (including the containerized volume
+  # cp) runs under the harbor lock so nothing else mutates the app mid-snapshot.
   parser.set_defaults(func=run)
 
 
