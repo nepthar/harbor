@@ -47,6 +47,23 @@ class AppObservation:
     return sum(container.state.lower() == "running" for container in self.containers)
 
   @property
+  def installed(self) -> bool:
+    """Whether this id is more than a catalog entry -- something harbor put
+    on disk, in docker, or in its own db."""
+    return bool(
+      self.run_dir_exists or self.config_exists or self.containers or self.db_present
+    )
+
+  @property
+  def status(self) -> str:
+    """Container state as one word: what an operator scanning a list wants."""
+    if self.running_count:
+      return "running"
+    if self.containers:
+      return "exited"
+    return "stopped"
+
+  @property
   def run_display(self) -> str:
     if not self.run_dir_exists:
       return "missing"

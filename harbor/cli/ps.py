@@ -20,13 +20,13 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   rows = []
   for observation in ctx.observations():
-    if not _is_installed(observation):
+    if not observation.installed:
       continue
     stack = _staged_stack(observation, ctx)
     rows.append(
       (
         observation.app_id,
-        _status(observation),
+        observation.status if observation.containers else EMPTY,
         _config(observation, stack, ctx),
         _volumes(stack),
         observation.last_action or EMPTY,
@@ -39,23 +39,6 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
       tablefmt="simple",
     )
   )
-
-
-def _is_installed(observation: AppObservation) -> bool:
-  return bool(
-    observation.run_dir_exists
-    or observation.config_exists
-    or observation.containers
-    or observation.db_present
-  )
-
-
-def _status(observation: AppObservation) -> str:
-  if observation.running_count:
-    return "running"
-  if observation.containers:
-    return "exited"
-  return EMPTY
 
 
 def _staged_stack(observation: AppObservation, ctx: HarborCtx) -> AppStack | None:
