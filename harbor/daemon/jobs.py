@@ -1,0 +1,241 @@
+"""Harbor verbs run as jobs, for callers with no terminal.
+
+A job is what the daemon runs on behalf of a web client: a verb, its
+arguments, the text it produced, and how it ended. Jobs exist because the
+useful verbs are slow -- `snapshot` copies volumes, `start` can pull images --
+and an HTTP request that waits for them dies to a proxy timeout or a page
+refresh long before the work does.
+
+Execution is serial by construction. Harbor allows one writer at a time (see
+`HarborCtx.lock`), so a single worker turns "harbor is busy" into a state a
+caller can see rather than a lock timeout it has to interpret.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from harbor.lib import lifecycle
+from harbor.lib.harbor import HarborCtx
+from harbor.lib.receipt import published_urls
+
+logger = logging.getLogger("harbor.jobs")
+
+QUEUED = "queued"
+RUNNING = "running"
+DONE = "done"
+FAILED = "failed"
+
+# Enough to show a session's worth of activity without growing forever. Jobs
+# are not the audit trail -- the activity log is -- so forgetting old ones
+# loses nothing durable.
+MAX_HISTORY = 200
+
+
+def _now() -> str:
+  return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+@dataclass
+class Job:
+  id: str
+  verb: str
+  args: dict[str, str]
+  state: str = QUEUED
+  output: str = ""
+  error: str | None = None
+  created_at: str = field(default_factory=_now)
+  started_at: str | None = None
+  finished_at: str | None = None
+
+  def as_dict(self) -> dict[str, Any]:
+    return {
+      "id": self.id,
+      "verb": self.verb,
+      "args": dict(self.args),
+      "state": self.state,
+      "output": self.output,
+      "error": self.error,
+      "created_at": self.created_at,
+      "started_at": self.started_at,
+      "finished_at": self.finished_at,
+    }
+
+
+def _start(ctx: HarborCtx, args: dict[str, str]) -> str:
+  app = ctx.resolve_app(args["app"])
+  # Mirrors `harbor start`: prefer the run copy once staged, so an app whose
+  # catalog entry has since been deleted still starts.
+  bundle = ctx.config.app_run_path(app) if ctx.is_staged(app) else ctx.bundle_path(app)
+  result = lifecycle.start(app, bundle, ctx)
+  lines = [f"Started {app}"]
+  lines += [f"  {url}" for url in published_urls(result.stack, result.run_data, ctx)]
+  return "\n".join(lines)
+
+
+def _stop(ctx: HarborCtx, args: dict[str, str]) -> str:
+  app = ctx.resolve_app(args["app"])
+  lifecycle.stop(app, ctx)
+  return f"Stopped {app}"
+
+
+def _stage(ctx: HarborCtx, args: dict[str, str]) -> str:
+  app = ctx.resolve_app(args["app"])
+  result = lifecycle.stage(app, ctx.bundle_path(app), ctx)
+  lines = [f"Staged {app} at {ctx.run_path(app)}"]
+  lines += [
+    f"  volume {name} is no longer declared in the manifest; its link is gone "
+    f"but its data was left in place"
+    for name in result.dropped_volumes
+  ]
+  return "\n".join(lines)
+
+
+def _snapshot(ctx: HarborCtx, args: dict[str, str]) -> str:
+  app = ctx.resolve_app(args["app"])
+  path = lifecycle.snapshot(app, ctx, label=args.get("label", ""))
+  return f"Snapshot of {app} written to {path}"
+
+
+@dataclass(frozen=True)
+class Verb:
+  run: Callable[[HarborCtx, dict[str, str]], str]
+  required: tuple[str, ...] = ("app",)
+  optional: tuple[str, ...] = ()
+
+
+# Every verb here takes ids of things that already exist. Nothing accepts a
+# manifest, a filesystem path, or a URL: those are the arguments that let a
+# caller define what an app *is*, and defining an app means arbitrary bind
+# mounts, which means root. `fetch` and path-style `stage` stay CLI-only for
+# exactly that reason.
+VERBS: dict[str, Verb] = {
+  "start": Verb(_start),
+  "stop": Verb(_stop),
+  "stage": Verb(_stage),
+  "snapshot": Verb(_snapshot, optional=("label",)),
+}
+
+
+def validate(verb: str, args: dict[str, str], ctx: HarborCtx) -> None:
+  """Refuse a submission the runner would only fail on later.
+
+  The app is resolved here so an unknown id is a rejected request rather than
+  a job that exists solely to report that it could not start.
+  """
+  spec = VERBS.get(verb)
+  if spec is None:
+    known = ", ".join(sorted(VERBS))
+    raise ValueError(f"Unknown verb {verb!r}; known verbs are: {known}")
+
+  allowed = set(spec.required) | set(spec.optional)
+  for name in args:
+    if name not in allowed:
+      raise ValueError(
+        f"Verb {verb!r} takes no argument {name!r}; "
+        f"it accepts: {', '.join(sorted(allowed))}"
+      )
+  for name in spec.required:
+    if not args.get(name):
+      raise ValueError(f"Verb {verb!r} requires argument {name!r}")
+
+  ctx.resolve_app(args["app"])
+
+
+class JobRunner:
+  """Holds the job history and runs one job at a time.
+
+  A worker is optional: with no thread started, `run_pending` drains the queue
+  on the calling thread, which is how the tests exercise jobs without waiting
+  on one.
+  """
+
+  def __init__(self, ctx_factory: Callable[[], HarborCtx]) -> None:
+    self._ctx_factory = ctx_factory
+    self._jobs: dict[str, Job] = {}
+    self._queue: queue.Queue[str] = queue.Queue()
+    self._lock = threading.Lock()
+    self._thread: threading.Thread | None = None
+
+  def start(self) -> None:
+    if self._thread is not None:
+      raise RuntimeError("JobRunner is already running")
+    self._thread = threading.Thread(target=self._work, name="harbor-jobs", daemon=True)
+    self._thread.start()
+
+  def submit(self, verb: str, args: dict[str, str]) -> dict[str, Any]:
+    job = Job(id=uuid.uuid4().hex[:12], verb=verb, args=dict(args))
+    with self._lock:
+      self._jobs[job.id] = job
+      self._trim()
+      snapshot = job.as_dict()
+    self._queue.put(job.id)
+    return snapshot
+
+  def get(self, job_id: str) -> dict[str, Any] | None:
+    with self._lock:
+      job = self._jobs.get(job_id)
+      return job.as_dict() if job else None
+
+  def list(self) -> list[dict[str, Any]]:
+    with self._lock:
+      return [job.as_dict() for job in reversed(list(self._jobs.values()))]
+
+  def run_pending(self) -> int:
+    """Run every queued job on this thread. Returns how many ran."""
+    count = 0
+    while True:
+      try:
+        job_id = self._queue.get_nowait()
+      except queue.Empty:
+        return count
+      self._run(job_id)
+      count += 1
+
+  def _work(self) -> None:
+    while True:
+      self._run(self._queue.get())
+
+  def _run(self, job_id: str) -> None:
+    with self._lock:
+      job = self._jobs.get(job_id)
+      if job is None:
+        return
+      job.state = RUNNING
+      job.started_at = _now()
+      verb, args = job.verb, dict(job.args)
+
+    # A fresh context per job, exactly as a CLI invocation would build one:
+    # nothing a job sees is carried over from the job before it.
+    try:
+      ctx = self._ctx_factory()
+      with ctx.lock(f"{verb} {args.get('app', '')}".strip()):
+        output, error = VERBS[verb].run(ctx, args), None
+    except (ValueError, RuntimeError) as e:
+      output, error = "", str(e)
+    except Exception as e:  # noqa: BLE001 - a crashed worker would strand every later job
+      logger.exception("job %s (%s) raised", job_id, verb)
+      output, error = "", f"{type(e).__name__}: {e}"
+
+    with self._lock:
+      job.state = FAILED if error else DONE
+      job.output = output
+      job.error = error
+      job.finished_at = _now()
+
+  def _trim(self) -> None:
+    """Drop the oldest finished jobs once the history is over budget."""
+    if len(self._jobs) <= MAX_HISTORY:
+      return
+    for job_id in list(self._jobs):
+      if len(self._jobs) <= MAX_HISTORY:
+        return
+      if self._jobs[job_id].state in (DONE, FAILED):
+        del self._jobs[job_id]

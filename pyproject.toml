@@ -19,6 +19,15 @@ dependencies = [
     "filelock>=3.29.4",
     "tabulate>=0.10.0",
     "requests>=2.32.0",
+    "tomlkit>=0.13.0",
+]
+
+[project.optional-dependencies]
+# harbord only. A plain `harbor` install is the CLI, and the CLI never imports
+# these -- see harbor/daemon/__init__.py.
+daemon = [
+    "fastapi>=0.121.0",
+    "uvicorn>=0.34.0",
 ]
 
 [project.urls]
@@ -26,6 +35,7 @@ Repository = "https://git.zyx.pw/P2Project/harbor"
 
 [project.scripts]
 harbor = "harbor.cli.main:main"
+harbord = "harbor.daemon.server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -40,6 +50,11 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.15.21",
     "vulture>=2.16",
+    # The daemon extra, so `uv run pytest` covers harbord without a separate
+    # install step. httpx2 backs starlette's TestClient.
+    "fastapi>=0.121.0",
+    "uvicorn>=0.34.0",
+    "httpx2>=2.12.0",
 ]
 
 [tool.pytest.ini_options]

@@ -15,6 +15,7 @@ from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
 from harbor.lib.happ import scan_happs
 from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
+from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore, HarborStore
 
 logger = logging.getLogger("harbor")
@@ -175,6 +176,21 @@ class HarborCtx:
 
   def is_staged(self, app: AppID | str) -> bool:
     return self.staged_paths(app).exists()
+
+  def staged_stack(self, app: AppID | str) -> "AppStack | None":
+    """The installed app's stack, or None when it is not staged.
+
+    A manifest that no longer parses reads as not-staged rather than raising:
+    every caller is building a listing, and one broken app must not take the
+    whole listing down with it.
+    """
+    paths = self.staged_paths(app)
+    if not paths.manifest_path.is_file():
+      return None
+    try:
+      return AppStack.from_file(paths.manifest_path, paths.app_id)
+    except ValueError:
+      return None
 
   def app_store(self, app: AppID | str) -> AppStore:
     """The app's own config store at ``config/<app_id>.logtab``."""
