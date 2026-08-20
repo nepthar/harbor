@@ -14,12 +14,16 @@ from __future__ import annotations
 from typing import Any
 
 from harbor.lib.apps import AppID
-from harbor.lib.harbor import HarborCtx
+from harbor.lib.happ import HAPP_MD_SUFFIX, extract_md_files, load_happ
+from harbor.lib.harbor import CatalogEntry, HarborCtx
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
 from harbor.lib.run_layout import AppRunData, load_run_data
 from harbor.lib.stack import AppStack
+from harbor.lib.store import AppStore
 from harbor.lib.util import path_size
+
+GITHUB_PREFIX = "github:"
 
 
 def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
@@ -34,6 +38,103 @@ def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
     for observation in ctx.observations()
     if observation.installed
   ]
+
+
+def catalog_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """Every configured app source, with the happs currently in it.
+
+  Grouped here so a browser can render one table per catalog without
+  re-deriving the grouping. A bundle whose manifest does not parse still
+  appears: dropping it would hide a problem the operator needs to see.
+  """
+  catalogs: dict[str, list[dict[str, Any]]] = {
+    name: [] for name in ctx.config.app_sources
+  }
+  catalog = ctx.app_catalog()
+  for app_id in sorted(catalog):
+    for entry in catalog[app_id]:
+      catalogs.setdefault(entry.source, []).append(_catalog_app(entry, ctx))
+  return [{"name": name, "apps": apps} for name, apps in catalogs.items()]
+
+
+def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
+  stack = _catalog_stack(entry)
+  # AppStore creates the logtab on contact; a listing must not invent one.
+  store = None
+  if stack is not None and ctx.config.app_config_path(stack.app).is_file():
+    store = ctx.app_store(stack.app)
+  return {
+    "app_id": entry.app_id,
+    "display_name": stack.display_name if stack else "",
+    "version": stack.version if stack else None,
+    "description": stack.description if stack else "",
+    "source": _catalog_origin(entry.app_id, ctx),
+    "catalog": entry.source,
+    "configured": _catalog_configured(stack, store) if stack else None,
+    "manifest": _catalog_manifest(entry),
+  }
+
+
+def _catalog_manifest(entry: CatalogEntry) -> str:
+  """The happ's manifest.toml as it sits on disk, parseable or not."""
+  path = entry.path
+  if path.is_dir():
+    try:
+      return (path / "manifest.toml").read_text()
+    except OSError:
+      return ""
+  if path.name.endswith(HAPP_MD_SUFFIX):
+    try:
+      files = extract_md_files(path.read_text())
+    except OSError:
+      return ""
+    for md_file in files.files:
+      if md_file.path == "manifest.toml":
+        return md_file.content
+  return ""
+
+
+def _catalog_configured(stack: AppStack, store: AppStore | None) -> str:
+  """ "ready" when every config key is set or will be filled, else "missing".
+
+  A secret with a default is generated on stage, so it does not yellow the
+  card. An unset key with no default is the operator's to supply.
+  """
+  for name, cfg in stack.config.items():
+    if cfg.default is not None:
+      continue
+    if store is not None and store.has_config(name):
+      continue
+    return "missing"
+  return "ready"
+
+
+def _catalog_stack(entry: CatalogEntry) -> AppStack | None:
+  """The bundle's schema, or None when the happ on disk does not parse.
+
+  Same swallow as `HarborCtx.staged_stack`: a listing must not die on one
+  broken app.
+  """
+  try:
+    return load_happ(entry.path).app_stack()
+  except (ValueError, RuntimeError):
+    return None
+
+
+def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
+  """Where this happ was fetched from, collapsed for a table cell.
+
+  Fetch records the full github: spec; the catalog only needs the publisher.
+  Anything else -- a path, a missing record, a spec we cannot read -- is local.
+  """
+  record = ctx.harbor_db().get_app_source(app_id)
+  if record is None:
+    return "local"
+  spec = record["source"]
+  if not spec.startswith(GITHUB_PREFIX):
+    return "local"
+  user = spec[len(GITHUB_PREFIX) :].split("/", 1)[0]
+  return f"{GITHUB_PREFIX}{user}" if user else "local"
 
 
 def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]:

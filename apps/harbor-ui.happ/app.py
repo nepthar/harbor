@@ -45,13 +45,13 @@ body {
   background: var(--void); color: var(--fg);
   font: 15px/1.5 "Source Sans 3", "Source Sans Pro", sans-serif;
 }
-/* Mid-left to mid-top: atan2 keeps the band on those two points as the
-   viewport changes. The 15px gutter is what you actually see of it. */
+/* From mid-left, 45° up and to the right. The 15px gutter is what you
+   actually see of it -- it cuts off the top-left of the panel. */
 body::before {
   content: ""; position: fixed; left: 0; top: 50%; width: 200vw;
   height: 5.7375rem; pointer-events: none;
   transform-origin: 0 50%;
-  transform: rotate(atan2(-100vh, 100vw)) translateY(-50%);
+  transform: rotate(-45deg) translateY(-50%);
   background: linear-gradient(to bottom,
     var(--rosewood) 0 calc(33.33% - 4px),
     transparent calc(33.33% - 4px) calc(33.33% + 4px),
@@ -208,6 +208,48 @@ details.reveal > summary:hover { color: var(--fg); }
   border-top: none; margin-top: 10px;
 }
 .card.pad > details.reveal > summary { padding: 6px 0; }
+.catalog-row { cursor: pointer; }
+.catalog-row:hover td {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.shade {
+  position: fixed; inset: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 32px;
+  background: color-mix(in srgb, var(--void) 62%, transparent);
+}
+.shade[hidden] { display: none; }
+.app-card {
+  display: flex; flex-direction: row; align-items: stretch;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; width: min(88rem, 100%);
+  max-height: min(92vh, 100%); overflow: hidden;
+  padding: 14px; gap: 12px;
+}
+.app-card[hidden] { display: none; }
+.app-card-head {
+  flex: 0 0 20rem; width: 20rem;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px; background: var(--bg);
+  overflow: auto;
+}
+.app-card h2 { margin: 0 0 2px; font-size: 17px; }
+.app-card .lede { margin: 4px 0 8px; }
+.app-card-head > :last-child { margin-bottom: 0; }
+.app-card-manifest {
+  flex: 1 1 auto; min-width: 0; min-height: 16rem; overflow: auto;
+  margin: 0; padding: 14px 16px;
+  background: var(--bg); border-radius: 8px;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+}
+.toml-comment { color: var(--muted); }
+.toml-section { color: var(--coral); }
+.toml-val { color: var(--muted); }
+@media (max-width: 52rem) {
+  .app-card { flex-direction: column; }
+  .app-card-head { flex: 0 0 auto; width: auto; }
+}
 """
 
 
@@ -363,6 +405,29 @@ def page(path, title, body, version=""):
     }}
     input.addEventListener("input", dirty);
   }});
+  var shade = document.getElementById("catalog-shade");
+  if (shade) {{
+    function closeCard() {{
+      shade.hidden = true;
+      shade.querySelectorAll(".app-card").forEach(function (card) {{
+        card.hidden = true;
+      }});
+    }}
+    document.querySelectorAll(".catalog-row").forEach(function (row) {{
+      row.addEventListener("click", function () {{
+        var card = document.getElementById(row.getAttribute("data-card"));
+        if (!card) return;
+        shade.querySelectorAll(".app-card").forEach(function (other) {{
+          other.hidden = true;
+        }});
+        card.hidden = false;
+        shade.hidden = false;
+      }});
+    }});
+    shade.addEventListener("click", function (event) {{
+      if (event.target === shade) closeCard();
+    }});
+  }}
 }})();
 </script>
 </body></html>"""
@@ -425,6 +490,113 @@ def apps_table(apps):
     "<th>App</th><th>Status</th><th>Config</th>"
     "<th>Version</th><th>Volumes</th><th>Last action</th>"
     "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+  )
+
+
+def catalog_tables(catalogs):
+  if not catalogs:
+    return (
+      '<div class="card"><p class="empty">No catalogs configured.</p></div>'
+    )
+  parts = []
+  cards = []
+  for catalog in catalogs:
+    parts.append(f'<h2>{esc(catalog.get("name"))}</h2>')
+    apps = catalog.get("apps") or []
+    if not apps:
+      parts.append(
+        '<div class="card"><p class="empty">No apps in this catalog.</p></div>'
+      )
+      continue
+    rows = []
+    for app in apps:
+      name = app.get("display_name") or app.get("app_id")
+      version = app.get("version")
+      card_id = catalog_card_id(app)
+      cards.append(catalog_card(app, card_id))
+      rows.append(
+        f'<tr class="catalog-row" data-card="{esc(card_id)}">'
+        f'<td class="name">{esc(name)}</td>'
+        f'<td class="mono muted">{esc(app.get("app_id"))}</td>'
+        f'<td class="muted">{esc(version) if version else "&mdash;"}</td>'
+        f'<td class="wrap">{esc(app.get("description") or "")}</td>'
+        f'<td class="muted">{esc(app.get("source") or "local")}</td>'
+        "</tr>"
+      )
+    parts.append(
+      '<div class="card scroll"><table><thead><tr>'
+      "<th>Name</th><th>App ID</th><th>Version</th>"
+      "<th>Description</th><th>Source</th>"
+      "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+    )
+  if cards:
+    parts.append(
+      '<div id="catalog-shade" class="shade" hidden>'
+      + "".join(cards)
+      + "</div>"
+    )
+  return "".join(parts)
+
+
+def catalog_card_id(app):
+  return f"card-{app.get('catalog') or 'apps'}--{app.get('app_id') or ''}"
+
+
+def catalog_config_pill(configured):
+  if configured == "ready":
+    return '<span class="pill"><span class="dot running"></span>ready</span>'
+  if configured == "missing":
+    return '<span class="pill"><span class="dot exited"></span>needs config</span>'
+  return ""
+
+
+def highlight_toml(text):
+  """Cheap scan coloring so [sections], comments and values separate at a glance.
+
+  Not a parser: happ manifests are line-oriented, and a wrong color on an
+  exotic line is better than dragging in a highlighter.
+  """
+  lines = []
+  for line in text.splitlines():
+    stripped = line.lstrip()
+    if stripped.startswith("#"):
+      lines.append(f'<span class="toml-comment">{esc(line)}</span>')
+    elif stripped.startswith("["):
+      lines.append(f'<span class="toml-section">{esc(line)}</span>')
+    elif "=" in stripped:
+      key, _, rest = line.partition("=")
+      lines.append(
+        f"{esc(key)}=<span class=\"toml-val\">{esc(rest)}</span>"
+      )
+    else:
+      lines.append(esc(line))
+  return "\n".join(lines)
+
+
+def catalog_card(app, card_id):
+  name = app.get("display_name") or app.get("app_id")
+  version = app.get("version")
+  pill = catalog_config_pill(app.get("configured"))
+  ver = f'<span class="muted">v{esc(version)}</span>' if version else ""
+  side = " ".join(p for p in (ver, pill) if p)
+  if app.get("configured") is None:
+    summary = (
+      '<p class="lede">This happ\'s manifest could not be read.</p>'
+    )
+  else:
+    summary = (
+      f'<p class="lede">{esc(app.get("description") or "")}</p>'
+      f'<p class="muted mono">{esc(app.get("app_id"))}'
+      f' · {esc(app.get("source") or "local")}</p>'
+    )
+  manifest = highlight_toml(app.get("manifest") or "")
+  return (
+    f'<article class="app-card" id="{esc(card_id)}" hidden>'
+    f'<div class="app-card-head">'
+    f'<div class="row between"><h2>{esc(name)}</h2>{side}</div>'
+    f"{summary}</div>"
+    f'<pre class="app-card-manifest">{manifest}</pre>'
+    "</article>"
   )
 
 
@@ -816,6 +988,16 @@ def render(path, query=None, notice=""):
       return "Volumes", volumes_page(query.get("sizes") == ["1"], notice), version
     except ApiError as e:
       return "Volumes", error_card(e), version
+
+  if path == "/catalog":
+    try:
+      return (
+        "Catalog",
+        catalog_tables(api("/catalog").get("catalogs", [])),
+        version,
+      )
+    except ApiError as e:
+      return "Catalog", error_card(e), version
 
   if path == "/":
     return (

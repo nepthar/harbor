@@ -48,6 +48,109 @@ def test_version(harbor_env, client):
   assert client.get("/").json() == body
 
 
+def test_catalog_lists_available_apps_grouped_by_source(harbor_env, client):
+  catalogs = client.get("/catalog").json()["catalogs"]
+  assert [c["name"] for c in catalogs] == ["apps"]
+
+  apps = {app["app_id"]: app for app in catalogs[0]["apps"]}
+  assert apps[APP]["display_name"] == "Basic Features"
+  assert apps[APP]["version"] == "0.1.0"
+  assert apps[APP]["description"] == "Config and volumes fixture"
+  assert apps[APP]["source"] == "local"
+  assert apps[APP]["catalog"] == "apps"
+  assert apps[APP]["configured"] == "missing"
+  assert 'display_name = "Basic Features"' in apps[APP]["manifest"]
+  assert "[config]" in apps[APP]["manifest"]
+  assert "ports-demo" in apps
+  assert "routes-demo" in apps
+  assert "host-volumes" in apps
+  assert apps["ports-demo"]["configured"] == "ready"
+  assert "routes = { web" in apps["ports-demo"]["manifest"]
+  assert apps["routes-demo"]["configured"] == "ready"
+
+
+def test_catalog_groups_a_second_app_source(harbor_env, client):
+  extra = harbor_env.root / "dev-apps"
+  extra.mkdir()
+  bundle = extra / "dev-app.happ"
+  bundle.mkdir()
+  (bundle / "manifest.toml").write_text(
+    '[app]\nversion = "2.0"\ndisplay_name = "Dev App"\n'
+    'description = "From a second catalog"\n'
+    '[run.main]\nimage = "alpine:latest"\n'
+  )
+  with open(harbor_env.config, "a") as f:
+    f.write(f'\n[[app_source]]\nname = "dev"\nlocation = "{extra}"\n')
+
+  catalogs = {c["name"]: c["apps"] for c in client.get("/catalog").json()["catalogs"]}
+  assert list(catalogs) == ["apps", "dev"]
+  assert APP in {app["app_id"] for app in catalogs["apps"]}
+  [dev] = catalogs["dev"]
+  assert dev["app_id"] == "dev-app"
+  assert dev["display_name"] == "Dev App"
+  assert dev["version"] == "2.0"
+  assert dev["description"] == "From a second catalog"
+  assert dev["source"] == "local"
+  assert dev["catalog"] == "dev"
+  assert dev["configured"] == "ready"
+  assert 'display_name = "Dev App"' in dev["manifest"]
+
+
+def test_catalog_names_a_github_origin(harbor_env, client):
+  ctx().harbor_db().set_app_source(
+    "ports-demo",
+    source="github:nepthar/harbor/main/examples/ports-demo.happ",
+    current="0.1.0@" + "a" * 40,
+  )
+
+  apps = {
+    app["app_id"]: app
+    for catalog in client.get("/catalog").json()["catalogs"]
+    for app in catalog["apps"]
+  }
+  assert apps["ports-demo"]["source"] == "github:nepthar"
+  assert apps[APP]["source"] == "local"
+
+
+def test_catalog_keeps_a_broken_bundle(harbor_env, client):
+  broken = harbor_env.root / "apps" / "broken.happ"
+  broken.mkdir()
+  (broken / "manifest.toml").write_text("not toml")
+
+  apps = {
+    app["app_id"]: app
+    for catalog in client.get("/catalog").json()["catalogs"]
+    for app in catalog["apps"]
+  }
+  assert apps["broken"] == {
+    "app_id": "broken",
+    "display_name": "",
+    "version": None,
+    "description": "",
+    "source": "local",
+    "catalog": "apps",
+    "configured": None,
+    "manifest": "not toml",
+  }
+
+
+def test_catalog_listing_does_not_create_config_stores(harbor_env, client):
+  """Opening AppStore writes a logtab; a GET must not invent install state."""
+  client.get("/catalog")
+  assert not (harbor_env.root / "config" / f"{APP}.logtab").exists()
+
+
+def test_catalog_config_turns_ready_once_required_values_are_set(harbor_env, client):
+  assert (
+    harbor_env.run("config", "basic-features", "--set", "admin_user=root").returncode
+    == 0
+  )
+  apps = {
+    app["app_id"]: app for app in client.get("/catalog").json()["catalogs"][0]["apps"]
+  }
+  assert apps[APP]["configured"] == "ready"
+
+
 def test_apps_lists_only_installed(harbor_env, client):
   # Every fixture is in the catalog; none is installed until it is staged.
   assert client.get("/apps").json()["apps"] == []
@@ -222,7 +325,13 @@ def test_openapi_documents_the_surface(harbor_env, client):
   spec = client.get("/openapi.json")
   assert spec.status_code == 200
   paths = spec.json()["paths"]
-  assert {"/apps", "/apps/{app_id}", "/jobs", "/jobs/{job_id}"} <= set(paths)
+  assert {
+    "/apps",
+    "/apps/{app_id}",
+    "/catalog",
+    "/jobs",
+    "/jobs/{job_id}",
+  } <= set(paths)
   assert "post" in paths["/jobs"]
 
 
