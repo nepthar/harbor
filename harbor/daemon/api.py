@@ -33,7 +33,11 @@ from harbor.lib.config_edit import (
   remove_host_volume,
   set_host_volume,
 )
+from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
+from harbor.lib.routes import RouteProviderError
+from harbor.lib.stack import AppStack
 
 # Bumped when a response shape changes in a way a client would notice. The web
 # UI ships separately from the daemon, so it has to be able to tell.
@@ -59,6 +63,22 @@ class HostVolumeBody(BaseModel):
 
 class NewHostVolume(HostVolumeBody):
   tag: str
+
+
+class ConfigChange(BaseModel):
+  """One `harbor config <app>` invocation, as the UI sends it.
+
+  Every value names something the manifest or config.toml already declares --
+  a config key, a host_volume tag, a route provider tag. Nothing here takes a
+  path, which is what keeps this endpoint inside the rule the rest of the API
+  follows.
+  """
+
+  model_config = ConfigDict(extra="forbid")
+
+  set: dict[str, str] = Field(default_factory=dict)
+  bind: dict[str, str] = Field(default_factory=dict)
+  route: dict[str, str] = Field(default_factory=dict)
 
 
 class JobSubmission(BaseModel):
@@ -87,6 +107,32 @@ def _runner(request: Request) -> JobRunner:
 
 Ctx = Annotated[HarborCtx, Depends(_ctx)]
 Jobs = Annotated[JobRunner, Depends(_runner)]
+
+
+def _bundle_stack(app: AppID, ctx: HarborCtx) -> AppStack:
+  """The schema for an app that is not staged yet, so it can be configured
+  before its first install -- the same fallback `harbor config` makes."""
+  return load_happ(ctx.bundle_path(app)).app_stack()
+
+
+def _assign_route(
+  app: AppID, stack: AppStack, route_name: str, tag: str, ctx: HarborCtx
+) -> None:
+  if route_name not in stack.routes:
+    known = ", ".join(sorted(stack.routes)) or "(none)"
+    raise ValueError(
+      f"route {route_name!r} is not declared in {app}'s manifest; known routes: {known}"
+    )
+  if tag not in ctx.config.route_providers:
+    known = ", ".join(sorted(ctx.config.route_providers))
+    raise ValueError(f"route provider {tag!r} is not configured; known tags: {known}")
+  store = ctx.app_store(app)
+  old_tag = store.get_route_assignment(route_name)
+  store.set_route_assignment(route_name, tag)
+  try:
+    sync_route_assignment(app, route_name, old_tag, tag, ctx)
+  except RouteProviderError as e:
+    raise ValueError(str(e)) from e
 
 
 def _ctx_again(ctx: HarborCtx) -> HarborCtx:
@@ -141,6 +187,27 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
       return views.app_view(resolved, ctx)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(404, str(e)) from e
+
+  @app.post("/apps/{app_id}/config", tags=["apps"])
+  def change_app_config(app_id: str, body: ConfigChange, ctx: Ctx) -> dict:
+    """Set config values, host-volume binds and route assignments.
+
+    Inline rather than as a job: the writes are local and quick. Assigning a
+    route is the exception -- it calls out to the provider -- and is the first
+    thing that would want moving if a slow proxy starts holding requests open.
+    """
+    try:
+      resolved = ctx.resolve_app(app_id)
+      stack = ctx.staged_stack(resolved) or _bundle_stack(resolved, ctx)
+      if body.set:
+        apply_config_sets(stack, list(body.set.items()), ctx)
+      for volume_name, tag in body.bind.items():
+        bind(stack, volume_name, tag, ctx)
+      for route_name, tag in body.route.items():
+        _assign_route(resolved, stack, route_name, tag, ctx)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
+    return views.app_view(resolved, _ctx_again(ctx))
 
   @app.get("/volumes", tags=["volumes"])
   def list_volumes(ctx: Ctx, sizes: bool = False) -> dict:

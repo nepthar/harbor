@@ -119,7 +119,7 @@ def test_volumes_resolve_by_kind_and_app_volumes_are_forced_readonly(tmp_path):
 version = "1"
 
 [volumes]
-bin        = { kind = "app", src = "scripts" }
+bin        = { kind = "app", src = "scripts", desc = "shipped scripts" }
 app_config = { kind = "data" }
 cache      = { kind = "temp" }
 media      = { kind = "bulk", readonly = true }
@@ -135,6 +135,7 @@ volumes = { bin = "/opt/bin", app_config = "/config", media = "/media" }
   # whether or not the manifest said so.
   assert stack.volumes["bin"].readonly is True
   assert stack.volumes["bin"].src == "scripts"
+  assert stack.volumes["bin"].desc == "shipped scripts"
   assert stack.volumes["bin"].run_rel_path == "./volumes/app/bin"
 
   assert stack.volumes["app_config"].readonly is False

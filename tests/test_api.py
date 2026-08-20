@@ -93,6 +93,19 @@ def test_app_detail(harbor_env, client):
   assert volumes["bin"]["readonly"] is True
   assert body["volume_bytes"] >= 0
 
+  mounts = {v["name"]: v for v in body["units"][0]["volumes"]}
+  assert mounts["config"]["path"] == "/myapp/config"
+  assert mounts["config"]["desc"] == "persistent app data"
+  assert mounts["cache"]["kind"] == "temp"
+  assert mounts["cache"]["desc"] == ""
+  assert mounts["bin"]["readonly"] is True
+  assert mounts["bin"]["desc"] == "shipped binaries"
+
+  config = {c["name"]: c for c in body["config"]}
+  assert config["admin_user"]["hidden"] is False
+  assert config["log_level"]["hidden"] is True
+  assert config["log_level"]["value"] == "info"
+
   # admin_user is the one thing standing between this app and a start.
   assert [issue["problem"] for issue in body["issues"]] == [
     "config admin_user is unset and no default specified"
@@ -324,10 +337,71 @@ def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
   manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
   # Dropped from [volumes] *and* from the unit that mounted it -- a manifest
   # that declares neither is what re-staging leaves data behind for.
-  text = manifest.read_text().replace('config = { kind = "data" }', "")
+  text = manifest.read_text().replace(
+    'config = { kind = "data", desc = "persistent app data" }', ""
+  )
   manifest.write_text(text.replace('config = "/myapp/config", ', ""))
   assert harbor_env.run("stage", APP).returncode == 0
 
   volumes = {v["name"]: v for v in client.get("/volumes").json()["volumes"]}
   assert volumes["config"]["declared"] is False, "data left behind, flagged"
   assert volumes["cache"]["declared"] is True
+
+
+# --- the single app view ---------------------------------------------------
+
+
+def test_app_view_carries_what_a_detail_page_needs(harbor_env, client):
+  assert harbor_env.run("stage", APP).returncode == 0
+  body = client.get(f"/apps/{APP}").json()
+
+  unit = body["units"][0]
+  assert unit["command"]
+  # Placeholders, as the manifest wrote them. The *resolved* environment is
+  # AppRunData.config_env and carries secret values; it must never appear.
+  assert unit["environment"]["ADMIN_PASS"] == "${admin_pass}"
+
+  assert body["metadata"]["display_name"] == "Basic Features"
+  assert body["options"]["host_volumes"] == ["media", "other"]
+  assert "none" in body["options"]["route_providers"]
+
+
+def test_app_view_never_leaks_a_secret_through_the_environment(harbor_env, client):
+  assert harbor_env.run("start", APP, "--set", "admin_user=root").returncode == 0
+  _, secret = ctx().app_store(APP).get_config("admin_pass")
+  assert secret
+  assert secret not in json.dumps(client.get(f"/apps/{APP}").json())
+
+
+def test_setting_config_through_the_api(harbor_env, client):
+  assert harbor_env.run("stage", APP).returncode == 0
+
+  updated = client.post(f"/apps/{APP}/config", json={"set": {"admin_user": "alice"}})
+  assert updated.status_code == 200, updated.text
+  values = {c["name"]: c for c in updated.json()["config"]}
+  assert values["admin_user"]["value"] == "alice"
+  # The response is read back after the write, not from the request's context.
+  assert not updated.json()["issues"]
+
+
+def test_binding_a_host_volume_through_the_api(harbor_env, client):
+  (harbor_env.root / "external-data").mkdir()
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+
+  bound = client.post("/apps/host-volumes/config", json={"bind": {"hostvol1": "media"}})
+  assert bound.status_code == 200, bound.text
+  volumes = {v["name"]: v for v in bound.json()["volumes"]}
+  assert volumes["hostvol1"]["bind"] == "media"
+
+
+def test_config_changes_are_refused_with_a_reason(harbor_env, client):
+  assert harbor_env.run("stage", APP).returncode == 0
+
+  for payload, expected in (
+    ({"set": {"nope": "x"}}, "No config nope"),
+    ({"bind": {"config": "media"}}, "only host volumes can be bound"),
+    ({"route": {"main": "media"}}, "not declared"),
+  ):
+    refused = client.post(f"/apps/{APP}/config", json=payload)
+    assert refused.status_code == 400, refused.text
+    assert expected in refused.json()["error"]

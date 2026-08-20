@@ -45,6 +45,7 @@ class AppVolume:
   kind: str
   readonly: bool = False
   src: str | None = None
+  desc: str = ""
 
   @property
   def run_rel_path(self) -> str:
@@ -193,7 +194,9 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
   # container write fails at mount time instead of being silently discarded
   # by the next `stage` (docs/run-layout.md L4).
   volumes = {
-    name: AppVolume(name, v.kind, True if v.kind == "app" else v.readonly, v.src)
+    name: AppVolume(
+      name, v.kind, True if v.kind == "app" else v.readonly, v.src, v.desc
+    )
     for name, v in manifest.volumes.items()
   }
   run_units = _resolve_run_units(manifest, app, volumes)

@@ -112,6 +112,18 @@ def app_view(app_id: AppID, ctx: HarborCtx) -> dict[str, Any]:
   view.update(
     {
       "description": stack.description,
+      # The whole `[app]` table, extras included -- the section allows unknown
+      # keys precisely so a happ can carry author, source, license and the
+      # like, and a viewer should show whatever the author wrote.
+      "metadata": {
+        key: value
+        for key, value in stack.manifest.app.model_dump().items()
+        if value not in (None, "", {})
+      },
+      "options": {
+        "route_providers": sorted(ctx.config.route_providers),
+        "host_volumes": sorted(ctx.config.host_volumes),
+      },
       "subdomain": stack.subdomain,
       "network_mode": stack.network_mode,
       "run_path": str(ctx.staged_paths(app_id).run_path),
@@ -196,6 +208,21 @@ def _units(stack: AppStack, observation: AppObservation) -> list[dict[str, Any]]
         "state": container.state if container else None,
         "container_name": container.name if container else None,
         "container_id": container.container_id if container else None,
+        # As the manifest wrote it, so `${admin_pass}` stays a placeholder.
+        # The *resolved* environment is `AppRunData.config_env`, which carries
+        # secret values and must never be projected.
+        "environment": dict(unit.environment),
+        "command": list(unit.command) if unit.command else None,
+        "volumes": [
+          {
+            "name": vol_name,
+            "path": bound.guest_path,
+            "kind": bound.volume.kind,
+            "readonly": bound.readonly,
+            "desc": bound.volume.desc,
+          }
+          for vol_name, bound in unit.volumes.items()
+        ],
       }
     )
   return units
@@ -205,6 +232,7 @@ def _routes(
   stack: AppStack, run_data: AppRunData, ctx: HarborCtx
 ) -> list[dict[str, Any]]:
   published = published_route_urls(stack, run_data, ctx)
+  assignments = ctx.app_store(stack.app).list_route_assignments()
   routes = []
   for name, route in stack.routes.items():
     assigned = run_data.routes.get(name)
@@ -219,6 +247,7 @@ def _routes(
         "host_port": assigned.host_port if assigned else None,
         "url": run_data.route_urls.get(name),
         "published_url": published.get(name),
+        "provider": assignments.get(name),
       }
     )
   return routes
@@ -227,6 +256,7 @@ def _routes(
 def _volumes(
   stack: AppStack, run_data: AppRunData, ctx: HarborCtx
 ) -> list[dict[str, Any]]:
+  binds = ctx.app_store(stack.app).list_binds()
   volumes = []
   for name, volume in stack.volumes.items():
     link = run_data.volume_links.get(name)
@@ -241,6 +271,8 @@ def _volumes(
         # so their size is a property of the download, not of what the app has
         # accumulated. Host volumes can be an entire media library.
         "bytes": path_size(source) if source and volume.kind != "host" else None,
+        # Only `host` volumes are bindable; the rest are harbor's to place.
+        "bind": binds.get(name) if volume.kind == "host" else None,
       }
     )
   return volumes
