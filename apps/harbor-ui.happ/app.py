@@ -782,14 +782,14 @@ def config_form(app):
   if not entries:
     return '<p class="empty">This app declares no configuration.</p>'
   app_id = app["app_id"]
-  visible = [c for c in entries if not c.get("hidden")]
-  hidden = [c for c in entries if c.get("hidden")]
-  body = config_table(visible, app_id) if visible else ""
-  if hidden:
+  basic = [c for c in entries if not c.get("advanced")]
+  advanced = [c for c in entries if c.get("advanced")]
+  body = config_table(basic, app_id) if basic else ""
+  if advanced:
     body += (
       '<details class="reveal">'
-      "<summary>Show hidden configuration options</summary>"
-      f"{config_table(hidden, app_id)}</details>"
+      "<summary>Show advanced configuration options</summary>"
+      f"{config_table(advanced, app_id)}</details>"
     )
   return body
 

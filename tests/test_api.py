@@ -205,8 +205,8 @@ def test_app_detail(harbor_env, client):
   assert mounts["bin"]["desc"] == "shipped binaries"
 
   config = {c["name"]: c for c in body["config"]}
-  assert config["admin_user"]["hidden"] is False
-  assert config["log_level"]["hidden"] is True
+  assert config["admin_user"]["advanced"] is False
+  assert config["log_level"]["advanced"] is True
   assert config["log_level"]["value"] == "info"
 
   # admin_user is the one thing standing between this app and a start.

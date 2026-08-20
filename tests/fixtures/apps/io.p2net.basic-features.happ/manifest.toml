@@ -1,4 +1,5 @@
-# Fixture happ: exercises config (plain + secret) and data/temp/app volumes.
+# Fixture happ: exercises config (plain + secret + advanced) and data/temp/app
+# volumes.
 
 [app]
 version      = "0.1.0"
@@ -11,8 +12,10 @@ runtime      = "image"
 admin_pass = { secret = true, default = "auto" }
 # Required: no default, must be set by the operator before starting.
 admin_user = {}
-# UI noise: the detail page hides this unless asked.
-log_level = { default = "info", hidden = true, desc = "internal log verbosity" }
+
+[adv_config]
+# UI noise: the detail page folds this away unless asked.
+log_level = { default = "info", desc = "internal log verbosity" }
 
 [volumes]
 config = { kind = "data", desc = "persistent app data" }

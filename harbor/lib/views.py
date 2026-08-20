@@ -391,7 +391,7 @@ def _config(
         "name": name,
         "secret": config.secret,
         "desc": config.desc,
-        "hidden": config.hidden,
+        "advanced": config.advanced,
         "set": store.has_config(name),
         "has_default": config.has_default(),
         # A secret's value is never projected -- not even when it is set, and

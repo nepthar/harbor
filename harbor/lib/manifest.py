@@ -59,12 +59,14 @@ class VolumeEntry(BaseModel):
 
 
 class ConfigEntry(BaseModel):
-  """A per-installation config value declared in [config].
+  """A per-installation config value declared in [config] or [adv_config].
   If a value is secret, it will be encrypted at rest.
   Every field is optional, so an entry may be declared with no options: `my_var = {}`.
 
-  Setting hidden=true is a hint to the user interface that this config value
-  is would be "noise" if listed in a list of configuration parameters.
+  The two sections take identical entries and land in the same flat namespace;
+  the section is the whole difference. [adv_config] marks a value as advanced,
+  a hint to the user interface that it would be "noise" listed alongside the
+  values an operator is expected to set.
   """
 
   model_config = ConfigDict(extra="forbid")
@@ -72,7 +74,6 @@ class ConfigEntry(BaseModel):
   desc: str = ""
   default: str | None = None
   secret: bool = False
-  hidden: bool = False
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,7 @@ class Manifest(BaseModel):
   # Shared sections:
   run: dict[Identifier, RunEntry] = Field(default_factory=dict)
   config: dict[Identifier, ConfigEntry] = Field(default_factory=dict)
+  adv_config: dict[Identifier, ConfigEntry] = Field(default_factory=dict)
   volumes: dict[Identifier, VolumeEntry] = Field(default_factory=dict)
   commands: dict[Identifier, CommandEntry] = Field(default_factory=dict)
 
@@ -266,12 +268,25 @@ def _validate_manifest(app: AppID, manifest: Manifest) -> list[str]:
   if main_run_unit not in manifest.run:
     errors.append(f"[app]: main container ({main_run_unit}) not found in [run]")
 
+  errors.extend(_validate_config(manifest))
   errors.extend(_validate_volumes(manifest))
   errors.extend(_validate_run_volumes(manifest))
   errors.extend(_validate_routes(manifest))
   errors.extend(_validate_env_refs(manifest))
   errors.extend(_validate_commands(manifest))
   return errors
+
+
+def _validate_config(manifest: Manifest) -> list[str]:
+  """[config] and [adv_config] share one namespace, so a name may only be in one."""
+  clashes = sorted(manifest.config.keys() & manifest.adv_config.keys())
+  if not clashes:
+    return []
+  return [
+    f"[adv_config]: {name} is already declared in [config]; "
+    f"move it to one section or the other"
+    for name in clashes
+  ]
 
 
 def _validate_commands(manifest: Manifest) -> list[str]:
@@ -287,11 +302,11 @@ def _validate_commands(manifest: Manifest) -> list[str]:
 def _validate_env_refs(manifest: Manifest) -> list[str]:
   """Every `${…}` in [run.*.env] must name a key in the flat substitution map.
 
-  Known keys: declared [config] names, `routes.<name>` for each route, and the
-  fixed `happ.*` keys. Plain unknown identifiers (no dot) are left alone for
-  compose; dotted unknowns are refused.
+  Known keys: declared [config] and [adv_config] names, `routes.<name>` for
+  each route, and the fixed `happ.*` keys. Plain unknown identifiers (no dot)
+  are left alone for compose; dotted unknowns are refused.
   """
-  known = set(manifest.config)
+  known = set(manifest.config) | set(manifest.adv_config)
   known.update(
     f"{ROUTE_KEY_PREFIX}{name}"
     for run_entry in manifest.run.values()
