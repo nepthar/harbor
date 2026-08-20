@@ -241,11 +241,17 @@ details.reveal > summary:hover { color: var(--fg); }
   margin: 0; padding: 14px 16px;
   background: var(--bg); border-radius: 8px;
   font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre;
+  white-space: pre; color: var(--fg);
 }
-.toml-comment { color: var(--muted); }
-.toml-section { color: var(--coral); }
-.toml-val { color: var(--muted); }
+.app-card-manifest code {
+  background: none; padding: 0; font: inherit; color: inherit;
+}
+.hljs-comment { color: var(--muted); }
+.hljs-section { color: var(--coral); }
+.hljs-attr { color: var(--fg); }
+.hljs-string { color: var(--gold); }
+.hljs-number, .hljs-literal { color: var(--ok); }
+.hljs-punctuation { color: var(--muted); }
 @media (max-width: 52rem) {
   .app-card { flex-direction: column; }
   .app-card-head { flex: 0 0 auto; width: auto; }
@@ -378,6 +384,8 @@ def page(path, title, body, version=""):
   {body}
 </main>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/toml.min.js"></script>
 <script>
 (function () {{
   var root = document.documentElement;
@@ -426,6 +434,11 @@ def page(path, title, body, version=""):
     }});
     shade.addEventListener("click", function (event) {{
       if (event.target === shade) closeCard();
+    }});
+  }}
+  if (window.hljs) {{
+    document.querySelectorAll("pre.app-card-manifest code").forEach(function (el) {{
+      hljs.highlightElement(el);
     }});
   }}
 }})();
@@ -550,29 +563,6 @@ def catalog_config_pill(configured):
   return ""
 
 
-def highlight_toml(text):
-  """Cheap scan coloring so [sections], comments and values separate at a glance.
-
-  Not a parser: happ manifests are line-oriented, and a wrong color on an
-  exotic line is better than dragging in a highlighter.
-  """
-  lines = []
-  for line in text.splitlines():
-    stripped = line.lstrip()
-    if stripped.startswith("#"):
-      lines.append(f'<span class="toml-comment">{esc(line)}</span>')
-    elif stripped.startswith("["):
-      lines.append(f'<span class="toml-section">{esc(line)}</span>')
-    elif "=" in stripped:
-      key, _, rest = line.partition("=")
-      lines.append(
-        f"{esc(key)}=<span class=\"toml-val\">{esc(rest)}</span>"
-      )
-    else:
-      lines.append(esc(line))
-  return "\n".join(lines)
-
-
 def catalog_card(app, card_id):
   name = app.get("display_name") or app.get("app_id")
   version = app.get("version")
@@ -589,13 +579,13 @@ def catalog_card(app, card_id):
       f'<p class="muted mono">{esc(app.get("app_id"))}'
       f' · {esc(app.get("source") or "local")}</p>'
     )
-  manifest = highlight_toml(app.get("manifest") or "")
+  manifest = esc(app.get("manifest") or "")
   return (
     f'<article class="app-card" id="{esc(card_id)}" hidden>'
     f'<div class="app-card-head">'
     f'<div class="row between"><h2>{esc(name)}</h2>{side}</div>'
     f"{summary}</div>"
-    f'<pre class="app-card-manifest">{manifest}</pre>'
+    f'<pre class="app-card-manifest"><code class="language-toml">{manifest}</code></pre>'
     "</article>"
   )
 
