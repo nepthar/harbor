@@ -39,7 +39,15 @@ from urllib.parse import quote
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.happ import HAPP_MD_CUTOFF_KB, HAPP_MD_SUFFIX, HAPP_SUFFIX
+from harbor.lib.happ import (
+  HAPP_MD_CUTOFF_KB,
+  HAPP_MD_SUFFIX,
+  HAPP_SUFFIX,
+  load_happ,
+  manifest_text,
+)
+from harbor.lib.harbor import HarborCtx
+from harbor.lib.stack import AppStack
 from harbor.lib.util import fmt_size, validate_github_segment
 
 KB = 1024
@@ -574,3 +582,200 @@ def _remove(path: Path) -> None:
 
 def discard(fetched: FetchedHapp) -> None:
   shutil.rmtree(fetched.root, ignore_errors=True)
+
+
+# --- the fetch verb, above the transport -----------------------------------
+#
+# `harbor fetch` and `POST /jobs {"verb": "fetch"}` are the same operation with
+# different front doors, so the decisions -- what a target resolves to, what
+# already occupies that id, what gets recorded -- live here rather than in
+# whichever caller got there first. The CLI prints around these; the job runner
+# returns their text.
+
+
+@dataclass(frozen=True)
+class HappPreview:
+  """What a github: target holds, read without committing anything.
+
+  Everything a catalog card shows, plus what it cost to find out. `conflict`
+  is the reason an install would be refused -- the id is already in the
+  catalog -- as a message, not an exception: a caller asking "what is at this
+  URL?" wants the answer even when it cannot act on it.
+  """
+
+  app_id: str
+  spec: str
+  sha: str
+  # The parsed manifest. Reading it is the only validation a preview does, and
+  # holding the result means a caller that wants a capability receipt does not
+  # have to re-parse text the files it came from are already gone.
+  stack: AppStack
+  manifest: str
+  files: int
+  total_bytes: int
+  conflict: str | None
+
+
+@dataclass(frozen=True)
+class FetchResult:
+  """A completed install or update."""
+
+  app_id: AppID
+  path: Path
+  current: str
+  # None for a first install; the `version @ sha` that was replaced otherwise.
+  previous: str | None
+  staged: bool
+
+
+def _conflict_message(app_id: str, ctx: HarborCtx) -> str | None:
+  """Why fetching `app_id` would be refused, or None if the id is free."""
+  entries = ctx.app_catalog().get(app_id, ())
+  if not entries:
+    return None
+  return (
+    f"{app_id} is already in the {entries[0].source} app source at "
+    f"{entries[0].path}. Remove it first if you mean to replace it; "
+    f"a github: fetch never overwrites an installed happ."
+  )
+
+
+def refuse_existing(target: GithubTarget, ctx: HarborCtx) -> None:
+  """Refuse a target whose id is already taken, before any network call.
+
+  Both ways an id can be occupied: a file sitting where the bundle would land,
+  and an entry any app source already carries. Checked up front so a collision
+  costs no GitHub rate limit -- the whole reason this is separate from the
+  install that also calls it.
+  """
+  ensure_destination_for(target.app_id, ctx.config.apps_root, target.suffix)
+  conflict = _conflict_message(str(target.app_id), ctx)
+  if conflict:
+    raise ValueError(conflict)
+
+
+def preview_target(spec: str, pin: str | None, ctx: HarborCtx) -> HappPreview:
+  """Download a github: target, read it, and throw the copy away.
+
+  A preview commits nothing, so it is safe to run on a URL nobody has vetted
+  -- which is the point: the operator vets it *from* this. The bytes are
+  fetched twice when they go on to install, once here and once for real. A
+  happ is a manifest and a few small files, and the alternative is a
+  server-side staging area that outlives the request and has to be swept.
+  """
+  target = parse_target(spec)
+  if pin:
+    target = target.at_sha(pin)
+
+  fetched = download_happ(target, ctx.config.apps_root)
+  try:
+    return HappPreview(
+      app_id=str(fetched.app_id),
+      spec=recorded_source(spec, pin),
+      sha=fetched.sha,
+      stack=load_happ(fetched.path).app_stack(),
+      manifest=manifest_text(fetched.path),
+      files=fetched.files,
+      total_bytes=fetched.total_bytes,
+      conflict=_conflict_message(str(fetched.app_id), ctx),
+    )
+  finally:
+    discard(fetched)
+
+
+def install_target(
+  spec: str, pin: str | None, ctx: HarborCtx, *, at_sha: str | None = None
+) -> FetchResult:
+  """Fetch a github: target into the apps root and record where it came from.
+
+  `pin` and `at_sha` are different questions. `pin` is the operator asking to
+  stay on one commit, and is recorded; `at_sha` only says which commit to
+  download, so a caller that has already shown someone a preview installs the
+  bytes they looked at rather than whatever the branch points at now. Recording
+  `at_sha` would silently pin an install nobody asked to pin.
+  """
+  target = parse_target(spec)
+  if pin or at_sha:
+    target = target.at_sha(pin or at_sha or "")
+  apps_root = ctx.config.apps_root
+
+  refuse_existing(target, ctx)
+  fetched = download_happ(target, apps_root)
+  committed = False
+  try:
+    # `load_happ` handles both flavors, and for a .happ.md this parse is also
+    # the content validation the folder flow gets from its tree listing.
+    stack = load_happ(fetched.path).app_stack()
+    current = format_current(stack.version, fetched.sha)
+    dest = commit_happ(fetched, apps_root)
+    ctx.harbor_db().set_app_source(
+      str(fetched.app_id), source=recorded_source(spec, pin), current=current
+    )
+    committed = True
+  finally:
+    # Covers every exit that is not a successful install: an invalid manifest,
+    # or a failure part-way through committing.
+    if not committed:
+      discard(fetched)
+
+  return FetchResult(
+    app_id=fetched.app_id, path=dest, current=current, previous=None, staged=False
+  )
+
+
+def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str:
+  """Re-resolve an installed happ's recorded source, replacing it if it moved.
+
+  Returns the `FetchResult` when files changed, or a message when there was
+  nothing to do -- pinned, already current, or newly pinned to what it already
+  had. Those are outcomes, not failures, and an exception would make every
+  caller catch one to print it.
+  """
+  record = ctx.harbor_db().get_app_source(str(app))
+  if not record:
+    raise ValueError(
+      f"{app} has no recorded GitHub source (it was not installed with "
+      f"harbor fetch).\nRemove it first if you mean to replace it with a "
+      f"fetched copy."
+    )
+
+  source = record["source"]
+  current = record["current"]
+  spec = split_pin(source)[0]
+
+  if source_is_pinned(source) and not pin:
+    return f"{app} is pinned at {current}"
+
+  target = parse_target(spec)
+  if pin:
+    target = target.at_sha(pin)
+
+  resolved = resolve_ref(target)
+  _, current_sha = parse_current(current)
+  new_source = recorded_source(spec, pin)
+  if resolved == current_sha:
+    if new_source != source:
+      ctx.harbor_db().set_app_source(str(app), source=new_source, current=current)
+      return f"Pinned {app} at {current}"
+    return f"{app} is already at {current}"
+
+  dest = ctx.bundle_path(app)
+  fetched = download_happ(target.at_sha(resolved), dest.parent)
+  committed = False
+  try:
+    stack = load_happ(fetched.path).app_stack()
+    new_current = format_current(stack.version, fetched.sha)
+    replace_happ(fetched, dest)
+    ctx.harbor_db().set_app_source(str(app), source=new_source, current=new_current)
+    committed = True
+  finally:
+    if not committed:
+      discard(fetched)
+
+  return FetchResult(
+    app_id=app,
+    path=dest,
+    current=new_current,
+    previous=current,
+    staged=ctx.is_staged(app),
+  )

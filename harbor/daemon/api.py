@@ -41,7 +41,7 @@ from harbor.lib.stack import AppStack
 
 # Bumped when a response shape changes in a way a client would notice. The web
 # UI ships separately from the daemon, so it has to be able to tell.
-API_VERSION = 1
+API_VERSION = 2
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -79,6 +79,20 @@ class ConfigChange(BaseModel):
   set: dict[str, str] = Field(default_factory=dict)
   bind: dict[str, str] = Field(default_factory=dict)
   route: dict[str, str] = Field(default_factory=dict)
+
+
+class FetchTarget(BaseModel):
+  """A github: target to look at, as the UI sends it.
+
+  A URL, which the rest of this API refuses to take -- see the note above
+  `VERBS` in jobs.py. It is allowed here because looking is not installing:
+  the preview downloads to a scratch directory, reads the manifest, and throws
+  the copy away. Nothing it fetches survives the request.
+  """
+
+  model_config = ConfigDict(extra="forbid")
+
+  target: str
 
 
 class JobSubmission(BaseModel):
@@ -180,6 +194,19 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
   @app.get("/catalog", tags=["catalog"])
   def list_catalog(ctx: Ctx) -> dict:
     return {"catalogs": views.catalog_view(ctx)}
+
+  @app.post("/catalog/preview", tags=["catalog"])
+  def preview_fetch(body: FetchTarget, ctx: Ctx) -> dict:
+    """Read what a github: target holds, without installing any of it.
+
+    Inline rather than as a job: it commits nothing, so there is no state for
+    a caller to poll for. It does spend a GitHub round trip, which is why the
+    UI asks for it once per target rather than on every render.
+    """
+    try:
+      return views.fetch_preview_view(body.target, ctx)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
 
   @app.get("/apps/{app_id}", tags=["apps"])
   def get_app(app_id: str, ctx: Ctx) -> dict:

@@ -925,3 +925,114 @@ def test_rm_leaves_fetch_source_so_the_catalog_can_still_update(
     b"0.2.0"
     in (harbor_env.root / "apps" / "hello-world.happ" / "manifest.toml").read_bytes()
   )
+
+
+# --- over the admin API ----------------------------------------------------
+
+
+@pytest.fixture
+def api_client(harbor_env):
+  """The admin API over this harbor root, with a runner the test drains."""
+  from fastapi.testclient import TestClient
+
+  from harbor.daemon.api import create_app
+  from harbor.daemon.jobs import JobRunner
+
+  def factory() -> HarborCtx:
+    return HarborCtx(load_config_file(harbor_env.config))
+
+  runner = JobRunner(factory)
+  return TestClient(create_app(factory, runner)), runner
+
+
+def test_preview_reads_a_target_without_installing_it(github, api_client, harbor_env):
+  github.hello_world()
+  client, _ = api_client
+
+  body = client.post("/catalog/preview", json={"target": TARGET}).json()
+
+  assert body["app_id"] == "hello-world"
+  assert body["display_name"] == "Hello world"
+  assert body["version"] == "0.1.0"
+  assert body["source"] == "github:nepthar"
+  assert body["installed"] is False
+  assert body["conflict"] is None
+  assert body["sha"] == SHA
+  assert 'image   = "alpine:latest"' in body["manifest"]
+
+  # Looking is not installing, and the scratch dir does not outlive the request.
+  apps = harbor_env.root / "apps"
+  assert not (apps / "hello-world.happ").exists()
+  assert not list(apps.glob(".fetch-*"))
+
+
+def test_preview_reports_a_conflict_instead_of_refusing(github, api_client, ctx):
+  """The card still renders; it just cannot offer an install button."""
+  github.hello_world()
+  client, runner = api_client
+  client.post("/jobs", json={"verb": "fetch", "args": {"target": TARGET, "yes": "1"}})
+  runner.run_pending()
+
+  body = client.post("/catalog/preview", json={"target": TARGET}).json()
+
+  assert body["app_id"] == "hello-world"
+  assert "already in the apps app source" in body["conflict"]
+  assert 'image   = "alpine:latest"' in body["manifest"]
+
+
+def test_preview_refuses_a_target_that_is_not_a_github_url(api_client):
+  client, _ = api_client
+  response = client.post("/catalog/preview", json={"target": "hello-world"})
+  assert response.status_code == 400
+  assert "expected a github: target" in response.json()["error"]
+
+
+def test_fetch_job_needs_an_explicit_yes(github, api_client, harbor_env):
+  """No prompt exists over HTTP, so consent has to be in the submission."""
+  github.hello_world()
+  client, runner = api_client
+
+  response = client.post("/jobs", json={"verb": "fetch", "args": {"target": TARGET}})
+  assert response.status_code == 202
+  runner.run_pending()
+  job = client.get(f"/jobs/{response.json()['id']}").json()
+
+  assert job["state"] == "failed"
+  assert "resubmit with yes=1" in job["error"]
+  assert not (harbor_env.root / "apps" / "hello-world.happ").exists()
+
+
+def test_fetch_job_installs_and_records_its_source(github, api_client, ctx, harbor_env):
+  github.hello_world()
+  client, runner = api_client
+
+  response = client.post(
+    "/jobs", json={"verb": "fetch", "args": {"target": TARGET, "yes": "1"}}
+  )
+  runner.run_pending()
+  job = client.get(f"/jobs/{response.json()['id']}").json()
+
+  assert job["state"] == "done", job["error"]
+  assert "Installed hello-world" in job["output"]
+  installed = harbor_env.root / "apps" / "hello-world.happ"
+  assert (installed / "manifest.toml").read_bytes() == MANIFEST
+  assert ctx.harbor_db().get_app_source("hello-world") == {
+    "source": TARGET,
+    "current": format_current("0.1.0", SHA),
+  }
+
+  # Fetched, not staged: nothing runs until someone asks for it separately.
+  assert not (harbor_env.root / "run" / "hello-world").exists()
+
+
+def test_fetch_job_refuses_a_path_target(api_client):
+  client, _ = api_client
+  response = client.post(
+    "/jobs", json={"verb": "fetch", "args": {"target": "./local.happ", "yes": "1"}}
+  )
+  assert response.status_code == 202
+  _, runner = api_client
+  runner.run_pending()
+  job = client.get(f"/jobs/{response.json()['id']}").json()
+  assert job["state"] == "failed"
+  assert "expected a github: target" in job["error"]

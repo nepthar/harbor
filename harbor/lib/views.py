@@ -14,7 +14,8 @@ from __future__ import annotations
 from typing import Any
 
 from harbor.lib.apps import AppID
-from harbor.lib.happ import HAPP_MD_SUFFIX, extract_md_files, load_happ
+from harbor.lib.fetch import USAGE, preview_target, split_pin
+from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
@@ -59,10 +60,11 @@ def catalog_view(ctx: HarborCtx) -> list[dict[str, Any]]:
 
 def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
   stack = _catalog_stack(entry)
-  # AppStore creates the logtab on contact; a listing must not invent one.
-  store = None
-  if stack is not None and ctx.config.app_config_path(stack.app).is_file():
-    store = ctx.app_store(stack.app)
+  # The logtab is what makes an id more than a catalog listing, and AppStore
+  # creates it on contact -- so this is a file check, never a store lookup.
+  installed = ctx.config.app_config_path(entry.app_id).is_file()
+  store = ctx.app_store(stack.app) if stack is not None and installed else None
+  manifest = manifest_text(entry.path)
   return {
     "app_id": entry.app_id,
     "display_name": stack.display_name if stack else "",
@@ -70,28 +72,69 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
     "description": stack.description if stack else "",
     "source": _catalog_origin(entry.app_id, ctx),
     "catalog": entry.source,
+    "installed": installed,
     "configured": _catalog_configured(stack, store) if stack else None,
-    "manifest": _catalog_manifest(entry),
+    "manifest": manifest,
+    "manifest_stale": _catalog_manifest_stale(entry, manifest, ctx),
   }
 
 
-def _catalog_manifest(entry: CatalogEntry) -> str:
-  """The happ's manifest.toml as it sits on disk, parseable or not."""
-  path = entry.path
-  if path.is_dir():
-    try:
-      return (path / "manifest.toml").read_text()
-    except OSError:
-      return ""
-  if path.name.endswith(HAPP_MD_SUFFIX):
-    try:
-      files = extract_md_files(path.read_text())
-    except OSError:
-      return ""
-    for md_file in files.files:
-      if md_file.path == "manifest.toml":
-        return md_file.content
-  return ""
+def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
+  """What a github: target holds, shaped like the catalog card that shows it.
+
+  Same keys `_catalog_app` produces, so one card renderer covers both a happ
+  already in a source and one being considered. The extras are what only a
+  fetch knows: the resolved commit, what it weighs, and `conflict` -- the
+  reason installing would be refused, which is a thing to display rather than
+  an error, since the operator asked what was at the URL.
+  """
+  spec, pin = split_pin(target)
+  if not spec.startswith(GITHUB_PREFIX):
+    raise ValueError(
+      f"Don't know how to fetch {target!r}; expected a github: target.\n  {USAGE}"
+    )
+  preview = preview_target(spec, pin, ctx)
+  stack = preview.stack
+  user = spec[len(GITHUB_PREFIX) :].split("/", 1)[0]
+  return {
+    "app_id": preview.app_id,
+    "display_name": stack.display_name,
+    "version": stack.version,
+    "description": stack.description,
+    "source": f"{GITHUB_PREFIX}{user}" if user else "local",
+    "catalog": None,
+    # About the id, not the download: a conflicting id may well be installed,
+    # and the card should say so rather than claim otherwise.
+    "installed": ctx.config.app_config_path(preview.app_id).is_file(),
+    "configured": _catalog_configured(stack, None),
+    "manifest": preview.manifest,
+    "manifest_stale": False,
+    "conflict": preview.conflict,
+    "target": preview.spec,
+    "sha": preview.sha,
+    "files": preview.files,
+    "bytes": preview.total_bytes,
+  }
+
+
+def _catalog_manifest_stale(entry: CatalogEntry, manifest: str, ctx: HarborCtx) -> bool:
+  """Whether the catalog's manifest has moved on from the staged copy.
+
+  Compares the text `manifest_text` already unwrapped rather than calling
+  `HarborCtx.manifest_stale`: that one reads `manifest.toml` off the bundle
+  path, so a `.happ.md` -- where the manifest is inside a code block -- always
+  compares equal to nothing and reports fresh.
+
+  An app that is not staged has nothing to differ from, and neither does an
+  entry whose manifest could not be read.
+  """
+  staged = ctx.staged_paths(entry.app_id).manifest_path
+  if not manifest or not staged.is_file():
+    return False
+  try:
+    return staged.read_text() != manifest
+  except OSError:
+    return False
 
 
 def _catalog_configured(stack: AppStack, store: AppStore | None) -> str:

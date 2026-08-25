@@ -99,6 +99,24 @@ html.nav-collapsed nav a { text-align: center; padding: 7px 0; }
 html.nav-collapsed nav a .mark { display: inline; }
 main { flex: 1; padding: 28px 32px; min-width: 0; overflow: auto; }
 .head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; }
+.head .head-actions { margin-left: auto; }
+.head .head-actions a.btn {
+  color: var(--fg); font-size: 13px; text-decoration: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px;
+  background: var(--panel);
+}
+.head .head-actions a.btn:hover {
+  border-color: var(--accent); text-decoration: none;
+}
+.fetchbar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); padding: 12px 14px; margin-bottom: 16px;
+}
+.fetchbar input[name=target] { flex: 1 1 28rem; min-width: 16rem; }
+.fetchbar .hint {
+  flex-basis: 100%; color: var(--muted); font-size: 12px; margin: 0;
+}
 h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
 .head a { color: var(--muted); text-decoration: none; font-size: 13px; }
 .head a:hover { color: var(--fg); text-decoration: underline; }
@@ -160,6 +178,10 @@ button.link:hover { color: var(--bad); }
 .apphead .lede { margin: 6px 0 2px; }
 .row.between { justify-content: space-between; width: 100%; }
 .actions form { display: inline; }
+.actions a.link, .fetchbar a.link {
+  color: var(--muted); font-size: 13px; text-decoration: none;
+}
+.actions a.link:hover, .fetchbar a.link:hover { color: var(--fg); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
      color: var(--muted); margin: 14px 0 6px; font-weight: 500; }
@@ -229,13 +251,30 @@ details.reveal > summary:hover { color: var(--fg); }
 .app-card[hidden] { display: none; }
 .app-card-head {
   flex: 0 0 20rem; width: 20rem;
+  display: flex; flex-direction: column;
   border: 1px solid var(--border); border-radius: 8px;
   padding: 12px 14px; background: var(--bg);
   overflow: auto;
 }
 .app-card h2 { margin: 0 0 2px; font-size: 17px; }
 .app-card .lede { margin: 4px 0 8px; }
-.app-card-head > :last-child { margin-bottom: 0; }
+.app-card-intro > :last-child { margin-bottom: 0; }
+/* margin-top:auto rather than a fixed footer: the head scrolls, and buttons
+   that scrolled away with it would be unreachable on a long description. */
+.app-card-head > .actions {
+  margin-top: auto; padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.app-card .conflict {
+  margin: 8px 0 0; padding: 8px 10px; font-size: 13px;
+  color: var(--fg); background: var(--panel);
+  border-left: 2px solid var(--bad); border-radius: 4px;
+}
+.app-card .stale {
+  margin: 8px 0 0; padding: 8px 10px; font-size: 13px;
+  color: var(--fg); background: var(--panel);
+  border-left: 2px solid var(--warn); border-radius: 4px;
+}
 .app-card-manifest {
   flex: 1 1 auto; min-width: 0; min-height: 16rem; overflow: auto;
   margin: 0; padding: 14px 16px;
@@ -353,6 +392,20 @@ def nav_active(path):
   return None
 
 
+def head_actions(path):
+  """Page-level actions that belong beside the title rather than in the body.
+
+  Only the catalog has one. It is a link, not a form: revealing the fetch bar
+  is a change of view, so it survives a refresh and can be linked to.
+  """
+  if path != "/catalog":
+    return ""
+  return (
+    '<span class="head-actions">'
+    '<a class="btn" href="/catalog?fetch=1">Fetch App</a></span>'
+  )
+
+
 def page(path, title, body, version=""):
   active = nav_active(path)
   links = "".join(
@@ -380,7 +433,7 @@ def page(path, title, body, version=""):
   <button type="button" class="nav-toggle" aria-label="Collapse sidebar">‹</button>
 </nav>
 <main>
-  <div class="head"><h1>{esc(title)}</h1><a href="{esc(path)}">Refresh</a></div>
+  <div class="head"><h1>{esc(title)}</h1><a href="{esc(path)}">Refresh</a>{head_actions(path)}</div>
   {body}
 </main>
 </div>
@@ -413,6 +466,14 @@ def page(path, title, body, version=""):
     }}
     input.addEventListener("input", dirty);
   }});
+  var fetchShade = document.getElementById("fetch-shade");
+  if (fetchShade) {{
+    fetchShade.addEventListener("click", function (event) {{
+      if (event.target === fetchShade) {{
+        window.location = fetchShade.getAttribute("data-close");
+      }}
+    }});
+  }}
   var shade = document.getElementById("catalog-shade");
   if (shade) {{
     function closeCard() {{
@@ -551,22 +612,128 @@ def catalog_tables(catalogs):
   return "".join(parts)
 
 
+def fetch_bar(target=""):
+  """Where an operator names a happ to fetch. GitHub is the only source today.
+
+  A GET form: a preview installs nothing, so it is safe to land on, safe to
+  refresh, and safe to link. The cost is one GitHub round trip per render of
+  the result, which beats holding a downloaded copy between two requests.
+  """
+  return (
+    '<form class="fetchbar" method="get" action="/catalog">'
+    '<input type="hidden" name="fetch" value="1">'
+    '<input name="target" placeholder="github:user/repo/ref/path/name.happ" '
+    f'value="{esc(target)}" autofocus>'
+    '<button type="submit">Preview</button>'
+    '<a class="link" href="/catalog">Cancel</a>'
+    '<p class="hint">Only github: targets for now. Harbor shows you the '
+    "manifest before anything is installed.</p>"
+    "</form>"
+  )
+
+
+def fetch_preview(app):
+  """The previewed happ, over the catalog, as the same card a row opens."""
+  return (
+    '<div id="fetch-shade" class="shade" data-close="/catalog?fetch=1">'
+    + catalog_card(
+      app, "card-fetch-preview", actions=preview_actions, hidden=False, status=False
+    )
+    + "</div>"
+  )
+
+
 def catalog_card_id(app):
   return f"card-{app.get('catalog') or 'apps'}--{app.get('app_id') or ''}"
 
 
-def catalog_config_pill(configured):
-  if configured == "ready":
-    return '<span class="pill"><span class="dot running"></span>ready</span>'
-  if configured == "missing":
+def catalog_status_pill(app):
+  """Installed-ness first, config second.
+
+  "needs config" on an app that was never installed reads as a chore the
+  operator has already been handed; until there is a logtab under config/,
+  there is nothing to configure.
+  """
+  if app.get("configured") is None:
+    return ""
+  if not app.get("installed"):
+    return '<span class="pill"><span class="dot"></span>not installed</span>'
+  if app.get("configured") == "missing":
     return '<span class="pill"><span class="dot exited"></span>needs config</span>'
-  return ""
+  return '<span class="pill"><span class="dot running"></span>ready</span>'
 
 
-def catalog_card(app, card_id):
+def catalog_stale_note(app):
+  if not app.get("manifest_stale"):
+    return ""
+  return (
+    '<p class="stale">The manifest shown here has changed since this app '
+    "was installed. Re-install to pick up the new one.</p>"
+  )
+
+
+def catalog_conflict_note(app):
+  if not app.get("conflict"):
+    return ""
+  return f'<p class="conflict">{esc(app["conflict"])}</p>'
+
+
+def catalog_actions(app):
+  """Re-stage from the catalog. Starting is the app page's job, not this one.
+
+  `stage` is the same verb the app page's Re-stage button posts, so an app
+  installed here lands in exactly the state `harbor stage` leaves it in.
+  """
+  if app.get("configured") is None:
+    return ""
+  app_id = app.get("app_id") or ""
+  label = "Re-install" if app.get("installed") else "Install"
+  return (
+    f'<div class="row actions">'
+    f'<form method="post" action="/apps/{quote(app_id)}">'
+    f'<input type="hidden" name="action" value="stage">'
+    f'<button type="submit">{label}</button></form>'
+    f"</div>"
+  )
+
+
+def preview_actions(app):
+  """Fetch what the preview just showed, or nothing when the id is taken.
+
+  A conflicting id has no button at all: `catalog_conflict_note` has already
+  said why, and offering an action harbor would refuse is worse than offering
+  none.
+  """
+  close = '<a class="link" href="/catalog?fetch=1">Back</a>'
+  if app.get("conflict"):
+    return f'<div class="row actions">{close}</div>'
+  return (
+    f'<div class="row actions">'
+    f'<form method="post" action="/catalog">'
+    f'<input type="hidden" name="action" value="fetch">'
+    f'<input type="hidden" name="target" value="{esc(app.get("target") or "")}">'
+    f'<button type="submit">Fetch</button></form>'
+    f"{close}</div>"
+  )
+
+
+def catalog_card(app, card_id, actions=catalog_actions, hidden=True, status=True):
+  """One happ, full width: what it is on the left, its manifest on the right.
+
+  `actions` is what the card can *do* about this happ, and is the only thing
+  that differs between a catalog entry and a fetch preview -- everything else
+  is the same shape because the API projects it that way.
+
+  Catalog cards ship hidden and are revealed by the row that opens them. A
+  preview has no row to click: it *is* the page's answer, so it renders open.
+
+  `status` is off for a preview: the pill answers "is this installed", and for
+  a happ that is still on GitHub the answer is always no. Printed next to a
+  conflict note saying the id is already taken, it reads as a contradiction.
+  """
   name = app.get("display_name") or app.get("app_id")
   version = app.get("version")
-  pill = catalog_config_pill(app.get("configured"))
+  pill = catalog_status_pill(app) if status else ""
   ver = f'<span class="muted">v{esc(version)}</span>' if version else ""
   side = " ".join(p for p in (ver, pill) if p)
   if app.get("configured") is None:
@@ -581,10 +748,12 @@ def catalog_card(app, card_id):
     )
   manifest = esc(app.get("manifest") or "")
   return (
-    f'<article class="app-card" id="{esc(card_id)}" hidden>'
+    f'<article class="app-card" id="{esc(card_id)}"{" hidden" if hidden else ""}>'
     f'<div class="app-card-head">'
+    f'<div class="app-card-intro">'
     f'<div class="row between"><h2>{esc(name)}</h2>{side}</div>'
-    f"{summary}</div>"
+    f"{summary}{catalog_conflict_note(app)}{catalog_stale_note(app)}</div>"
+    f"{actions(app)}</div>"
     f'<pre class="app-card-manifest"><code class="language-toml">{manifest}</code></pre>'
     "</article>"
   )
@@ -980,14 +1149,28 @@ def render(path, query=None, notice=""):
       return "Volumes", error_card(e), version
 
   if path == "/catalog":
+    target = (query.get("target") or [""])[0].strip()
+    body = notice
+    if query.get("fetch") or target:
+      body += fetch_bar(target)
+    if query.get("job"):
+      try:
+        body += job_card(api(f"/jobs/{quote(query['job'][0])}"))
+      except ApiError:
+        pass
+    # The preview is its own request and its own failure: a target that does
+    # not resolve must not take the catalog listing down with it.
+    preview = ""
+    if target:
+      try:
+        preview = fetch_preview(api("/catalog/preview", "POST", {"target": target}))
+      except ApiError as e:
+        body += f'<div class="error"><p>{esc(e)}</p></div>'
     try:
-      return (
-        "Catalog",
-        catalog_tables(api("/catalog").get("catalogs", [])),
-        version,
-      )
+      body += catalog_tables(api("/catalog").get("catalogs", []))
     except ApiError as e:
       return "Catalog", error_card(e), version
+    return "Catalog", body + preview, version
 
   if path == "/":
     return (
@@ -1038,6 +1221,9 @@ class Handler(BaseHTTPRequestHandler):
     if path.startswith("/apps/"):
       self.post_app(unquote(path[len("/apps/"):]), field, form)
       return
+    if path == "/catalog":
+      self.post_catalog(field)
+      return
     if path != "/volumes":
       self.redirect(path)
       return
@@ -1061,6 +1247,21 @@ class Handler(BaseHTTPRequestHandler):
         self.redirect("/volumes")
     except ApiError as e:
       self.redirect(f"/volumes?err={quote(str(e))}")
+
+  def post_catalog(self, field):
+    """Fetch a previewed target. `yes` is this submit: the operator has now
+    read the manifest the preview put in front of them."""
+    target = field("target")
+    if field("action") != "fetch" or not target:
+      self.redirect("/catalog")
+      return
+    try:
+      job = api(
+        "/jobs", "POST", {"verb": "fetch", "args": {"target": target, "yes": "1"}}
+      )
+      self.redirect(f"/catalog?job={quote(job['id'])}")
+    except ApiError as e:
+      self.redirect(f"/catalog?fetch=1&err={quote(str(e))}")
 
   def post_app(self, app_id, field, form):
     """One action per submit: a lifecycle verb, or one kind of config change."""

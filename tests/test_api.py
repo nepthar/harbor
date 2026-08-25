@@ -69,6 +69,34 @@ def test_catalog_lists_available_apps_grouped_by_source(harbor_env, client):
   assert apps["routes-demo"]["configured"] == "ready"
 
 
+def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
+  """Installed-ness is the logtab; drift is the staged manifest vs the bundle's."""
+
+  def entry():
+    catalogs = client.get("/catalog").json()["catalogs"]
+    return {app["app_id"]: app for app in catalogs[0]["apps"]}[APP]
+
+  # A catalog entry alone is not an installation, and nothing is staged to
+  # have drifted from.
+  assert entry()["installed"] is False
+  assert entry()["manifest_stale"] is False
+
+  assert submit(client, jobs, "stage", {"app": APP})["state"] == "done"
+  assert entry()["installed"] is True
+  assert entry()["manifest_stale"] is False
+
+  # Editing the bundle leaves the staged copy behind: that is the drift the
+  # catalog card offers to close with a re-install.
+  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest.write_text(
+    manifest.read_text() + "\n# a comment the staged copy has not seen\n"
+  )
+  assert entry()["manifest_stale"] is True
+
+  assert submit(client, jobs, "stage", {"app": APP})["state"] == "done"
+  assert entry()["manifest_stale"] is False
+
+
 def test_catalog_groups_a_second_app_source(harbor_env, client):
   extra = harbor_env.root / "dev-apps"
   extra.mkdir()
@@ -129,8 +157,10 @@ def test_catalog_keeps_a_broken_bundle(harbor_env, client):
     "description": "",
     "source": "local",
     "catalog": "apps",
+    "installed": False,
     "configured": None,
     "manifest": "not toml",
+    "manifest_stale": False,
   }
 
 
