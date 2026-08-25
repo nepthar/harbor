@@ -3,12 +3,12 @@ name = "harbor"
 version = "0.1.0"
 description = "A Docker Compose runtime for self-hosted applications"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
-    "License :: Other/Proprietary License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.12",
 ]
@@ -31,7 +31,7 @@ daemon = [
 ]
 
 [project.urls]
-Repository = "https://git.zyx.pw/P2Project/harbor"
+Repository = "https://github.com/nepthar/harbor"
 
 [project.scripts]
 harbor = "harbor.cli.main:main"
