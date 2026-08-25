@@ -11,10 +11,17 @@ they stay in one place rather than being re-derived per front door.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 from harbor.lib.apps import AppID
-from harbor.lib.fetch import USAGE, preview_target, split_pin
+from harbor.lib.fetch import (
+  USAGE,
+  check_update,
+  parse_current,
+  preview_target,
+  split_pin,
+)
 from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
 from harbor.lib.observations import AppObservation
@@ -115,6 +122,47 @@ def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
     "files": preview.files,
     "bytes": preview.total_bytes,
   }
+
+
+def fetch_update_view(app_id: AppID, ctx: HarborCtx) -> dict[str, Any]:
+  """A fetched happ compared to the commit its source currently points at.
+
+  Looking, not applying: the remote copy is discarded. `diff` is the
+  catalog's manifest against the remote one, which is what the operator
+  reviews before `harbor fetch <app_id>` replaces the files.
+  """
+  check = check_update(app_id, ctx)
+  current_version, current_sha = parse_current(check.current)
+  remote_version = remote_sha = None
+  if check.remote:
+    remote_version, remote_sha = parse_current(check.remote)
+  diff = None
+  if check.available and check.remote_manifest is not None:
+    diff = _manifest_diff(check.current_manifest, check.remote_manifest)
+  return {
+    "app_id": check.app_id,
+    "pinned": check.pinned,
+    "available": check.available,
+    "current_version": current_version,
+    "current_sha": current_sha,
+    "remote_version": remote_version,
+    "remote_sha": remote_sha,
+    "current_manifest": check.current_manifest,
+    "remote_manifest": check.remote_manifest,
+    "diff": diff,
+    "message": check.message,
+  }
+
+
+def _manifest_diff(current: str, remote: str) -> str:
+  return "".join(
+    difflib.unified_diff(
+      current.splitlines(keepends=True),
+      remote.splitlines(keepends=True),
+      fromfile="installed",
+      tofile="remote",
+    )
+  )
 
 
 def _catalog_manifest_stale(entry: CatalogEntry, manifest: str, ctx: HarborCtx) -> bool:

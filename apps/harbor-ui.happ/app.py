@@ -275,6 +275,16 @@ details.reveal > summary:hover { color: var(--fg); }
   color: var(--fg); background: var(--panel);
   border-left: 2px solid var(--warn); border-radius: 4px;
 }
+.app-card .update {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border); font-size: 13px;
+}
+.app-card .update p { margin: 0 0 4px; }
+.app-card .update p:last-child { margin-bottom: 0; }
+.app-card-diff span { display: block; }
+.app-card-diff .diff-add { color: var(--ok); }
+.app-card-diff .diff-del { color: var(--coral); }
+.app-card-diff .diff-hunk { color: var(--muted); }
 .app-card-manifest {
   flex: 1 1 auto; min-width: 0; min-height: 16rem; overflow: auto;
   margin: 0; padding: 14px 16px;
@@ -301,8 +311,8 @@ details.reveal > summary:hover { color: var(--fg); }
 class UnixHTTPConnection(http.client.HTTPConnection):
   """http.client over AF_UNIX. The Host header is a formality here."""
 
-  def __init__(self, path):
-    super().__init__("localhost", timeout=10)
+  def __init__(self, path, timeout=10):
+    super().__init__("localhost", timeout=timeout)
     self._unix_path = path
 
   def connect(self):
@@ -321,18 +331,18 @@ def where():
   return API if API else SOCKET
 
 
-def connect():
+def connect(timeout=10):
   if not API:
-    return UnixHTTPConnection(SOCKET)
+    return UnixHTTPConnection(SOCKET, timeout=timeout)
   address = API.split("://", 1)[-1].rstrip("/")
   host, _, port = address.rpartition(":")
   if not port.isdigit():
     raise ApiError(f"HARBOR_API must be host:port, got {API!r}")
-  return http.client.HTTPConnection(host or "127.0.0.1", int(port), timeout=10)
+  return http.client.HTTPConnection(host or "127.0.0.1", int(port), timeout=timeout)
 
 
-def api(path, method="GET", payload=None):
-  conn = connect()
+def api(path, method="GET", payload=None, timeout=10):
+  conn = connect(timeout)
   body = json.dumps(payload).encode() if payload is not None else None
   headers = {"Content-Type": "application/json"} if body else {}
   try:
@@ -477,6 +487,8 @@ def page(path, title, body, version=""):
   var shade = document.getElementById("catalog-shade");
   if (shade) {{
     function closeCard() {{
+      var closeTo = shade.getAttribute("data-close");
+      if (closeTo) {{ window.location = closeTo; return; }}
       shade.hidden = true;
       shade.querySelectorAll(".app-card").forEach(function (card) {{
         card.hidden = true;
@@ -484,6 +496,8 @@ def page(path, title, body, version=""):
     }}
     document.querySelectorAll(".catalog-row").forEach(function (row) {{
       row.addEventListener("click", function () {{
+        var href = row.getAttribute("data-href");
+        if (href) {{ window.location = href; return; }}
         var card = document.getElementById(row.getAttribute("data-card"));
         if (!card) return;
         shade.querySelectorAll(".app-card").forEach(function (other) {{
@@ -567,7 +581,15 @@ def apps_table(apps):
   )
 
 
-def catalog_tables(catalogs):
+def catalog_app_entry(catalogs, app_id):
+  for catalog in catalogs:
+    for app in catalog.get("apps") or []:
+      if app.get("app_id") == app_id:
+        return app
+  return None
+
+
+def catalog_tables(catalogs, open_app="", update=None, confirm=False):
   if not catalogs:
     return (
       '<div class="card"><p class="empty">No catalogs configured.</p></div>'
@@ -586,12 +608,24 @@ def catalog_tables(catalogs):
     for app in apps:
       name = app.get("display_name") or app.get("app_id")
       version = app.get("version")
+      app_id = app.get("app_id") or ""
       card_id = catalog_card_id(app)
-      cards.append(catalog_card(app, card_id))
+      is_open = bool(open_app) and app_id == open_app
+      card_app = dict(app)
+      if is_open and update is not None:
+        card_app["update"] = update
+      cards.append(
+        catalog_card(card_app, card_id, hidden=not is_open, confirm=is_open and confirm)
+      )
+      href = (
+        f' data-href="/catalog?app={quote(app_id)}"'
+        if str(app.get("source") or "").startswith("github:")
+        else f' data-card="{esc(card_id)}"'
+      )
       rows.append(
-        f'<tr class="catalog-row" data-card="{esc(card_id)}">'
+        f'<tr class="catalog-row"{href}>'
         f'<td class="name">{esc(name)}</td>'
-        f'<td class="mono muted">{esc(app.get("app_id"))}</td>'
+        f'<td class="mono muted">{esc(app_id)}</td>'
         f'<td class="muted">{esc(version) if version else "&mdash;"}</td>'
         f'<td class="wrap">{esc(app.get("description") or "")}</td>'
         f'<td class="muted">{esc(app.get("source") or "local")}</td>'
@@ -604,8 +638,10 @@ def catalog_tables(catalogs):
       "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
     )
   if cards:
+    hidden = "" if open_app else " hidden"
+    close = ' data-close="/catalog"' if open_app else ""
     parts.append(
-      '<div id="catalog-shade" class="shade" hidden>'
+      f'<div id="catalog-shade" class="shade"{close}{hidden}>'
       + "".join(cards)
       + "</div>"
     )
@@ -688,12 +724,99 @@ def catalog_actions(app):
     return ""
   app_id = app.get("app_id") or ""
   label = "Re-install" if app.get("installed") else "Install"
+  update = ""
+  if (app.get("update") or {}).get("available"):
+    update = (
+      f'<form method="get" action="/catalog">'
+      f'<input type="hidden" name="app" value="{esc(app_id)}">'
+      f'<input type="hidden" name="confirm" value="1">'
+      f'<button type="submit">Update</button></form>'
+    )
   return (
     f'<div class="row actions">'
     f'<form method="post" action="/apps/{quote(app_id)}">'
     f'<input type="hidden" name="action" value="stage">'
     f'<button type="submit">{label}</button></form>'
+    f"{update}"
     f"</div>"
+  )
+
+
+def confirm_update_actions(app):
+  """Apply the remote copy the operator just reviewed, or back out."""
+  app_id = app.get("app_id") or ""
+  return (
+    f'<div class="row actions">'
+    f'<form method="post" action="/catalog">'
+    f'<input type="hidden" name="action" value="fetch">'
+    f'<input type="hidden" name="target" value="{esc(app_id)}">'
+    f'<button type="submit">Apply update</button></form>'
+    f'<a class="link" href="/catalog?app={quote(app_id)}">Cancel</a>'
+    f"</div>"
+  )
+
+
+def catalog_update_section(app, confirm=False):
+  """Remote vs fetched, under the name/version/status block.
+
+  Only present after a check. A local happ never gets one; a github happ
+  gets "up to date", "pinned", or the versions that would change.
+  """
+  update = app.get("update")
+  if not update:
+    return ""
+  if update.get("error"):
+    return f'<p class="conflict">{esc(update["error"])}</p>'
+  if update.get("pinned"):
+    ver = update.get("current_version") or ""
+    sha = (update.get("current_sha") or "")[:8]
+    return (
+      f'<div class="update"><p>Pinned at {esc(ver)} '
+      f'<span class="mono muted">{esc(sha)}</span>. '
+      f"This happ will not follow its branch.</p></div>"
+    )
+  if not update.get("available"):
+    return '<div class="update"><p class="muted">Up to date.</p></div>'
+  cur_v = update.get("current_version") or ""
+  new_v = update.get("remote_version") or ""
+  cur_s = (update.get("current_sha") or "")[:8]
+  new_s = (update.get("remote_sha") or "")[:8]
+  prompt = ""
+  if confirm:
+    prompt = (
+      "<p>This replaces the catalog copy. The running app is unchanged "
+      "until you stop it, Re-install, and Start.</p>"
+    )
+  return (
+    f'<div class="update">'
+    f"<p><b>Update available</b></p>"
+    f'<p class="mono">{esc(cur_v)} → {esc(new_v)}</p>'
+    f'<p class="mono muted">{esc(cur_s)} → {esc(new_s)}</p>'
+    f"{prompt}</div>"
+  )
+
+
+def catalog_diff_html(diff):
+  """The remote manifest as a unified diff, colored in the right-hand pane."""
+  if not diff:
+    return (
+      '<pre class="app-card-manifest app-card-diff">'
+      '<span class="diff-hunk">The manifest is unchanged; other files differ.'
+      "</span></pre>"
+    )
+  parts = []
+  for line in diff.splitlines():
+    if line.startswith("+") and not line.startswith("+++"):
+      cls = "diff-add"
+    elif line.startswith("-") and not line.startswith("---"):
+      cls = "diff-del"
+    elif line.startswith("@") or line.startswith("+++") or line.startswith("---"):
+      cls = "diff-hunk"
+    else:
+      cls = "diff-ctx"
+    parts.append(f'<span class="{cls}">{esc(line) or " "}</span>')
+  return (
+    '<pre class="app-card-manifest app-card-diff">' + "".join(parts) + "</pre>"
   )
 
 
@@ -717,7 +840,9 @@ def preview_actions(app):
   )
 
 
-def catalog_card(app, card_id, actions=catalog_actions, hidden=True, status=True):
+def catalog_card(
+  app, card_id, actions=catalog_actions, hidden=True, status=True, confirm=False
+):
   """One happ, full width: what it is on the left, its manifest on the right.
 
   `actions` is what the card can *do* about this happ, and is the only thing
@@ -730,6 +855,9 @@ def catalog_card(app, card_id, actions=catalog_actions, hidden=True, status=True
   `status` is off for a preview: the pill answers "is this installed", and for
   a happ that is still on GitHub the answer is always no. Printed next to a
   conflict note saying the id is already taken, it reads as a contradiction.
+
+  `confirm` swaps the right pane for a diff of the remote manifest and the
+  buttons for applying it. Only a check that found an update offers that.
   """
   name = app.get("display_name") or app.get("app_id")
   version = app.get("version")
@@ -746,15 +874,26 @@ def catalog_card(app, card_id, actions=catalog_actions, hidden=True, status=True
       f'<p class="muted mono">{esc(app.get("app_id"))}'
       f' · {esc(app.get("source") or "local")}</p>'
     )
-  manifest = esc(app.get("manifest") or "")
+  show_diff = confirm and (app.get("update") or {}).get("available")
+  if show_diff:
+    acts = confirm_update_actions(app)
+    pane = catalog_diff_html((app.get("update") or {}).get("diff") or "")
+  else:
+    acts = actions(app)
+    manifest = esc(app.get("manifest") or "")
+    pane = (
+      f'<pre class="app-card-manifest">'
+      f'<code class="language-toml">{manifest}</code></pre>'
+    )
   return (
     f'<article class="app-card" id="{esc(card_id)}"{" hidden" if hidden else ""}>'
     f'<div class="app-card-head">'
     f'<div class="app-card-intro">'
     f'<div class="row between"><h2>{esc(name)}</h2>{side}</div>'
-    f"{summary}{catalog_conflict_note(app)}{catalog_stale_note(app)}</div>"
-    f"{actions(app)}</div>"
-    f'<pre class="app-card-manifest"><code class="language-toml">{manifest}</code></pre>'
+    f"{summary}{catalog_conflict_note(app)}{catalog_stale_note(app)}"
+    f"{catalog_update_section(app, confirm)}</div>"
+    f"{acts}</div>"
+    f"{pane}"
     "</article>"
   )
 
@@ -898,6 +1037,23 @@ def job_card(job):
     )
   body = f'<pre>{esc(job["output"])}</pre>' if job["output"] else ""
   return f'<div class="notice"><b>{esc(job["verb"])}</b> finished.{body}</div>'
+
+
+def update_applied_note(job):
+  """What to do after a catalog fetch of an already-installed app id.
+
+  A first-time `github:` fetch is not this: nothing is running yet. The
+  buttons named here are the ones on this card, not the CLI verbs.
+  """
+  if not job or job.get("state") != "done" or job.get("verb") != "fetch":
+    return ""
+  target = (job.get("args") or {}).get("target") or ""
+  if target.startswith("github:") or "Updated " not in (job.get("output") or ""):
+    return ""
+  return (
+    '<div class="notice">The catalog copy is updated. To run it: stop the '
+    "app if it is running, then Re-install and Start.</div>"
+  )
 
 
 def issues_card(app):
@@ -1150,12 +1306,17 @@ def render(path, query=None, notice=""):
 
   if path == "/catalog":
     target = (query.get("target") or [""])[0].strip()
+    open_app = (query.get("app") or [""])[0].strip()
+    confirm = query.get("confirm") == ["1"]
     body = notice
     if query.get("fetch") or target:
       body += fetch_bar(target)
+    job = None
     if query.get("job"):
       try:
-        body += job_card(api(f"/jobs/{quote(query['job'][0])}"))
+        job = api(f"/jobs/{quote(query['job'][0])}")
+        body += job_card(job)
+        body += update_applied_note(job)
       except ApiError:
         pass
     # The preview is its own request and its own failure: a target that does
@@ -1163,13 +1324,27 @@ def render(path, query=None, notice=""):
     preview = ""
     if target:
       try:
-        preview = fetch_preview(api("/catalog/preview", "POST", {"target": target}))
+        preview = fetch_preview(
+          api("/catalog/preview", "POST", {"target": target}, timeout=60)
+        )
       except ApiError as e:
         body += f'<div class="error"><p>{esc(e)}</p></div>'
     try:
-      body += catalog_tables(api("/catalog").get("catalogs", []))
+      catalogs = api("/catalog").get("catalogs", [])
     except ApiError as e:
       return "Catalog", error_card(e), version
+    update = None
+    job_busy = job is not None and job.get("state") in ("queued", "running")
+    if open_app and not job_busy:
+      entry = catalog_app_entry(catalogs, open_app)
+      if entry and str(entry.get("source") or "").startswith("github:"):
+        try:
+          update = api("/catalog/check", "POST", {"app": open_app}, timeout=60)
+        except ApiError as e:
+          update = {"error": str(e)}
+    body += catalog_tables(
+      catalogs, open_app=open_app, update=update, confirm=confirm
+    )
     return "Catalog", body + preview, version
 
   if path == "/":
@@ -1249,19 +1424,30 @@ class Handler(BaseHTTPRequestHandler):
       self.redirect(f"/volumes?err={quote(str(e))}")
 
   def post_catalog(self, field):
-    """Fetch a previewed target. `yes` is this submit: the operator has now
-    read the manifest the preview put in front of them."""
+    """Fetch a previewed target, or update an already-fetched app id.
+
+    `yes` is this submit for a first install: the operator has now read the
+    manifest the preview put in front of them. An update has no prompt in
+    harbor itself -- the confirm step is this page's.
+    """
     target = field("target")
     if field("action") != "fetch" or not target:
       self.redirect("/catalog")
       return
+    args = {"target": target}
+    if target.startswith("github:"):
+      args["yes"] = "1"
     try:
-      job = api(
-        "/jobs", "POST", {"verb": "fetch", "args": {"target": target, "yes": "1"}}
-      )
-      self.redirect(f"/catalog?job={quote(job['id'])}")
+      job = api("/jobs", "POST", {"verb": "fetch", "args": args})
+      if target.startswith("github:"):
+        self.redirect(f"/catalog?job={quote(job['id'])}")
+      else:
+        self.redirect(f"/catalog?app={quote(target)}&job={quote(job['id'])}")
     except ApiError as e:
-      self.redirect(f"/catalog?fetch=1&err={quote(str(e))}")
+      if target.startswith("github:"):
+        self.redirect(f"/catalog?fetch=1&err={quote(str(e))}")
+      else:
+        self.redirect(f"/catalog?app={quote(target)}&err={quote(str(e))}")
 
   def post_app(self, app_id, field, form):
     """One action per submit: a lifecycle verb, or one kind of config change."""

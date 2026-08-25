@@ -628,6 +628,24 @@ class FetchResult:
   staged: bool
 
 
+@dataclass(frozen=True)
+class UpdateCheck:
+  """Whether a fetched happ's recorded source has moved, without applying it.
+
+  `available` means the commit changed. Version can stay put when only files
+  moved; the caller displays both so the operator can tell which.
+  """
+
+  app_id: str
+  current: str
+  current_manifest: str
+  pinned: bool
+  available: bool
+  remote: str | None
+  remote_manifest: str | None
+  message: str
+
+
 def _conflict_message(app_id: str, ctx: HarborCtx) -> str | None:
   """Why fetching `app_id` would be refused, or None if the id is free."""
   entries = ctx.app_catalog().get(app_id, ())
@@ -778,4 +796,63 @@ def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str
     current=new_current,
     previous=current,
     staged=ctx.is_staged(app),
+  )
+
+
+def check_update(app: AppID, ctx: HarborCtx) -> UpdateCheck:
+  """Resolve a fetched happ's source and stop before replacing anything.
+
+  Same decisions `update_app` makes -- pinned, already current, moved -- as
+  data a viewer can show. The download is thrown away; applying is a
+  separate `update_app` call after the operator has seen the diff.
+  """
+  record = ctx.harbor_db().get_app_source(str(app))
+  if not record:
+    raise ValueError(
+      f"{app} has no recorded GitHub source (it was not installed with "
+      f"harbor fetch).\nRemove it first if you mean to replace it with a "
+      f"fetched copy."
+    )
+
+  source = record["source"]
+  current = record["current"]
+  current_manifest = manifest_text(ctx.bundle_path(app))
+
+  if source_is_pinned(source):
+    return UpdateCheck(
+      app_id=str(app),
+      current=current,
+      current_manifest=current_manifest,
+      pinned=True,
+      available=False,
+      remote=None,
+      remote_manifest=None,
+      message=f"{app} is pinned at {current}",
+    )
+
+  spec = split_pin(source)[0]
+  resolved = resolve_ref(parse_target(spec))
+  _, current_sha = parse_current(current)
+  if resolved == current_sha:
+    return UpdateCheck(
+      app_id=str(app),
+      current=current,
+      current_manifest=current_manifest,
+      pinned=False,
+      available=False,
+      remote=None,
+      remote_manifest=None,
+      message=f"{app} is already at {current}",
+    )
+
+  preview = preview_target(spec, resolved, ctx)
+  return UpdateCheck(
+    app_id=str(app),
+    current=current,
+    current_manifest=current_manifest,
+    pinned=False,
+    available=True,
+    remote=format_current(preview.stack.version, preview.sha),
+    remote_manifest=preview.manifest,
+    message="",
   )

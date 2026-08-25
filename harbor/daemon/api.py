@@ -95,6 +95,14 @@ class FetchTarget(BaseModel):
   target: str
 
 
+class CheckApp(BaseModel):
+  """An already-fetched app id to compare against its recorded source."""
+
+  model_config = ConfigDict(extra="forbid")
+
+  app: str
+
+
 class JobSubmission(BaseModel):
   """What `POST /jobs` accepts.
 
@@ -205,6 +213,18 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     """
     try:
       return views.fetch_preview_view(body.target, ctx)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(400, str(e)) from e
+
+  @app.post("/catalog/check", tags=["catalog"])
+  def check_catalog_update(body: CheckApp, ctx: Ctx) -> dict:
+    """Compare a fetched happ to the commit its source currently points at.
+
+    Inline rather than as a job: it commits nothing, same as preview. The UI
+    asks once when the operator opens that happ, not on every catalog render.
+    """
+    try:
+      return views.fetch_update_view(ctx.resolve_app(body.app), ctx)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
 

@@ -359,6 +359,8 @@ def test_openapi_documents_the_surface(harbor_env, client):
     "/apps",
     "/apps/{app_id}",
     "/catalog",
+    "/catalog/preview",
+    "/catalog/check",
     "/jobs",
     "/jobs/{job_id}",
   } <= set(paths)

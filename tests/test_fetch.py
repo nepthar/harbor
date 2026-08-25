@@ -25,6 +25,7 @@ from harbor.lib.fetch import (
   MAX_FILES,
   MAX_TOTAL_BYTES,
   GithubTarget,
+  check_update,
   download_happ,
   ensure_destination_for,
   format_current,
@@ -927,6 +928,61 @@ def test_rm_leaves_fetch_source_so_the_catalog_can_still_update(
   )
 
 
+# --- check, without applying ------------------------------------------------
+
+
+def test_check_update_is_quiet_when_the_commit_is_unchanged(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  before = len(github.requests)
+
+  check = check_update("hello-world", ctx)
+
+  assert check.available is False
+  assert check.pinned is False
+  assert check.remote is None
+  assert f"already at {format_current('0.1.0', SHA)}" in check.message
+  assert len(github.requests) == before + 1
+  assert not any("/git/trees/" in path for path in github.requests[before:])
+
+
+def test_check_update_reports_a_moved_ref_without_installing(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn())
+  github.sha = NEW_SHA
+  github.add("manifest.toml", MANIFEST.replace(b"0.1.0", b"0.2.0"))
+
+  check = check_update("hello-world", ctx)
+
+  assert check.available is True
+  assert check.current == format_current("0.1.0", SHA)
+  assert check.remote == format_current("0.2.0", NEW_SHA)
+  assert 'version      = "0.1.0"' in check.current_manifest
+  assert 'version      = "0.2.0"' in (check.remote_manifest or "")
+  installed = harbor_env.root / "apps" / "hello-world.happ" / "manifest.toml"
+  assert installed.read_bytes() == MANIFEST
+  assert list((harbor_env.root / "apps").glob(".fetch-*")) == []
+
+
+def test_check_update_respects_a_pin(github, ctx, harbor_env):
+  github.hello_world()
+  fetch(ctx, FakeConn(), f"{TARGET}@{SHA}")
+  github.sha = NEW_SHA
+  before = len(github.requests)
+
+  check = check_update("hello-world", ctx)
+
+  assert check.available is False
+  assert check.pinned is True
+  assert f"pinned at {format_current('0.1.0', SHA)}" in check.message
+  assert len(github.requests) == before
+
+
+def test_check_update_refuses_an_app_without_a_source(ctx):
+  with pytest.raises(ValueError, match="no recorded GitHub source"):
+    check_update("ports-demo", ctx)
+
+
 # --- over the admin API ----------------------------------------------------
 
 
@@ -1036,3 +1092,49 @@ def test_fetch_job_refuses_a_path_target(api_client):
   job = client.get(f"/jobs/{response.json()['id']}").json()
   assert job["state"] == "failed"
   assert "expected a github: target" in job["error"]
+
+
+def test_check_reads_a_moved_ref_without_installing(github, api_client, harbor_env):
+  github.hello_world()
+  client, runner = api_client
+  client.post("/jobs", json={"verb": "fetch", "args": {"target": TARGET, "yes": "1"}})
+  runner.run_pending()
+  github.sha = NEW_SHA
+  github.add("manifest.toml", MANIFEST.replace(b"0.1.0", b"0.2.0"))
+
+  response = client.post("/catalog/check", json={"app": "hello-world"})
+  assert response.status_code == 200, response.text
+  body = response.json()
+
+  assert body["available"] is True
+  assert body["pinned"] is False
+  assert body["current_version"] == "0.1.0"
+  assert body["current_sha"] == SHA
+  assert body["remote_version"] == "0.2.0"
+  assert body["remote_sha"] == NEW_SHA
+  assert '-version      = "0.1.0"' in body["diff"]
+  assert '+version      = "0.2.0"' in body["diff"]
+  assert 'version      = "0.2.0"' in body["remote_manifest"]
+  installed = harbor_env.root / "apps" / "hello-world.happ" / "manifest.toml"
+  assert installed.read_bytes() == MANIFEST
+  assert list((harbor_env.root / "apps").glob(".fetch-*")) == []
+
+
+def test_check_is_quiet_when_already_current(github, api_client):
+  github.hello_world()
+  client, runner = api_client
+  client.post("/jobs", json={"verb": "fetch", "args": {"target": TARGET, "yes": "1"}})
+  runner.run_pending()
+
+  body = client.post("/catalog/check", json={"app": "hello-world"}).json()
+
+  assert body["available"] is False
+  assert body["diff"] is None
+  assert "already at" in body["message"]
+
+
+def test_check_refuses_a_local_app(api_client):
+  client, _ = api_client
+  response = client.post("/catalog/check", json={"app": "ports-demo"})
+  assert response.status_code == 400
+  assert "no recorded GitHub source" in response.json()["error"]
