@@ -24,7 +24,9 @@ class AppConfig:
   secret: bool
   default: str | None
   desc: str | None
-  hidden: bool = False
+  # Declared in [adv_config] rather than [config]: a hint to the UI that this
+  # value is noise beside the ones an operator is expected to set.
+  advanced: bool = False
 
   def has_default(self) -> bool:
     return not self.secret and self.default is not None
@@ -36,7 +38,10 @@ class AppConfig:
     return f"{self.name} ({'secret' if self.secret else 'config'})"
 
   def __repr__(self) -> str:
-    return f"AppConfig(name={self.name}, secret={self.secret}, default={self.default}, hidden={self.hidden})"
+    return (
+      f"AppConfig(name={self.name}, secret={self.secret}, "
+      f"default={self.default}, advanced={self.advanced})"
+    )
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,7 @@ class AppVolume:
   kind: str
   readonly: bool = False
   src: str | None = None
+  desc: str = ""
 
   @property
   def run_rel_path(self) -> str:
@@ -173,9 +179,14 @@ class AppStack:
 
 
 def _build(manifest: Manifest, app: AppID) -> AppStack:
+  # Both sections land in one flat namespace -- everything downstream (env
+  # substitution, the config store, `harbor config`) sees a single dict. The
+  # section a value came from survives only as `advanced`. `_validate_config`
+  # has already refused a name declared in both.
   config = {
-    name: AppConfig(name, entry.secret, entry.default, entry.desc, entry.hidden)
-    for name, entry in manifest.config.items()
+    name: AppConfig(name, entry.secret, entry.default, entry.desc, advanced)
+    for section, advanced in ((manifest.config, False), (manifest.adv_config, True))
+    for name, entry in section.items()
   }
   # An app that names a subdomain gets it as a config key too, so the operator
   # can move it off the label the happ shipped with -- `resolved_subdomain`
@@ -193,7 +204,9 @@ def _build(manifest: Manifest, app: AppID) -> AppStack:
   # container write fails at mount time instead of being silently discarded
   # by the next `stage` (docs/run-layout.md L4).
   volumes = {
-    name: AppVolume(name, v.kind, True if v.kind == "app" else v.readonly, v.src)
+    name: AppVolume(
+      name, v.kind, True if v.kind == "app" else v.readonly, v.src, v.desc
+    )
     for name, v in manifest.volumes.items()
   }
   run_units = _resolve_run_units(manifest, app, volumes)

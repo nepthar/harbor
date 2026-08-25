@@ -29,6 +29,10 @@ an earlier decision pointless. Name it instead of building on top of it.
 **Delegating to subagents:** constrain by shape — this file, this signature,
 this size. Handing over a document produces a document's worth of code.
 
+
+** TESTS ** Only run focused tests, don't bother running the full test suite for cosmetic changes.
+
+
 ## Conventions
 
 - ruff: 88 cols, **2-space indent**, double quotes, py312.

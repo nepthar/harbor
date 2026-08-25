@@ -111,6 +111,59 @@ env = { USER = "${admin_user}", PASS = "${admin_pass}", PORT = "${port}", PLAIN 
   assert env["UNKNOWN"] == "${nope}"
 
 
+def test_adv_config_declares_the_same_values_but_marked_advanced(tmp_path):
+  """The section is the only difference: one namespace, one `advanced` flag."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[config]
+admin_user = {}
+
+[adv_config]
+log_level = { default = "info", desc = "internal log verbosity" }
+debug_key = { secret = true }
+
+[run.main]
+image = "alpine"
+env = { USER = "${admin_user}", LEVEL = "${log_level}" }
+""",
+  )
+
+  assert set(stack.config) == {"admin_user", "log_level", "debug_key"}
+  assert stack.config["admin_user"].advanced is False
+  assert stack.config["log_level"].advanced is True
+  assert stack.config["log_level"].default == "info"
+  assert stack.config["log_level"].desc == "internal log verbosity"
+  assert stack.config["debug_key"].secret is True
+
+  # Advanced is a display hint, nothing more: an advanced name substitutes into
+  # env exactly like a plain one.
+  assert stack.run_units["main"].environment["LEVEL"] == "${log_level}"
+
+
+def test_a_name_in_both_config_sections_is_refused(tmp_path):
+  with pytest.raises(ConfigError, match="already declared in \\[config\\]"):
+    stack_of(
+      tmp_path,
+      """\
+[app]
+version = "1"
+
+[config]
+log_level = { default = "info" }
+
+[adv_config]
+log_level = { default = "debug" }
+
+[run.main]
+image = "alpine"
+""",
+    )
+
+
 def test_volumes_resolve_by_kind_and_app_volumes_are_forced_readonly(tmp_path):
   stack = stack_of(
     tmp_path,
@@ -119,7 +172,7 @@ def test_volumes_resolve_by_kind_and_app_volumes_are_forced_readonly(tmp_path):
 version = "1"
 
 [volumes]
-bin        = { kind = "app", src = "scripts" }
+bin        = { kind = "app", src = "scripts", desc = "shipped scripts" }
 app_config = { kind = "data" }
 cache      = { kind = "temp" }
 media      = { kind = "bulk", readonly = true }
@@ -135,6 +188,7 @@ volumes = { bin = "/opt/bin", app_config = "/config", media = "/media" }
   # whether or not the manifest said so.
   assert stack.volumes["bin"].readonly is True
   assert stack.volumes["bin"].src == "scripts"
+  assert stack.volumes["bin"].desc == "shipped scripts"
   assert stack.volumes["bin"].run_rel_path == "./volumes/app/bin"
 
   assert stack.volumes["app_config"].readonly is False

@@ -1,0 +1,28 @@
+[app]
+version      = "0.5.0"
+display_name = "Harbor UI"
+description  = "Web interface for harbor, over the harbord admin socket"
+subdomain    = "harbor"
+
+[config]
+# Development escape hatch. Docker Desktop's bind mounts cannot carry a unix
+# socket, so on macOS the socket is visible in the container and unusable --
+# point this at `harbord --port N --host 0.0.0.0` instead. Empty means use the
+# socket, which is what a Linux host should do.
+api_address = { default = "", desc = "host:port of harbord, instead of the admin socket" }
+
+[volumes]
+script = { kind = "app", src = "app.py" }
+conn   = { kind = "host", desc = "The $harbor/conn directory holding admin.sock" }
+
+[run.main]
+image   = "python:3.12-slim"
+cmd     = ["python", "/app/app.py"]
+volumes = { script = "/app/app.py", conn = "/harbor/conn" }
+routes  = { main = { port = "8080" } }
+
+[run.main.env]
+HARBOR_SOCKET    = "/harbor/conn/admin.sock"
+HARBOR_API       = "${api_address}"
+PORT             = "8080"
+PYTHONUNBUFFERED = "1"

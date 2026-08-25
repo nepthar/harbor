@@ -2,20 +2,15 @@ import argparse
 
 from harbor.lib.fetch import (
   USAGE,
-  commit_happ,
-  discard,
-  download_happ,
-  ensure_destination_for,
-  format_current,
-  parse_current,
+  FetchResult,
+  install_target,
   parse_target,
-  recorded_source,
-  replace_happ,
-  resolve_ref,
-  source_is_pinned,
+  preview_target,
+  refuse_existing,
   split_pin,
+  update_app,
 )
-from harbor.lib.happ import is_pathlike, load_happ
+from harbor.lib.happ import is_pathlike
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.receipt import capability_receipt
 from harbor.lib.util import fmt_size
@@ -59,54 +54,28 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 
 def _install(spec: str, pin: str | None, yes: bool, ctx: HarborCtx, conn) -> None:
-  target = parse_target(spec)
-  if pin:
-    target = target.at_sha(pin)
-  apps_root = ctx.config.apps_root
+  """Show what is at the target, ask, then fetch it for real.
 
-  # Fail on a name collision before spending any rate limit. Other app
-  # sources count: installing into apps/ over an id one of them already
-  # carries would leave that id resolving to two places.
-  ensure_destination_for(target.app_id, apps_root, target.suffix)
-  elsewhere = ctx.app_catalog().get(str(target.app_id), ())
-  if elsewhere:
-    raise ValueError(
-      f"{target.app_id} is already in the {elsewhere[0].source} app source at "
-      f"{elsewhere[0].path}.\nRemove it first if you mean to replace it; "
-      f"a github: fetch never overwrites an installed happ."
-    )
+  The preview downloads and throws away, so what the operator approves is read
+  from the actual files rather than from the URL they typed. `install_target`
+  then re-downloads at the same pinned sha.
+  """
+  refuse_existing(parse_target(spec), ctx)
+  preview = preview_target(spec, pin, ctx)
 
-  fetched = download_happ(target, apps_root)
-  committed = False
-  try:
-    # `load_happ` handles both flavors, and for a .happ.md this parse is also
-    # the content validation the folder flow gets from its tree listing.
-    stack = load_happ(fetched.path).app_stack()
-    conn.out(capability_receipt(stack, None, ctx, compact=False))
-    conn.out(
-      f"\nfrom {target.describe(fetched.sha)}"
-      f" ({fetched.files} files, {fmt_size(fetched.total_bytes)})"
-    )
+  conn.out(capability_receipt(preview.stack, None, ctx, compact=False))
+  conn.out(
+    f"\nfrom {parse_target(spec).describe(preview.sha)}"
+    f" ({preview.files} files, {fmt_size(preview.total_bytes)})"
+  )
 
-    if not yes and not _confirmed(conn):
-      conn.out("Not installed.")
-      return
+  if not yes and not _confirmed(conn):
+    conn.out("Not installed.")
+    return
 
-    dest = commit_happ(fetched, apps_root)
-    ctx.harbor_db().set_app_source(
-      str(fetched.app_id),
-      source=recorded_source(spec, pin),
-      current=format_current(stack.version, fetched.sha),
-    )
-    committed = True
-  finally:
-    # Covers every exit that is not a successful install: a declined prompt,
-    # an invalid manifest, or a failure part-way through committing.
-    if not committed:
-      discard(fetched)
-
-  conn.out(f"Installed {fetched.app_id} at {dest}")
-  conn.out(f"Start it with: harbor start {fetched.app_id}")
+  result = install_target(spec, pin, ctx, at_sha=preview.sha)
+  conn.out(f"Installed {result.app_id} at {result.path}")
+  conn.out(f"Start it with: harbor start {result.app_id}")
 
 
 def _update(query: str, pin: str | None, ctx: HarborCtx, conn) -> None:
@@ -115,58 +84,15 @@ def _update(query: str, pin: str | None, ctx: HarborCtx, conn) -> None:
   except ValueError as e:
     raise ValueError(f"{e}. To fetch a new app, pass a github: target.") from e
 
-  record = ctx.harbor_db().get_app_source(str(app))
-  if not record:
-    raise ValueError(
-      f"{app} has no recorded GitHub source (it was not installed with "
-      f"harbor fetch).\nRemove it first if you mean to replace it with a "
-      f"fetched copy."
-    )
-
-  source = record["source"]
-  current = record["current"]
-  spec = split_pin(source)[0]
-
-  if source_is_pinned(source) and not pin:
-    conn.out(f"{app} is pinned at {current}")
+  result = update_app(app, pin, ctx)
+  if not isinstance(result, FetchResult):
+    conn.out(result)
     return
 
-  target = parse_target(spec)
-  if pin:
-    target = target.at_sha(pin)
-
-  resolved = resolve_ref(target)
-  _, current_sha = parse_current(current)
-  new_source = recorded_source(spec, pin)
-  if resolved == current_sha:
-    if new_source != source:
-      ctx.harbor_db().set_app_source(str(app), source=new_source, current=current)
-      conn.out(f"Pinned {app} at {current}")
-      return
-    conn.out(f"{app} is already at {current}")
-    return
-
-  dest = ctx.bundle_path(app)
-  fetched = download_happ(target.at_sha(resolved), dest.parent)
-  committed = False
-  try:
-    stack = load_happ(fetched.path).app_stack()
-    replace_happ(fetched, dest)
-    ctx.harbor_db().set_app_source(
-      str(app),
-      source=new_source,
-      current=format_current(stack.version, fetched.sha),
-    )
-    committed = True
-  finally:
-    if not committed:
-      discard(fetched)
-
-  new_current = format_current(stack.version, fetched.sha)
   conn.out(f"Updated {app}")
-  conn.out(f" - {current}")
-  conn.out(f" + {new_current}")
-  if ctx.is_staged(app):
+  conn.out(f" - {result.previous}")
+  conn.out(f" + {result.current}")
+  if result.staged:
     conn.out(
       "Take a snapshot before staging and starting the new version:\n"
       f"  harbor snapshot {app}\n"

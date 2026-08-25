@@ -170,6 +170,29 @@ def scan_happs(path: Path) -> Iterator[tuple[str, Path]]:
         break
 
 
+def manifest_text(path: Path) -> str:
+  """A happ's `manifest.toml` as raw text, parseable or not.
+
+  Deliberately not `load_happ(...).app_stack()`: this is what a viewer shows
+  the operator, and a manifest that fails to parse is exactly when they most
+  need to read it. Returns "" when there is nothing to read at all.
+  """
+  if path.is_dir():
+    try:
+      return (path / "manifest.toml").read_text()
+    except OSError:
+      return ""
+  if path.name.endswith(HAPP_MD_SUFFIX):
+    try:
+      files = extract_md_files(path.read_text())
+    except OSError:
+      return ""
+    for md_file in files.files:
+      if md_file.path == "manifest.toml":
+        return md_file.content
+  return ""
+
+
 def load_happ(path: Path) -> HarborApp:
   if not could_be_happ(path):
     raise ValueError(f"{path.name} does not seem to be a valid harbor app.")

@@ -23,6 +23,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from harbor.lib import lifecycle
+from harbor.lib.fetch import (
+  GITHUB_PREFIX,
+  USAGE,
+  FetchResult,
+  install_target,
+  split_pin,
+  update_app,
+)
+from harbor.lib.happ import is_pathlike
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.receipt import published_urls
 
@@ -98,6 +107,46 @@ def _stage(ctx: HarborCtx, args: dict[str, str]) -> str:
   return "\n".join(lines)
 
 
+def _fetch(ctx: HarborCtx, args: dict[str, str]) -> str:
+  """`harbor fetch <target>`, with the prompt replaced by an explicit `yes`.
+
+  The CLI asks before a first install, because harbor cannot vouch for a happ's
+  author and the receipt is the only check there is. A job cannot be asked
+  anything, so the caller has to have decided already -- a client that wants
+  the operator to see what they are approving shows them the preview first.
+  An update carries no prompt in the CLI either, so it needs no `yes` here.
+  """
+  spec, pin = split_pin(args["target"])
+  if spec.startswith(GITHUB_PREFIX):
+    if args.get("yes") not in ("1", "true", "yes"):
+      raise ValueError(
+        f"Fetching {spec} installs code harbor cannot vouch for. Read its "
+        f"manifest first, then resubmit with yes=1 to confirm."
+      )
+    result = install_target(spec, pin, ctx)
+    return f"Installed {result.app_id} at {result.path}"
+
+  if is_pathlike(spec):
+    raise ValueError(
+      f"Don't know how to fetch {args['target']!r}; expected a github: target "
+      f"or an installed app id.\n  {USAGE}"
+    )
+  if "@" in args["target"] and pin is None:
+    raise ValueError(
+      f"Pin must be a full 40-character commit sha, not "
+      f"{args['target'].rsplit('@', 1)[-1]!r}"
+    )
+
+  app = ctx.resolve_app(spec)
+  result = update_app(app, pin, ctx)
+  if not isinstance(result, FetchResult):
+    return result
+  lines = [f"Updated {app}", f" - {result.previous}", f" + {result.current}"]
+  if result.staged:
+    lines.append(f"Re-stage and restart to pick it up: harbor stage {app}")
+  return "\n".join(lines)
+
+
 def _snapshot(ctx: HarborCtx, args: dict[str, str]) -> str:
   app = ctx.resolve_app(args["app"])
   path = lifecycle.snapshot(app, ctx, label=args.get("label", ""))
@@ -111,16 +160,23 @@ class Verb:
   optional: tuple[str, ...] = ()
 
 
-# Every verb here takes ids of things that already exist. Nothing accepts a
-# manifest, a filesystem path, or a URL: those are the arguments that let a
+# Every verb here but `fetch` takes ids of things that already exist. Nothing
+# accepts a manifest or a filesystem path: those are the arguments that let a
 # caller define what an app *is*, and defining an app means arbitrary bind
-# mounts, which means root. `fetch` and path-style `stage` stay CLI-only for
-# exactly that reason.
+# mounts, which means root. Path-style `stage` stays CLI-only for exactly that
+# reason. `fetch` takes a github: URL and nothing else -- `parse_target`
+# refuses anything that is not one -- and it only copies files into the apps
+# root; staging and starting stay separate, deliberate steps.
 VERBS: dict[str, Verb] = {
   "start": Verb(_start),
   "stop": Verb(_stop),
   "stage": Verb(_stage),
   "snapshot": Verb(_snapshot, optional=("label",)),
+  # The one verb that takes a URL rather than an id. See the note above: it is
+  # here because the operator asked for it from the web UI, and it is confined
+  # to what `harbor fetch` already does -- copy a happ into the apps root. It
+  # neither stages nor starts, so nothing it fetches runs until someone asks.
+  "fetch": Verb(_fetch, required=("target",), optional=("yes",)),
 }
 
 
@@ -146,7 +202,10 @@ def validate(verb: str, args: dict[str, str], ctx: HarborCtx) -> None:
     if not args.get(name):
       raise ValueError(f"Verb {verb!r} requires argument {name!r}")
 
-  ctx.resolve_app(args["app"])
+  # Only for the verbs that name an app. `fetch` takes a target that may not
+  # resolve to anything yet -- that is the whole point of fetching it.
+  if "app" in spec.required:
+    ctx.resolve_app(args["app"])
 
 
 class JobRunner:

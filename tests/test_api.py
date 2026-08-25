@@ -48,6 +48,139 @@ def test_version(harbor_env, client):
   assert client.get("/").json() == body
 
 
+def test_catalog_lists_available_apps_grouped_by_source(harbor_env, client):
+  catalogs = client.get("/catalog").json()["catalogs"]
+  assert [c["name"] for c in catalogs] == ["apps"]
+
+  apps = {app["app_id"]: app for app in catalogs[0]["apps"]}
+  assert apps[APP]["display_name"] == "Basic Features"
+  assert apps[APP]["version"] == "0.1.0"
+  assert apps[APP]["description"] == "Config and volumes fixture"
+  assert apps[APP]["source"] == "local"
+  assert apps[APP]["catalog"] == "apps"
+  assert apps[APP]["configured"] == "missing"
+  assert 'display_name = "Basic Features"' in apps[APP]["manifest"]
+  assert "[config]" in apps[APP]["manifest"]
+  assert "ports-demo" in apps
+  assert "routes-demo" in apps
+  assert "host-volumes" in apps
+  assert apps["ports-demo"]["configured"] == "ready"
+  assert "routes = { web" in apps["ports-demo"]["manifest"]
+  assert apps["routes-demo"]["configured"] == "ready"
+
+
+def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
+  """Installed-ness is the logtab; drift is the staged manifest vs the bundle's."""
+
+  def entry():
+    catalogs = client.get("/catalog").json()["catalogs"]
+    return {app["app_id"]: app for app in catalogs[0]["apps"]}[APP]
+
+  # A catalog entry alone is not an installation, and nothing is staged to
+  # have drifted from.
+  assert entry()["installed"] is False
+  assert entry()["manifest_stale"] is False
+
+  assert submit(client, jobs, "stage", {"app": APP})["state"] == "done"
+  assert entry()["installed"] is True
+  assert entry()["manifest_stale"] is False
+
+  # Editing the bundle leaves the staged copy behind: that is the drift the
+  # catalog card offers to close with a re-install.
+  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest.write_text(
+    manifest.read_text() + "\n# a comment the staged copy has not seen\n"
+  )
+  assert entry()["manifest_stale"] is True
+
+  assert submit(client, jobs, "stage", {"app": APP})["state"] == "done"
+  assert entry()["manifest_stale"] is False
+
+
+def test_catalog_groups_a_second_app_source(harbor_env, client):
+  extra = harbor_env.root / "dev-apps"
+  extra.mkdir()
+  bundle = extra / "dev-app.happ"
+  bundle.mkdir()
+  (bundle / "manifest.toml").write_text(
+    '[app]\nversion = "2.0"\ndisplay_name = "Dev App"\n'
+    'description = "From a second catalog"\n'
+    '[run.main]\nimage = "alpine:latest"\n'
+  )
+  with open(harbor_env.config, "a") as f:
+    f.write(f'\n[[app_source]]\nname = "dev"\nlocation = "{extra}"\n')
+
+  catalogs = {c["name"]: c["apps"] for c in client.get("/catalog").json()["catalogs"]}
+  assert list(catalogs) == ["apps", "dev"]
+  assert APP in {app["app_id"] for app in catalogs["apps"]}
+  [dev] = catalogs["dev"]
+  assert dev["app_id"] == "dev-app"
+  assert dev["display_name"] == "Dev App"
+  assert dev["version"] == "2.0"
+  assert dev["description"] == "From a second catalog"
+  assert dev["source"] == "local"
+  assert dev["catalog"] == "dev"
+  assert dev["configured"] == "ready"
+  assert 'display_name = "Dev App"' in dev["manifest"]
+
+
+def test_catalog_names_a_github_origin(harbor_env, client):
+  ctx().harbor_db().set_app_source(
+    "ports-demo",
+    source="github:nepthar/harbor/main/examples/ports-demo.happ",
+    current="0.1.0@" + "a" * 40,
+  )
+
+  apps = {
+    app["app_id"]: app
+    for catalog in client.get("/catalog").json()["catalogs"]
+    for app in catalog["apps"]
+  }
+  assert apps["ports-demo"]["source"] == "github:nepthar"
+  assert apps[APP]["source"] == "local"
+
+
+def test_catalog_keeps_a_broken_bundle(harbor_env, client):
+  broken = harbor_env.root / "apps" / "broken.happ"
+  broken.mkdir()
+  (broken / "manifest.toml").write_text("not toml")
+
+  apps = {
+    app["app_id"]: app
+    for catalog in client.get("/catalog").json()["catalogs"]
+    for app in catalog["apps"]
+  }
+  assert apps["broken"] == {
+    "app_id": "broken",
+    "display_name": "",
+    "version": None,
+    "description": "",
+    "source": "local",
+    "catalog": "apps",
+    "installed": False,
+    "configured": None,
+    "manifest": "not toml",
+    "manifest_stale": False,
+  }
+
+
+def test_catalog_listing_does_not_create_config_stores(harbor_env, client):
+  """Opening AppStore writes a logtab; a GET must not invent install state."""
+  client.get("/catalog")
+  assert not (harbor_env.root / "config" / f"{APP}.logtab").exists()
+
+
+def test_catalog_config_turns_ready_once_required_values_are_set(harbor_env, client):
+  assert (
+    harbor_env.run("config", "basic-features", "--set", "admin_user=root").returncode
+    == 0
+  )
+  apps = {
+    app["app_id"]: app for app in client.get("/catalog").json()["catalogs"][0]["apps"]
+  }
+  assert apps[APP]["configured"] == "ready"
+
+
 def test_apps_lists_only_installed(harbor_env, client):
   # Every fixture is in the catalog; none is installed until it is staged.
   assert client.get("/apps").json()["apps"] == []
@@ -92,6 +225,19 @@ def test_app_detail(harbor_env, client):
   assert volumes["config"]["kind"] == "data"
   assert volumes["bin"]["readonly"] is True
   assert body["volume_bytes"] >= 0
+
+  mounts = {v["name"]: v for v in body["units"][0]["volumes"]}
+  assert mounts["config"]["path"] == "/myapp/config"
+  assert mounts["config"]["desc"] == "persistent app data"
+  assert mounts["cache"]["kind"] == "temp"
+  assert mounts["cache"]["desc"] == ""
+  assert mounts["bin"]["readonly"] is True
+  assert mounts["bin"]["desc"] == "shipped binaries"
+
+  config = {c["name"]: c for c in body["config"]}
+  assert config["admin_user"]["advanced"] is False
+  assert config["log_level"]["advanced"] is True
+  assert config["log_level"]["value"] == "info"
 
   # admin_user is the one thing standing between this app and a start.
   assert [issue["problem"] for issue in body["issues"]] == [
@@ -209,7 +355,15 @@ def test_openapi_documents_the_surface(harbor_env, client):
   spec = client.get("/openapi.json")
   assert spec.status_code == 200
   paths = spec.json()["paths"]
-  assert {"/apps", "/apps/{app_id}", "/jobs", "/jobs/{job_id}"} <= set(paths)
+  assert {
+    "/apps",
+    "/apps/{app_id}",
+    "/catalog",
+    "/catalog/preview",
+    "/catalog/check",
+    "/jobs",
+    "/jobs/{job_id}",
+  } <= set(paths)
   assert "post" in paths["/jobs"]
 
 
@@ -324,10 +478,71 @@ def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
   manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
   # Dropped from [volumes] *and* from the unit that mounted it -- a manifest
   # that declares neither is what re-staging leaves data behind for.
-  text = manifest.read_text().replace('config = { kind = "data" }', "")
+  text = manifest.read_text().replace(
+    'config = { kind = "data", desc = "persistent app data" }', ""
+  )
   manifest.write_text(text.replace('config = "/myapp/config", ', ""))
   assert harbor_env.run("stage", APP).returncode == 0
 
   volumes = {v["name"]: v for v in client.get("/volumes").json()["volumes"]}
   assert volumes["config"]["declared"] is False, "data left behind, flagged"
   assert volumes["cache"]["declared"] is True
+
+
+# --- the single app view ---------------------------------------------------
+
+
+def test_app_view_carries_what_a_detail_page_needs(harbor_env, client):
+  assert harbor_env.run("stage", APP).returncode == 0
+  body = client.get(f"/apps/{APP}").json()
+
+  unit = body["units"][0]
+  assert unit["command"]
+  # Placeholders, as the manifest wrote them. The *resolved* environment is
+  # AppRunData.config_env and carries secret values; it must never appear.
+  assert unit["environment"]["ADMIN_PASS"] == "${admin_pass}"
+
+  assert body["metadata"]["display_name"] == "Basic Features"
+  assert body["options"]["host_volumes"] == ["media", "other"]
+  assert "none" in body["options"]["route_providers"]
+
+
+def test_app_view_never_leaks_a_secret_through_the_environment(harbor_env, client):
+  assert harbor_env.run("start", APP, "--set", "admin_user=root").returncode == 0
+  _, secret = ctx().app_store(APP).get_config("admin_pass")
+  assert secret
+  assert secret not in json.dumps(client.get(f"/apps/{APP}").json())
+
+
+def test_setting_config_through_the_api(harbor_env, client):
+  assert harbor_env.run("stage", APP).returncode == 0
+
+  updated = client.post(f"/apps/{APP}/config", json={"set": {"admin_user": "alice"}})
+  assert updated.status_code == 200, updated.text
+  values = {c["name"]: c for c in updated.json()["config"]}
+  assert values["admin_user"]["value"] == "alice"
+  # The response is read back after the write, not from the request's context.
+  assert not updated.json()["issues"]
+
+
+def test_binding_a_host_volume_through_the_api(harbor_env, client):
+  (harbor_env.root / "external-data").mkdir()
+  assert harbor_env.run("stage", "host-volumes").returncode == 0
+
+  bound = client.post("/apps/host-volumes/config", json={"bind": {"hostvol1": "media"}})
+  assert bound.status_code == 200, bound.text
+  volumes = {v["name"]: v for v in bound.json()["volumes"]}
+  assert volumes["hostvol1"]["bind"] == "media"
+
+
+def test_config_changes_are_refused_with_a_reason(harbor_env, client):
+  assert harbor_env.run("stage", APP).returncode == 0
+
+  for payload, expected in (
+    ({"set": {"nope": "x"}}, "No config nope"),
+    ({"bind": {"config": "media"}}, "only host volumes can be bound"),
+    ({"route": {"main": "media"}}, "not declared"),
+  ):
+    refused = client.post(f"/apps/{APP}/config", json=payload)
+    assert refused.status_code == 400, refused.text
+    assert expected in refused.json()["error"]

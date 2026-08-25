@@ -69,7 +69,10 @@ submitted through harbord cannot answer one, and a question asked on every
 - **No systemd unit.** `harbord` is foreground-only and dies with its shell.
 - **The web UI has no authentication.** Anything that can open `admin.sock`
   runs every verb the API exposes. Fine over an ssh tunnel; not fine on a
-  public route. `HarborStore.set_token` already has expiring tokens.
+  public route. `HarborStore.set_token` already has expiring tokens. This got
+  sharper when `fetch` joined the API: the verb list is no longer only ids of
+  things that already exist, so an unauthenticated caller can now pull code
+  from GitHub into the apps root. It still cannot stage or start it.
 - **Volume sizes are computed per request.** `views.app_view` walks every file
   under a volume, so the app detail page pays for it on every load and the list
   view omits sizes entirely to stay cheap.
@@ -80,8 +83,11 @@ submitted through harbord cannot answer one, and a question asked on every
   under userns that maps back to the invoking user. Nothing checks.
 - **`harbor inspect` still requires staging for an app id**, unlike `config`,
   which now falls back to the bundle in an app source.
-- **`fetch` is not exposed over the admin API**, on purpose: it turns a
-  caller-supplied URL into staged code. Revisit with a source allowlist.
+- **`fetch` is on the admin API without a source allowlist.** It takes a
+  github: target and nothing else -- `parse_target` refuses any other shape --
+  and it only copies files into the apps root, so nothing it fetches runs
+  until someone stages and starts it separately. What is still missing is a
+  restriction on *which* repositories: today any public one will do.
 - **Job output misses log lines.** `JobRunner` records a verb's return value;
   progress written through `logging` (including the container steps in
   `rootfs.py`) goes to harbord's stderr and never reaches `job.output`.
