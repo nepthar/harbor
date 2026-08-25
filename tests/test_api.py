@@ -311,6 +311,87 @@ def test_unknown_job_is_404(harbor_env, client):
   assert client.get("/jobs/deadbeef").status_code == 404
 
 
+def test_a_job_files_activity_that_the_api_serves(harbor_env, client, jobs):
+  job = submit(client, jobs, "stage", {"app": "basic-features"})
+  assert job["state"] == "done"
+  # The finished job points at its own output file...
+  assert job["log"] and job["log"].startswith(f"{APP}/")
+
+  runs = client.get("/activity").json()["activity"]
+  assert runs[0]["verb"] == "stage"
+  assert runs[0]["app_id"] == APP
+  assert runs[0]["status"] == "ok"
+  assert runs[0]["log"] == job["log"]
+
+  dirname, _, filename = job["log"].partition("/")
+  body = client.get(f"/activity/{dirname}/{filename}").json()
+  assert body["app_id"] == APP
+  assert f"Staged {APP}" in body["text"]
+
+
+def test_a_failed_job_still_files_activity_with_its_error(harbor_env, client, jobs):
+  harbor_env.run("stage", "basic-features")
+  job = submit(client, jobs, "start", {"app": "basic-features"})
+  assert job["state"] == "failed"
+
+  runs = client.get("/activity").json()["activity"]
+  assert runs[0]["status"] == "error"
+  dirname, _, filename = job["log"].partition("/")
+  body = client.get(f"/activity/{dirname}/{filename}").json()
+  assert "admin_user is unset" in body["text"]
+
+
+def test_activity_log_rejects_a_bad_name(harbor_env, client):
+  assert client.get("/activity/demo.app/nope.log").status_code == 404
+  assert client.get("/activity/demo.app/..%2F..%2Fetc%2Fpasswd").status_code == 404
+
+
+def _install_cmd_demo(harbor_env):
+  app_dir = harbor_env.root / "apps" / "cmd-demo.happ"
+  app_dir.mkdir()
+  (app_dir / "manifest.toml").write_text(
+    '[app]\nversion = "1"\n\n'
+    '[run.main]\nimage = "alpine:latest"\n'
+    'cmd = ["/bin/sh", "-c", "sleep infinity"]\n\n'
+    '[commands.ping]\ncmd = "echo pong"\ndesc = "Print pong"\n'
+  )
+
+
+def test_cmd_verb_runs_a_manifest_command_as_a_job(harbor_env, client, jobs):
+  _install_cmd_demo(harbor_env)
+  harbor_env.run("start", "cmd-demo")
+
+  job = submit(client, jobs, "cmd", {"app": "cmd-demo", "command": "ping"})
+  assert job["state"] == "done", job["error"]
+  assert "ping" in job["output"]
+
+  # It reached docker as an exec of the declared argv, not something the caller
+  # supplied.
+  calls = [
+    json.loads(line)["args"]
+    for line in harbor_env.docker_log.read_text().splitlines()
+  ]
+  assert any(call[:3] == ["compose", "exec", "main"] for call in calls)
+
+  # And it filed activity like every other job.
+  runs = client.get("/activity?app=cmd-demo").json()["activity"]
+  assert runs[0]["verb"] == "cmd"
+  assert runs[0]["status"] == "ok"
+
+
+def test_cmd_verb_requires_a_command_argument(harbor_env, client):
+  response = client.post("/jobs", json={"verb": "cmd", "args": {"app": APP}})
+  assert response.status_code == 400
+  assert "command" in response.json()["error"]
+
+
+def test_cmd_verb_reports_an_unknown_command(harbor_env, client, jobs):
+  harbor_env.run("start", "basic-features", "--set", "admin_user=root")
+  job = submit(client, jobs, "cmd", {"app": "basic-features", "command": "nope"})
+  assert job["state"] == "failed"
+  assert "nope" in job["error"]
+
+
 @pytest.mark.parametrize(
   ("body", "expected"),
   [

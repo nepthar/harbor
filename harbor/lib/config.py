@@ -193,6 +193,15 @@ class Config:
   def activity_log(self) -> Path:
     return self.harbor_root / "activity.logtab"
 
+  @property
+  def activity_root(self) -> Path:
+    """Where harbor's own run output lives: one plain file per unattended run.
+
+    Not container logs -- those belong to dockerd and `harbor logs` streams
+    them. This is what a verb printed while a job (and later, cron) ran it.
+    """
+    return self.harbor_root / "logs"
+
   def app_run_path(self, app_id: AppID) -> Path:
     return self.run_root / app_id
 

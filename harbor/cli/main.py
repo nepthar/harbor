@@ -5,6 +5,7 @@ import sys
 
 from harbor import VERSION
 from harbor.cli import (
+  activity,
   catalog,
   cmd,
   config,
@@ -54,6 +55,7 @@ COMMANDS = [
   snapshot,
   restore,
   logs,
+  activity,
   cmd,
   fetch,
   config,

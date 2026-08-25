@@ -4,16 +4,39 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from harbor.lib.stack import HARBOR_APP_ID_LABEL, HARBOR_RUN_UNIT_LABEL
 
 logger = getLogger("harbor.docker")
 
 DOCKER = "docker"
+
+# Where streamed (`json_output=False`) command output goes when the caller has
+# no terminal. Unset -- the normal CLI case -- the child inherits harbor's
+# stdio, exactly as before. The daemon's job runner sets it so `compose up`
+# output lands in the job record instead of on harbord's stderr.
+_output_sink: ContextVar[TextIO | None] = ContextVar("docker_output_sink", default=None)
+
+# How much captured output a DockerError carries. The full text is in the
+# sink; the error only needs enough for a one-line failure to make sense.
+_ERROR_TAIL = 1500
+
+
+@contextmanager
+def sink_output(sink: TextIO) -> Iterator[None]:
+  """Capture streamed docker output into `sink` for the duration."""
+  token = _output_sink.set(sink)
+  try:
+    yield
+  finally:
+    _output_sink.reset(token)
 
 
 @dataclass(frozen=True)
@@ -137,6 +160,26 @@ def docker_run_command(
 
   run_env = {**os.environ, **env} if env else None
   logger.debug("running: %s (cwd=%s)", " ".join(full), cwd)
+
+  sink = _output_sink.get() if not json_output else None
+  if sink is not None:
+    # Streamed output with nowhere to stream: merge the two channels so the
+    # sink reads the way a terminal would have, and hand the error a tail of
+    # it -- "see the docker output above" points at a terminal nobody has.
+    result = subprocess.run(
+      full,
+      cwd=cwd,
+      stdout=subprocess.PIPE,
+      stderr=subprocess.STDOUT,
+      text=True,
+      env=run_env,
+    )
+    if result.stdout:
+      sink.write(result.stdout)
+    if check and result.returncode != 0:
+      raise DockerError(cmd, result.returncode, result.stdout[-_ERROR_TAIL:])
+    return DockerReturn(returncode=result.returncode, data=[])
+
   if not json_output:
     # The child is about to write to the same stdout harbor has been buffering
     # into. Without this, a piped `harbor dev` prints its receipt *after* the

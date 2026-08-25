@@ -13,16 +13,20 @@ caller can see rather than a lock timeout it has to interpret.
 
 from __future__ import annotations
 
+import io
 import logging
 import queue
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from harbor.lib import lifecycle
+from harbor.lib import activity, lifecycle
+from harbor.lib.apps import AppID
+from harbor.lib.docker import sink_output
 from harbor.lib.fetch import (
   GITHUB_PREFIX,
   USAGE,
@@ -63,6 +67,9 @@ class Job:
   created_at: str = field(default_factory=_now)
   started_at: str | None = None
   finished_at: str | None = None
+  # Where the run's output file landed, relative to `$harbor/logs`. Jobs are
+  # forgotten (restart, MAX_HISTORY); the file is what remains afterwards.
+  log: str | None = None
 
   def as_dict(self) -> dict[str, Any]:
     return {
@@ -75,7 +82,33 @@ class Job:
       "created_at": self.created_at,
       "started_at": self.started_at,
       "finished_at": self.finished_at,
+      "log": self.log,
     }
+
+
+@contextmanager
+def _capture_harbor_logging(buffer: io.StringIO) -> Iterator[None]:
+  """Tee `harbor.*` log records into `buffer` for the duration.
+
+  This is what puts a verb's progress -- the container steps in `rootfs.py`,
+  route-provider chatter -- into the job record instead of only on harbord's
+  stderr, where no web client will ever see it. The logger is opened up to
+  INFO while a job runs; the worker is serial, so the widening never spans two
+  jobs.
+  """
+  handler = logging.StreamHandler(buffer)
+  handler.setLevel(logging.INFO)
+  handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+  harbor_logger = logging.getLogger("harbor")
+  previous_level = harbor_logger.level
+  if harbor_logger.getEffectiveLevel() > logging.INFO:
+    harbor_logger.setLevel(logging.INFO)
+  harbor_logger.addHandler(handler)
+  try:
+    yield
+  finally:
+    harbor_logger.removeHandler(handler)
+    harbor_logger.setLevel(previous_level)
 
 
 def _start(ctx: HarborCtx, args: dict[str, str]) -> str:
@@ -153,6 +186,23 @@ def _snapshot(ctx: HarborCtx, args: dict[str, str]) -> str:
   return f"Snapshot of {app} written to {path}"
 
 
+def _cmd(ctx: HarborCtx, args: dict[str, str]) -> str:
+  """Run a manifest `[commands]` entry, exactly what `harbor cmd` does.
+
+  `command` names an entry the happ's manifest already declares -- an id of a
+  thing that exists, like every other verb's argument. The argv it runs is the
+  manifest's, not the caller's, so this grants the operator nothing their happ
+  did not already define. Any output the command produced is captured into the
+  job (and its activity file) by the runner; a non-zero exit fails the job so
+  it reads as an error rather than a silent success.
+  """
+  app = ctx.resolve_app(args["app"])
+  code = lifecycle.run_command(app, args["command"], [], ctx)
+  if code != 0:
+    raise ValueError(f"Command {args['command']!r} for {app} exited with status {code}")
+  return f"Ran command {args['command']!r} for {app}"
+
+
 @dataclass(frozen=True)
 class Verb:
   run: Callable[[HarborCtx, dict[str, str]], str]
@@ -160,18 +210,22 @@ class Verb:
   optional: tuple[str, ...] = ()
 
 
-# Every verb here but `fetch` takes ids of things that already exist. Nothing
-# accepts a manifest or a filesystem path: those are the arguments that let a
-# caller define what an app *is*, and defining an app means arbitrary bind
-# mounts, which means root. Path-style `stage` stays CLI-only for exactly that
-# reason. `fetch` takes a github: URL and nothing else -- `parse_target`
-# refuses anything that is not one -- and it only copies files into the apps
-# root; staging and starting stay separate, deliberate steps.
+# Every verb here but `fetch` takes ids of things that already exist -- an app
+# id, or a `command` name the app's own manifest declares. Nothing accepts a
+# manifest or a filesystem path: those are the arguments that let a caller
+# define what an app *is*, and defining an app means arbitrary bind mounts,
+# which means root. Path-style `stage` stays CLI-only for exactly that reason.
+# `fetch` takes a github: URL and nothing else -- `parse_target` refuses
+# anything that is not one -- and it only copies files into the apps root;
+# staging and starting stay separate, deliberate steps.
 VERBS: dict[str, Verb] = {
   "start": Verb(_start),
   "stop": Verb(_stop),
   "stage": Verb(_stage),
   "snapshot": Verb(_snapshot, optional=("label",)),
+  # Runs an argv the manifest already declares. See `_cmd`: the caller names
+  # which command, never what it does.
+  "cmd": Verb(_cmd, required=("app", "command")),
   # The one verb that takes a URL rather than an id. See the note above: it is
   # here because the operator asked for it from the web UI, and it is confined
   # to what `harbor fetch` already does -- copy a happ into the apps root. It
@@ -273,9 +327,16 @@ class JobRunner:
 
     # A fresh context per job, exactly as a CLI invocation would build one:
     # nothing a job sees is carried over from the job before it.
+    started = datetime.now(UTC)
+    captured = io.StringIO()
+    ctx = None
     try:
       ctx = self._ctx_factory()
-      with ctx.lock(f"{verb} {args.get('app', '')}".strip()):
+      with (
+        _capture_harbor_logging(captured),
+        sink_output(captured),
+        ctx.lock(f"{verb} {args.get('app', '')}".strip()),
+      ):
         output, error = VERBS[verb].run(ctx, args), None
     except (ValueError, RuntimeError) as e:
       output, error = "", str(e)
@@ -283,11 +344,64 @@ class JobRunner:
       logger.exception("job %s (%s) raised", job_id, verb)
       output, error = "", f"{type(e).__name__}: {e}"
 
+    finished = datetime.now(UTC)
+    # Progress first, the verb's own summary last -- the order a terminal
+    # would have shown them in.
+    output = "\n".join(part for part in (captured.getvalue().rstrip(), output) if part)
+    log_path = self._record(ctx, verb, args, error, started, finished, output)
+
     with self._lock:
       job.state = FAILED if error else DONE
       job.output = output
       job.error = error
       job.finished_at = _now()
+      job.log = log_path
+
+  def _record(
+    self,
+    ctx: HarborCtx | None,
+    verb: str,
+    args: dict[str, str],
+    error: str | None,
+    started: datetime,
+    finished: datetime,
+    output: str,
+  ) -> str | None:
+    """File the run under `$harbor/logs`. Never fails the job over it."""
+    if ctx is None:
+      return None
+    try:
+      return activity.record_run(
+        ctx.config,
+        verb,
+        args,
+        app_id=self._record_app(ctx, args),
+        status=activity.ERROR if error else activity.OK,
+        started=started,
+        finished=finished,
+        output="\n".join(part for part in (output, error) if part),
+      )
+    except Exception:  # noqa: BLE001 - the job itself already succeeded or failed on its own terms
+      logger.exception("could not record activity for `%s`", verb)
+      return None
+
+  @staticmethod
+  def _record_app(ctx: HarborCtx, args: dict[str, str]) -> AppID | None:
+    """Which app directory the run files under, resolving stems to full ids.
+
+    Best effort: a job can fail precisely because its app does not resolve,
+    and that run still deserves a record -- under `harbor/` if need be.
+    """
+    query = args.get("app", "")
+    if not query:
+      return None
+    try:
+      return ctx.resolve_app(query)
+    except (ValueError, RuntimeError):
+      try:
+        return AppID(query)
+      except ValueError:
+        return None
 
   def _trim(self) -> None:
     """Drop the oldest finished jobs once the history is over budget."""

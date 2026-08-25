@@ -2,8 +2,23 @@
 
 The harbor web interface. Reads harbor state over the admin socket that
 `harbord` publishes and renders it server-side — no polling, no client
-framework, no build step. `app.py` is the whole application and uses only the
-standard library, so the image needs nothing installed.
+framework, no build step. The `ui/` directory is the application. `start.sh`
+runs `uv sync` into a `temp` volume at `/venv`, then serves with uvicorn.
+The venv survives container recreate; uv rebuilds it if the image Python
+no longer matches.
+
+| File | What it is |
+|---|---|
+| `start.sh` | Container entrypoint: `uv sync`, then uvicorn |
+| `server.py` | FastAPI app: routes, GET/POST handlers |
+| `pyproject.toml` | fastapi, uvicorn, python-multipart |
+| `uv.lock` | Frozen resolve for `uv sync --frozen` |
+| `api.py` | Client for harbord (unix socket or TCP) |
+| `layout.py` | Page chrome: CSS, JS, nav, shared fragments |
+| `catalog.py` | Catalog listing, app cards, fetch, updates |
+| `installed.py` | Installed-apps list and the app detail page |
+| `volumes.py` | Host volumes and harbor-managed storage |
+| `activity.py` | Unattended-run history and per-run output |
 
 ## Setup
 

@@ -41,7 +41,8 @@ from harbor.lib.stack import AppStack
 
 # Bumped when a response shape changes in a way a client would notice. The web
 # UI ships separately from the daemon, so it has to be able to tell.
-API_VERSION = 2
+# 3: /activity endpoints; jobs carry a `log` path.
+API_VERSION = 3
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -311,6 +312,22 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
+
+  @app.get("/activity", tags=["activity"])
+  def list_activity(ctx: Ctx, app: str | None = None, limit: int = 20) -> dict:
+    """Recorded unattended runs -- what the jobs history forgets, kept."""
+    try:
+      return {"activity": views.activity_view(ctx, app=app, limit=limit)}
+    except ValueError as e:
+      raise HTTPException(400, str(e)) from e
+
+  @app.get("/activity/{dirname}/{filename}", tags=["activity"])
+  def get_activity_log(dirname: str, filename: str, ctx: Ctx) -> dict:
+    """One run's output file. Both segments are validated names, not paths."""
+    try:
+      return views.activity_log_view(ctx, dirname, filename)
+    except ValueError as e:
+      raise HTTPException(404, str(e)) from e
 
   @app.get("/jobs", tags=["jobs"])
   def list_jobs(jobs: Jobs) -> dict:
