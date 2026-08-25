@@ -99,6 +99,7 @@ def start(
     ) from e
 
   record_app_action("started", app, ctx.config)
+  ctx.invalidate_containers()
   return result
 
 
@@ -215,6 +216,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
     # app keeps looking like it is still bound to somebody's data.
     unlink_host_volumes(state.run_path)
     record_app_action("stopped", app_id, ctx.config)
+    ctx.invalidate_containers()
   except DockerError as e:
     record_app_action("stop-failed", app_id, ctx.config)
     raise ValueError(str(e)) from e

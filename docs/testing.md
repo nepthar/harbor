@@ -45,7 +45,7 @@ to 0.25s.
 | `test_fetch.py` | `harbor fetch` against an in-process fake GitHub |
 | `test_layout.py` | Staging: the run dir, volume links, re-staging |
 | `test_cli.py` | The command surface — exit codes, output, disk state |
-| `test_lock.py` | One lock per invocation; who holds it and for how long |
+| `test_lock.py` | Harbor + app locks; who holds them and for how long |
 | `test_restore.py` | Snapshot and restore, including data volumes |
 | `test_docker.py` | That the docker guard actually fails a stray call |
 | `test_config_edit.py` | Editing config.toml: comments kept, invalid results refused |

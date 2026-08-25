@@ -11,9 +11,8 @@ def register(subparsers) -> None:
     "decrypt",
     help="Decrypt a value from stdin using harbor's master key",
   )
-  # Reads nothing from harbordb and writes nothing anywhere, so it has no
-  # reason to queue behind a running command.
-  parser.set_defaults(func=run, holds_lock=False)
+  # Reads nothing from harbordb and writes nothing anywhere.
+  parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:

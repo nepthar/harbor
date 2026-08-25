@@ -18,27 +18,28 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  rows = []
-  for observation in ctx.observations():
-    if not observation.installed:
-      continue
-    stack = ctx.staged_stack(observation.app_id)
-    rows.append(
-      (
-        observation.app_id,
-        observation.status if observation.containers else EMPTY,
-        _config(observation, stack, ctx),
-        _volumes(stack),
-        observation.last_action or EMPTY,
+  with ctx.harbor_lock("ps"):
+    rows = []
+    for observation in ctx.observations():
+      if not observation.installed:
+        continue
+      stack = ctx.staged_stack(observation.app_id)
+      rows.append(
+        (
+          observation.app_id,
+          observation.status if observation.containers else EMPTY,
+          _config(observation, stack, ctx),
+          _volumes(stack),
+          observation.last_action or EMPTY,
+        )
+      )
+    conn.out(
+      tabulate(
+        rows,
+        headers=["APP_ID", "STATUS", "CONFIG", "VOLUMES", "LAST_ACTION"],
+        tablefmt="simple",
       )
     )
-  conn.out(
-    tabulate(
-      rows,
-      headers=["APP_ID", "STATUS", "CONFIG", "VOLUMES", "LAST_ACTION"],
-      tablefmt="simple",
-    )
-  )
 
 
 def _config(observation: AppObservation, stack: AppStack | None, ctx: HarborCtx) -> str:

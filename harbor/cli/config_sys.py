@@ -65,33 +65,34 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  db = ctx.harbor_db()
-  changed = False
+  with ctx.harbor_lock("config-sys"):
+    db = ctx.harbor_db()
+    changed = False
 
-  if args.stdin_key is not None:
-    value = conn.read().rstrip("\n")
-    if not value:
-      raise ValueError("empty value")
-    db.set_secret(args.stdin_key, value)
-    conn.out(f"Set system config {args.stdin_key!r}")
-    changed = True
+    if args.stdin_key is not None:
+      value = conn.read().rstrip("\n")
+      if not value:
+        raise ValueError("empty value")
+      db.set_secret(args.stdin_key, value)
+      conn.out(f"Set system config {args.stdin_key!r}")
+      changed = True
 
-  for raw in args.sets:
-    name, value = parse_kv(raw, "--set")
-    db.set_secret(name, value)
-    conn.out(f"Set system config {name!r}")
-    changed = True
+    for raw in args.sets:
+      name, value = parse_kv(raw, "--set")
+      db.set_secret(name, value)
+      conn.out(f"Set system config {name!r}")
+      changed = True
 
-  for name in args.unsets:
-    db.del_secret(name)
-    conn.out(f"Unset system config {name!r}")
-    changed = True
+    for name in args.unsets:
+      db.del_secret(name)
+      conn.out(f"Unset system config {name!r}")
+      changed = True
 
-  if changed:
-    return
+    if changed:
+      return
 
-  for name in db.list_secrets():
-    conn.out(name)
+    for name in db.list_secrets():
+      conn.out(name)
 
 
 def run_host_volume(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
@@ -99,52 +100,54 @@ def run_host_volume(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   if len(chosen) > 1:
     raise ValueError("Use one of --add, --set or --rm at a time")
 
-  if args.add:
-    tag, path = parse_kv(args.add, "--add")
-    add_host_volume(
-      ctx,
-      tag,
-      path,
-      readonly=args.readonly,
-      require_mount=args.require_mount,
-    )
-    conn.out(f"Added host volume {tag} -> {path}")
-    return
+  with ctx.harbor_lock("host-volume"):
+    if args.add:
+      tag, path = parse_kv(args.add, "--add")
+      add_host_volume(
+        ctx,
+        tag,
+        path,
+        readonly=args.readonly,
+        require_mount=args.require_mount,
+      )
+      conn.out(f"Added host volume {tag} -> {path}")
+      return
 
-  if args.set_:
-    tag, path = parse_kv(args.set_, "--set")
-    set_host_volume(
-      ctx,
-      tag,
-      path,
-      readonly=args.readonly,
-      require_mount=args.require_mount,
-    )
-    conn.out(f"Set host volume {tag} -> {path}")
-    return
+    if args.set_:
+      tag, path = parse_kv(args.set_, "--set")
+      set_host_volume(
+        ctx,
+        tag,
+        path,
+        readonly=args.readonly,
+        require_mount=args.require_mount,
+      )
+      conn.out(f"Set host volume {tag} -> {path}")
+      return
 
-  if args.rm:
-    remove_host_volume(ctx, args.rm)
-    conn.out(f"Removed host volume {args.rm}")
-    return
+    if args.rm:
+      remove_host_volume(ctx, args.rm)
+      conn.out(f"Removed host volume {args.rm}")
+      return
 
-  rows = [
-    (
-      tag,
-      str(volume.path),
-      "yes" if volume.readonly else "",
-      "yes" if volume.require_mount else "",
+    rows = [
+      (
+        tag,
+        str(volume.path),
+        "yes" if volume.readonly else "",
+        "yes" if volume.require_mount else "",
+      )
+      for tag, volume in sorted(ctx.config.host_volumes.items())
+    ]
+    conn.out(
+      tabulate(rows, headers=["tag", "path", "readonly", "require_mount"])
+      if rows
+      else "No host volumes declared."
     )
-    for tag, volume in sorted(ctx.config.host_volumes.items())
-  ]
-  conn.out(
-    tabulate(rows, headers=["tag", "path", "readonly", "require_mount"])
-    if rows
-    else "No host volumes declared."
-  )
 
 
 def run_gen_masterkey(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  mkey_file = ctx.config.master_keyfile
-  LogTab.write_entry(mkey_file, "master_key", "set", secrets.token_hex(128))
-  conn.out(f"New master key appended to: {mkey_file}")
+  with ctx.harbor_lock("gen-masterkey"):
+    mkey_file = ctx.config.master_keyfile
+    LogTab.write_entry(mkey_file, "master_key", "set", secrets.token_hex(128))
+    conn.out(f"New master key appended to: {mkey_file}")

@@ -1,8 +1,7 @@
-"""Harbor takes one lock per command invocation.
+"""CLI commands take a harbor lock, and app commands take an app lock first.
 
-`harbor/cli/main.py` wraps the whole command in `ctx.lock()`. Two commands opt
-out: `init`, which runs before there is a config to load, and `logs` / `cmd`,
-which stream until interrupted.
+`logs` / `cmd` / `activity` / `decrypt` take neither: they stream or read.
+`init` runs before there is a config to lock.
 
 Most of these run in-process -- `filelock` blocks a second acquire from the
 same process just as it does across processes. The one test that would be
@@ -18,42 +17,41 @@ import time
 from filelock import FileLock
 
 from harbor.lib.config import load_config_file
-from harbor.lib.harbor import LOCK_KEY, HarborCtx
-from harbor.lib.logtab import LogTab
+from harbor.lib.harbor import HarborCtx
 from tests.conftest import LOCK_TIMEOUT
 
 
-def test_the_lock_is_recorded_then_released(harbor_env):
-  """A held lock and a released one are both visible in the activity log."""
-  ctx = HarborCtx(load_config_file(harbor_env.config))
-  activity = LogTab(ctx.config.activity_log)
+def _holder(path) -> dict:
+  return json.loads(path.read_text())
 
-  with ctx.lock("ps"):
-    held = json.loads(activity.read(LOCK_KEY).value)
-    assert held["state"] == "acquired"
+
+def test_the_lock_is_recorded_in_the_lockfile(harbor_env):
+  """A held lock overwrites the lockfile; release leaves the last holder."""
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+  assert (
+    ctx.config.harbor_lockfile_path == harbor_env.root / "var" / "lock" / "harbor.lock"
+  )
+
+  with ctx.harbor_lock("ps"):
+    held = _holder(ctx.config.harbor_lockfile_path)
     assert held["by"] == "ps"
     assert held["pid"] == os.getpid()
+    assert "at" in held
+    assert "state" not in held
 
-  released = json.loads(activity.read(LOCK_KEY).value)
-  assert released["state"] == "released"
+  released = _holder(ctx.config.harbor_lockfile_path)
   assert released["by"] == "ps"
+  assert released["pid"] == os.getpid()
 
 
 def test_the_lock_timeout_message_names_the_holder(harbor_env):
   """The whole point of the record: explain a wait instead of just failing."""
-  config = load_config_file(harbor_env.config)
-  LogTab(config.activity_log).write(
-    LOCK_KEY,
-    json.dumps(
-      {
-        "state": "acquired",
-        "by": "start ports-demo",
-        "pid": 999999,
-      }
-    ),
-  )
-
   with FileLock(harbor_env.harbor_lockfile_path):
+    harbor_env.harbor_lockfile_path.write_text(
+      json.dumps(
+        {"by": "start ports-demo", "pid": 999999, "at": "2026-01-01T00:00:00Z"}
+      )
+    )
     blocked = harbor_env.run("ps")
 
   assert blocked.returncode == 1
@@ -62,16 +60,14 @@ def test_the_lock_timeout_message_names_the_holder(harbor_env):
 
 
 def test_the_recorded_holder_is_the_command_not_the_argv(harbor_env):
-  """`config --set k=secret` must never put the value in the activity log."""
+  """`config --set k=secret` must never put the value in the lockfile."""
   app_id = "io.p2net.basic-features"
   assert harbor_env.run("stage", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--set", "admin_pass=hunter2").returncode == 0
 
-  config = load_config_file(harbor_env.config)
-  recorded = LogTab(config.activity_log).read(LOCK_KEY)
-
-  assert "hunter2" not in recorded.value
-  assert json.loads(recorded.value)["by"] == f"config {app_id}"
+  recorded = harbor_env.harbor_lockfile_path.read_text()
+  assert "hunter2" not in recorded
+  assert _holder(harbor_env.harbor_lockfile_path)["by"] == f"config {app_id}"
 
 
 def test_a_held_lock_makes_a_command_give_up_with_a_reason(harbor_env):
@@ -128,3 +124,45 @@ def test_logs_does_not_hold_the_harbor_lock(harbor_env):
   assert "locked harbor" not in tailed.stderr
   assert blocked.returncode == 1
   assert "Another process has locked harbor" in blocked.stderr
+
+
+def test_an_app_lock_does_not_block_another_app(harbor_env):
+  """The point of per-app locks: snapshotting A must not stall start B."""
+  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  lock = FileLock(harbor_env.app_lockfile_path("ports-demo"))
+  with lock:
+    started = harbor_env.run("start", "routes-demo")
+    blocked = harbor_env.run("start", "ports-demo")
+
+  assert started.returncode == 0, started.stderr
+  assert blocked.returncode == 1
+  assert "locked app ports-demo" in blocked.stderr
+
+
+def test_ps_does_not_need_the_app_lock(harbor_env):
+  """A harbor-wide read proceeds while one app is locked for a long copy."""
+  with FileLock(harbor_env.app_lockfile_path("ports-demo")):
+    listed = harbor_env.run("ps")
+
+  assert listed.returncode == 0, listed.stderr
+  assert "locked" not in listed.stderr
+
+
+def test_snapshot_releases_harbor_while_copying(harbor_env, monkeypatch):
+  """Other apps can take the harbor lock during the volume copy."""
+  import importlib
+
+  snapshot_mod = importlib.import_module("harbor.lib.lifecycle.snapshot")
+
+  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  original = snapshot_mod.snapshot
+
+  def during_copy(app, ctx, label=""):
+    lock = FileLock(ctx.config.harbor_lockfile_path)
+    lock.acquire(timeout=0)
+    lock.release()
+    return original(app, ctx, label=label)
+
+  monkeypatch.setattr(snapshot_mod, "snapshot", during_copy)
+  taken = harbor_env.run("snapshot", "ports-demo", "--label", "copy")
+  assert taken.returncode == 0, taken.stderr

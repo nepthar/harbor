@@ -15,7 +15,7 @@ from harbor.lib.lifecycle.routes import (
   unregister_app_routes,
 )
 from harbor.lib.lifecycle.run import logs, recovery_lines, run_command, start, stop
-from harbor.lib.lifecycle.snapshot import snapshot
+from harbor.lib.lifecycle.snapshot import snapshot, take_snapshot
 from harbor.lib.lifecycle.stage import (
   StageSuccess,
   StagingTarget,
@@ -52,6 +52,7 @@ __all__ = [
   "rm",
   "run_command",
   "snapshot",
+  "take_snapshot",
   "snapshot_names",
   "source_volume_links",
   "stage",

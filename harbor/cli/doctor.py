@@ -12,18 +12,19 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  problems: list[str] = list(_catalog_notes(ctx))
-  for observation in ctx.observations():
-    for note in _notes(observation):
-      problems.append(f"{observation.app_id}: {note}")
+  with ctx.harbor_lock("doctor"):
+    problems: list[str] = list(_catalog_notes(ctx))
+    for observation in ctx.observations():
+      for note in _notes(observation):
+        problems.append(f"{observation.app_id}: {note}")
 
-  if not problems:
-    conn.out("No problems found")
-    return
+    if not problems:
+      conn.out("No problems found")
+      return
 
-  for problem in problems:
-    conn.err(problem)
-  raise SystemExit(1)
+    for problem in problems:
+      conn.err(problem)
+    raise SystemExit(1)
 
 
 def _catalog_notes(ctx: HarborCtx) -> list[str]:

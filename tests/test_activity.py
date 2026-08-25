@@ -36,6 +36,7 @@ def test_a_run_leaves_a_file_and_an_index_row(config):
   relpath = _record(config, output="line one\nline two")
 
   path = config.activity_root / relpath
+  assert path == config.harbor_root / "var" / "logs" / relpath
   assert path.is_file()
   body = path.read_text()
   assert "line one\nline two" in body
@@ -119,4 +120,6 @@ def test_two_runs_in_one_second_do_not_collide(config):
   a = _record(config, output="first")
   b = _record(config, output="second")
   assert a != b
-  assert (config.activity_root / a).read_text() != (config.activity_root / b).read_text()
+  assert (config.activity_root / a).read_text() != (
+    config.activity_root / b
+  ).read_text()

@@ -14,7 +14,7 @@ api_address = { default = "", desc = "host:port of harbord, instead of the admin
 [volumes]
 ui   = { kind = "app", src = "ui", desc = "The application"}
 venv = { kind = "temp", desc = "virtual env, dependencies, etc." }
-conn = { kind = "host", desc = "The $harbor/conn directory holding admin.sock" }
+conn = { kind = "host", desc = "The $harbor/var/conn directory holding admin.sock" }
 
 [run.main]
 image   = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"

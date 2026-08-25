@@ -1,7 +1,7 @@
 import argparse
 
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import snapshot
+from harbor.lib.lifecycle import take_snapshot
 from harbor.lib.util import Conn
 
 
@@ -21,13 +21,11 @@ def register(subparsers) -> None:
     metavar="LABEL",
     help="Optional label appended to the snapshot name",
   )
-  # Default holds_lock=True: the whole copy (including the containerized volume
-  # cp) runs under the harbor lock so nothing else mutates the app mid-snapshot.
   parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
   app = ctx.resolve_app(args.app)
   conn.out(f"Snapshotting {app}...")
-  path = snapshot(app, ctx, label=args.label)
+  path = take_snapshot(app, ctx, label=args.label)
   conn.out(f"Snapshot of {app} written to {path}")

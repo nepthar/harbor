@@ -1,6 +1,8 @@
 import argparse
+from pathlib import Path
 
 from harbor.cli.kv import parse_kv
+from harbor.lib.happ import app_id_from_path, is_pathlike
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import staging_target, start
 from harbor.lib.receipt import capability_receipt, location_receipt
@@ -37,22 +39,28 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  target = staging_target(ctx, args.app)
-  if target.linked_entry is not None:
-    conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
+  app = (
+    app_id_from_path(Path(args.app).expanduser().resolve())
+    if is_pathlike(args.app)
+    else ctx.resolve_app(args.app)
+  )
+  with ctx.locked(f"start {app}", app):
+    target = staging_target(ctx, args.app)
+    if target.linked_entry is not None:
+      conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
 
-  sets = [parse_kv(item, "--set") for item in args.sets]
-  binds = [parse_kv(item, "--bind") for item in args.binds]
-  if target.bundle is not None:
-    bundle = target.bundle
-  elif sets or binds or not ctx.is_staged(target.app_id):
-    bundle = ctx.bundle_path(target.app_id)
-  else:
-    # Catalog may be gone; start will use the run copy as-is.
-    bundle = ctx.config.app_run_path(target.app_id)
-  result = start(target.app_id, bundle, ctx, sets=sets, binds=binds)
+    sets = [parse_kv(item, "--set") for item in args.sets]
+    binds = [parse_kv(item, "--bind") for item in args.binds]
+    if target.bundle is not None:
+      bundle = target.bundle
+    elif sets or binds or not ctx.is_staged(target.app_id):
+      bundle = ctx.bundle_path(target.app_id)
+    else:
+      # Catalog may be gone; start will use the run copy as-is.
+      bundle = ctx.config.app_run_path(target.app_id)
+    result = start(target.app_id, bundle, ctx, sets=sets, binds=binds)
 
-  compact = capability_receipt(result.stack, result.run_data, ctx, compact=True)
-  if compact.strip():
-    conn.out(compact)
-  conn.out(location_receipt(result.stack, result.run_data, ctx))
+    compact = capability_receipt(result.stack, result.run_data, ctx, compact=True)
+    if compact.strip():
+      conn.out(compact)
+    conn.out(location_receipt(result.stack, result.run_data, ctx))

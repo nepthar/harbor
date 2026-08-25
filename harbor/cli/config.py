@@ -64,23 +64,24 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = ctx.resolve_app(args.app)
-  store = ctx.app_store(app)
-  stack = _config_stack(app, ctx)
+  with ctx.locked(f"config {app}", app):
+    store = ctx.app_store(app)
+    stack = _config_stack(app, ctx)
 
-  if args.get_name is not None:
+    if args.get_name is not None:
+      if args.sets or args.binds or args.routes:
+        raise ValueError("--get cannot be combined with --set, --route, or --bind")
+      _get(stack, store, args.get_name, conn, show_secret=args.show_secret)
+      return
+
+    if args.show_secret:
+      raise ValueError("--show-secret requires --get")
+
     if args.sets or args.binds or args.routes:
-      raise ValueError("--get cannot be combined with --set, --route, or --bind")
-    _get(stack, store, args.get_name, conn, show_secret=args.show_secret)
-    return
+      _apply(app, stack, args.sets, args.binds, args.routes, ctx, conn)
+      return
 
-  if args.show_secret:
-    raise ValueError("--show-secret requires --get")
-
-  if args.sets or args.binds or args.routes:
-    _apply(app, stack, args.sets, args.binds, args.routes, ctx, conn)
-    return
-
-  _list(app, stack, store, conn)
+    _list(app, stack, store, conn)
 
 
 def _config_stack(app: AppID, ctx: HarborCtx) -> AppStack:

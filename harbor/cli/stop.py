@@ -12,4 +12,5 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   state = ctx.run_state(args.app_id)
-  stop(state.app_id, ctx)
+  with ctx.locked(f"stop {state.app_id}", state.app_id):
+    stop(state.app_id, ctx)

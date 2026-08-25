@@ -23,11 +23,9 @@ def register(subparsers) -> None:
     nargs=argparse.REMAINDER,
     help="Extra args after -- passed to docker compose logs",
   )
-  # `logs -f` streams until the operator interrupts it. Holding the harbor lock
-  # for that long would shut every other harbor command out of the machine for
-  # as long as someone is watching logs, so this command runs without it. It
-  # only reads container output; it changes no harbor state.
-  parser.set_defaults(func=run, holds_lock=False)
+  # `logs -f` streams until interrupted. No lock: watching logs must not
+  # shut other commands out, and this command changes no harbor state.
+  parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:

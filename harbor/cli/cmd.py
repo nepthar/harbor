@@ -24,9 +24,8 @@ def register(subparsers) -> None:
     nargs=argparse.REMAINDER,
     help="Arguments forwarded to the command",
   )
-  # Like `logs`, this can stream for a long time (or be interactive). Holding
-  # the harbor lock would block every other command for the duration.
-  parser.set_defaults(func=run, holds_lock=False)
+  # Like `logs`, this can stream or be interactive. No lock.
+  parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:

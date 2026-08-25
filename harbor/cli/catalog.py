@@ -16,22 +16,23 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  catalog = ctx.app_catalog()
-  staged = ctx.staged_app_ids()
-  # One read of the activity log for every app, rather than one per row.
-  actions = read_app_actions(ctx.config)
-  origins = {app_id: ctx.staged_origin(app_id) for app_id in staged}
+  with ctx.harbor_lock("catalog"):
+    catalog = ctx.app_catalog()
+    staged = ctx.staged_app_ids()
+    # One read of the activity log for every app, rather than one per row.
+    actions = read_app_actions(ctx.config)
+    origins = {app_id: ctx.staged_origin(app_id) for app_id in staged}
 
-  # An id carried by two app sources gets a row per source, which is what
-  # makes the ambiguity `doctor` reports visible here too.
-  rows = [
-    (app_id, entry.source, _status(entry, staged, origins, actions), str(entry.path))
-    for app_id in sorted(catalog)
-    for entry in catalog[app_id]
-  ]
-  conn.out(
-    tabulate(rows, headers=["APP_ID", "SOURCE", "STATUS", "PATH"], tablefmt="simple")
-  )
+    # An id carried by two app sources gets a row per source, which is what
+    # makes the ambiguity `doctor` reports visible here too.
+    rows = [
+      (app_id, entry.source, _status(entry, staged, origins, actions), str(entry.path))
+      for app_id in sorted(catalog)
+      for entry in catalog[app_id]
+    ]
+    conn.out(
+      tabulate(rows, headers=["APP_ID", "SOURCE", "STATUS", "PATH"], tablefmt="simple")
+    )
 
 
 def _status(

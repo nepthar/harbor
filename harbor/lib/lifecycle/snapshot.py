@@ -9,6 +9,7 @@ from pathlib import Path
 from harbor.lib.apps import AppID
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle.rootfs import run_as_root
+from harbor.lib.lifecycle.run import start, stop
 from harbor.lib.stack import AppStack
 from harbor.lib.util import validate_identifier
 
@@ -163,7 +164,7 @@ def snapshot(
       f"remove it with `rm -rf {snapshot_folder}` before retrying."
     )
 
-  staging = ctx.config.harbor_root / "temp" / "current_snapshot"
+  staging = ctx.config.temp_root / "current_snapshot"
   if staging.exists():
     raise ValueError(
       f"Incomplete snapshot left at {staging}; "
@@ -248,3 +249,31 @@ def snapshot(
     ) from e
 
   return archive
+
+
+def take_snapshot(
+  app: AppID, ctx: HarborCtx, *, label: str = "", by: str | None = None
+) -> Path:
+  """Stop if running, copy, start if we stopped. Manages app and harbor locks.
+
+  Holds the app lock the whole time so nothing else mutates this app. The
+  harbor lock is only around stop and start, so other apps can proceed while
+  volumes copy. `snapshot()` is the copy; it assumes the app lock and a
+  stopped app.
+  """
+  by = by or f"snapshot {app}"
+  running = 0
+  with ctx.app_lock(app, by):
+    with ctx.harbor_lock(by):
+      try:
+        running = ctx.run_state(app).running_count
+      except ValueError:
+        running = 0
+      if running:
+        stop(app, ctx)
+    try:
+      return snapshot(app, ctx, label=label)
+    finally:
+      if running:
+        with ctx.harbor_lock(by):
+          start(app, ctx.config.app_run_path(app), ctx)

@@ -250,13 +250,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     """
     try:
       resolved = ctx.resolve_app(app_id)
-      stack = ctx.staged_stack(resolved) or _bundle_stack(resolved, ctx)
-      if body.set:
-        apply_config_sets(stack, list(body.set.items()), ctx)
-      for volume_name, tag in body.bind.items():
-        bind(stack, volume_name, tag, ctx)
-      for route_name, tag in body.route.items():
-        _assign_route(resolved, stack, route_name, tag, ctx)
+      with ctx.locked(f"config {resolved}", resolved):
+        stack = ctx.staged_stack(resolved) or _bundle_stack(resolved, ctx)
+        if body.set:
+          apply_config_sets(stack, list(body.set.items()), ctx)
+        for volume_name, tag in body.bind.items():
+          bind(stack, volume_name, tag, ctx)
+        for route_name, tag in body.route.items():
+          _assign_route(resolved, stack, route_name, tag, ctx)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return views.app_view(resolved, _ctx_again(ctx))
@@ -276,13 +277,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     # job. They still take the harbor lock, so one running behind a snapshot
     # waits and then fails naming the holder.
     try:
-      add_host_volume(
-        ctx,
-        body.tag,
-        body.path,
-        readonly=body.readonly,
-        require_mount=body.require_mount,
-      )
+      with ctx.harbor_lock(f"host-volume add {body.tag}"):
+        add_host_volume(
+          ctx,
+          body.tag,
+          body.path,
+          readonly=body.readonly,
+          require_mount=body.require_mount,
+        )
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
@@ -292,13 +294,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     if tag not in ctx.config.host_volumes:
       raise HTTPException(404, f"No host volume {tag!r}")
     try:
-      set_host_volume(
-        ctx,
-        tag,
-        body.path,
-        readonly=body.readonly,
-        require_mount=body.require_mount,
-      )
+      with ctx.harbor_lock(f"host-volume set {tag}"):
+        set_host_volume(
+          ctx,
+          tag,
+          body.path,
+          readonly=body.readonly,
+          require_mount=body.require_mount,
+        )
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
@@ -308,7 +311,8 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     if tag not in ctx.config.host_volumes:
       raise HTTPException(404, f"No host volume {tag!r}")
     try:
-      remove_host_volume(ctx, tag)
+      with ctx.harbor_lock(f"host-volume rm {tag}"):
+        remove_host_volume(ctx, tag)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}

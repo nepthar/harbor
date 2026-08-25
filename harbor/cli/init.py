@@ -3,7 +3,7 @@ import os
 import secrets
 from pathlib import Path
 
-from harbor.lib.config import VOLUME_KINDS, load_config_file
+from harbor.lib.config import VAR_DIRS, VOLUME_KINDS, load_config_file
 from harbor.lib.logtab import LogTab
 
 DEFAULT_ROOT = Path("~/.harbor")
@@ -107,6 +107,8 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   (root / "config").mkdir(parents=True, exist_ok=True)
   for kind in VOLUME_KINDS:
     (root / "volumes" / kind).mkdir(parents=True, exist_ok=True)
+  for name in VAR_DIRS:
+    (root / "var" / name).mkdir(parents=True, exist_ok=True)
 
   config_path.write_text(CONFIG_TEMPLATE)
 
@@ -123,6 +125,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   conn.out(f"  run:         {root / 'run'}")
   conn.out(f"  config:      {root / 'config'}")
   conn.out(f"  volumes:     {root / 'volumes'} ({', '.join(VOLUME_KINDS)})")
+  conn.out(f"  var:         {root / 'var'} ({', '.join(VAR_DIRS)})")
   conn.out(f"  master.key:  {master_key_path}")
   conn.out(f"\nTo change your configuration, edit {config_path}")
   conn.out(

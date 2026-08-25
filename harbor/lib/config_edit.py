@@ -39,16 +39,15 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def edit_config(ctx: HarborCtx, by: str) -> Iterator[TOMLDocument]:
+def edit_config(ctx: HarborCtx) -> Iterator[TOMLDocument]:
   """Yield config.toml as a tomlkit document; write it back if it validates.
 
-  `by` names the edit in the lock record, the same way a command does.
+  The harbor lock is assumed held: config.toml is harbor-wide state.
   """
   path = ctx.config.config_path
-  with ctx.lock(by):
-    document = tomlkit.parse(path.read_text())
-    yield document
-    _commit(path, tomlkit.dumps(document))
+  document = tomlkit.parse(path.read_text())
+  yield document
+  _commit(path, tomlkit.dumps(document))
 
 
 def _commit(path: Path, text: str) -> None:
@@ -131,7 +130,7 @@ def add_host_volume(
       f"Change it with `harbor config-sys host-volume --set {tag}=<path>`."
     )
   _check_path(ctx, path, require_mount=require_mount)
-  with edit_config(ctx, f"host-volume add {tag}") as document:
+  with edit_config(ctx) as document:
     _host_volumes(document)[tag] = _entry(
       path, readonly=readonly, require_mount=require_mount
     )
@@ -154,7 +153,7 @@ def set_host_volume(
       f"Add it with `harbor config-sys host-volume --add {tag}=<path>`."
     )
   _check_path(ctx, path, require_mount=require_mount)
-  with edit_config(ctx, f"host-volume set {tag}") as document:
+  with edit_config(ctx) as document:
     _host_volumes(document)[tag] = _entry(
       path, readonly=readonly, require_mount=require_mount
     )
@@ -167,5 +166,5 @@ def remove_host_volume(ctx: HarborCtx, tag: str) -> None:
   if tag not in ctx.config.host_volumes:
     known = ", ".join(sorted(ctx.config.host_volumes)) or "(none)"
     raise ValueError(f"No host volume {tag!r}; known tags: {known}")
-  with edit_config(ctx, f"host-volume rm {tag}") as document:
+  with edit_config(ctx) as document:
     del _host_volumes(document)[tag]

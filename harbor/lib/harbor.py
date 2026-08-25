@@ -4,6 +4,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -13,7 +14,6 @@ from harbor.lib.config import Config
 from harbor.lib.crypto import crypto_from_config
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
 from harbor.lib.happ import scan_happs
-from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore, HarborStore
@@ -32,9 +32,31 @@ def lock_timeout() -> float:
   return float(os.environ.get("HARBOR_LOCK_TIMEOUT", LOCK_TIMEOUT))
 
 
-# Where lock activity is recorded. Not under apps/, so it cannot collide with
-# the per-app `apps/<app_id>/status` keys the same log carries.
-LOCK_KEY = "harbor/lock"
+def _lock_now() -> str:
+  return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def write_lock_holder(path: Path, by: str) -> None:
+  """Overwrite the lockfile with who holds it. Call after acquire; filelock
+  truncates on acquire, so this is what a waiter reads on timeout."""
+  path.write_text(
+    json.dumps(
+      {"by": by, "pid": os.getpid(), "at": _lock_now()},
+      separators=(",", ":"),
+    )
+  )
+
+
+def lock_holder_hint(path: Path) -> str:
+  """What the lockfile says, for a timed-out acquire."""
+  try:
+    record = json.loads(path.read_text())
+  except (OSError, json.JSONDecodeError, ValueError):
+    return ""
+  return (
+    f"Held by `harbor {record.get('by', '?')}` "
+    f"(pid {record.get('pid', '?')}, since {record.get('at', '?')}).\n"
+  )
 
 
 def _resolve_app_query(candidates: list[AppID], query: str) -> list[AppID]:
@@ -95,57 +117,65 @@ class HarborCtx:
     self._docker_status: dict[str, tuple[HarborRunUnitStatus, ...]] | None = None
     self._harbordb: HarborStore | None = None
     self._observations: dict[str, AppObservation] | None = None
-    self._lock = FileLock(self.config.harbor_lockfile_path)
+    # FileLock will not create the parent. One FileLock per path so a nested
+    # acquire in this process is reentrant rather than self-deadlocking.
+    self.config.lock_root.mkdir(parents=True, exist_ok=True)
+    self._harbor_lock = FileLock(self.config.harbor_lockfile_path)
+    self._app_locks: dict[str, FileLock] = {}
+
+  def invalidate_containers(self) -> None:
+    """Drop cached docker ps. Call after this process starts or stops containers."""
+    self._docker_status = None
+
+  def _app_filelock(self, app: AppID | str) -> FileLock:
+    key = str(app)
+    lock = self._app_locks.get(key)
+    if lock is None:
+      lock = FileLock(self.config.app_lockfile_path(key))
+      self._app_locks[key] = lock
+    return lock
 
   @contextmanager
-  def lock(self, by: str) -> Iterator[None]:
-    """Hold the harbor lock for the duration of a command.
-    Reentrant, so nesting is safe. All lib/ code assume as lock is being held, so
-    basically grab this at context creation.
-    """
+  def _acquire(self, lock: FileLock, path: Path, by: str, what: str) -> Iterator[None]:
     timeout = lock_timeout()
     try:
-      with self._lock.acquire(timeout=timeout):
-        try:
-          self._record_lock("acquired", by)
-          yield
-        finally:
-          self._record_lock("released", by)
+      with lock.acquire(timeout=timeout):
+        write_lock_holder(path, by)
+        yield
     except Timeout:
       raise ValueError(
-        f"Another process has locked harbor. Giving up after "
+        f"Another process has locked {what}. Giving up after "
         f"{timeout:g} seconds.\n"
-        f"{self._lock_holder_hint()}"
-        f"If no other harbor is running, remove {self.config.harbor_lockfile_path}"
+        f"{lock_holder_hint(path)}"
+        f"If no other harbor is running, remove {path}"
       ) from None
 
-  def _record_lock(self, state: str, by: str) -> None:
-    LogTab(self.config.activity_log).write(
-      LOCK_KEY,
-      json.dumps(
-        {
-          "state": state,
-          "by": by,
-          "pid": os.getpid(),
-        },
-        separators=(",", ":"),
-      ),
-    )
+  @contextmanager
+  def harbor_lock(self, by: str) -> Iterator[None]:
+    """Hold the harbor-wide lock. Reentrant. Library code assumes this is held
+    whenever it mutates harbor-wide state (routes, harbordb, config.toml)."""
+    with self._acquire(
+      self._harbor_lock, self.config.harbor_lockfile_path, by, "harbor"
+    ):
+      yield
 
-  def _lock_holder_hint(self) -> str:
-    """What the last lock record says, for a timed-out acquire."""
-    entry = LogTab(self.config.activity_log).read(LOCK_KEY)
-    if not entry:
-      return ""
-    try:
-      record = json.loads(entry.value)
-    except json.JSONDecodeError:
-      return ""
-    held = "Held" if record.get("state") == "acquired" else "Last held"
-    return (
-      f"{held} by `harbor {record.get('by', '?')}` "
-      f"(pid {record.get('pid', '?')}, since {entry.ts}).\n"
-    )
+  @contextmanager
+  def app_lock(self, app: AppID | str, by: str) -> Iterator[None]:
+    """Hold one app's lock. Reentrant. Acquire before the harbor lock."""
+    path = self.config.app_lockfile_path(app)
+    with self._acquire(self._app_filelock(app), path, by, f"app {app}"):
+      yield
+
+  @contextmanager
+  def locked(self, by: str, app: AppID | str | None = None) -> Iterator[None]:
+    """App lock (if an app) then harbor lock. The usual lifecycle nest."""
+    if app is None:
+      with self.harbor_lock(by):
+        yield
+      return
+    with self.app_lock(app, by):
+      with self.harbor_lock(by):
+        yield
 
   def harbor_db(self) -> HarborStore:
     if self._harbordb is None:

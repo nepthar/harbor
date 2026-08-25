@@ -7,7 +7,7 @@ for every chatty app. What dockerd cannot keep is what *harbor* did: a job's
 `compose run --rm` container is deleted the moment it exits, so harbor's
 capture is the only record of what a job or a cron run produced.
 
-Each run leaves one plain file under `$harbor/logs/<app_id>/`, readable with
+Each run leaves one plain file under `$harbor/var/logs/<app_id>/`, readable with
 harbor gone -- same no-lock-in rule as the rest of the tree. The structured
 index is `activity.logtab`, which already records per-app status: a run adds
 an `apps/<app_id>/run` record whose value carries verb, outcome, duration and

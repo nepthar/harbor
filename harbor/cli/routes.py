@@ -85,51 +85,55 @@ def _provider(ctx: HarborCtx, conn, tag: str | None):
 
 
 def run_check(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  tag, provider = _provider(ctx, conn, args.provider)
+  with ctx.harbor_lock("routes check"):
+    tag, provider = _provider(ctx, conn, args.provider)
 
-  errors = provider.validate()
-  if errors:
-    conn.err(f"Route provider {tag!r} is not usable:")
-    for err in errors:
-      conn.err(f"  - {err}")
-    raise SystemExit(1)
-  conn.out(f"Route provider {tag!r} OK")
+    errors = provider.validate()
+    if errors:
+      conn.err(f"Route provider {tag!r} is not usable:")
+      for err in errors:
+        conn.err(f"  - {err}")
+      raise SystemExit(1)
+    conn.out(f"Route provider {tag!r} OK")
 
 
 def run_add(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  tag, provider = _provider(ctx, conn, args.provider)
-  domain = ctx.config.provider_domain(tag)
-  try:
-    provider.register_route(AppID("manual"), args.port, args.subdomain, domain)
-  except RouteProviderError as e:
-    conn.err(f"Error: {e}")
-    raise SystemExit(1) from e
-  conn.out(f"Added {args.subdomain}.{domain} -> :{args.port} via {tag}")
+  with ctx.harbor_lock("routes add"):
+    tag, provider = _provider(ctx, conn, args.provider)
+    domain = ctx.config.provider_domain(tag)
+    try:
+      provider.register_route(AppID("manual"), args.port, args.subdomain, domain)
+    except RouteProviderError as e:
+      conn.err(f"Error: {e}")
+      raise SystemExit(1) from e
+    conn.out(f"Added {args.subdomain}.{domain} -> :{args.port} via {tag}")
 
 
 def run_remove(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  tag, provider = _provider(ctx, conn, args.provider)
-  domain = ctx.config.provider_domain(tag)
-  try:
-    provider.unregister_route(args.subdomain, domain)
-  except RouteProviderError as e:
-    conn.err(f"Error: {e}")
-    raise SystemExit(1) from e
-  conn.out(f"Removed {args.subdomain}.{domain} via {tag}")
+  with ctx.harbor_lock("routes remove"):
+    tag, provider = _provider(ctx, conn, args.provider)
+    domain = ctx.config.provider_domain(tag)
+    try:
+      provider.unregister_route(args.subdomain, domain)
+    except RouteProviderError as e:
+      conn.err(f"Error: {e}")
+      raise SystemExit(1) from e
+    conn.out(f"Removed {args.subdomain}.{domain} via {tag}")
 
 
 def run_list(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  tag, provider = _provider(ctx, conn, args.provider)
-  try:
-    routes = provider.list_routes()
-  except RouteProviderError as e:
-    conn.err(f"Error: {e}")
-    raise SystemExit(1) from e
+  with ctx.harbor_lock("routes list"):
+    tag, provider = _provider(ctx, conn, args.provider)
+    try:
+      routes = provider.list_routes()
+    except RouteProviderError as e:
+      conn.err(f"Error: {e}")
+      raise SystemExit(1) from e
 
-  if not routes:
-    conn.out("No routes")
-    return
+    if not routes:
+      conn.out("No routes")
+      return
 
-  domain = ctx.config.provider_domain(tag)
-  rows = [(f"https://{sub}.{domain}", dest) for sub, dest in routes]
-  conn.out(tabulate(rows, headers=["URL", "DESTINATION"], tablefmt="simple"))
+    domain = ctx.config.provider_domain(tag)
+    rows = [(f"https://{sub}.{domain}", dest) for sub, dest in routes]
+    conn.out(tabulate(rows, headers=["URL", "DESTINATION"], tablefmt="simple"))

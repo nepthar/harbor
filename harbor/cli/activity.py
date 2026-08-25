@@ -30,8 +30,7 @@ def register(subparsers) -> None:
     metavar="N",
     help="Print the output of the Nth listed run (default: 1, the newest)",
   )
-  # Reads the index and, with --show, one file; changes nothing.
-  parser.set_defaults(func=run, holds_lock=False)
+  parser.set_defaults(func=run)
 
 
 def _resolve(query: str | None, ctx: HarborCtx) -> str | None:
@@ -79,5 +78,5 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     log = entry["log"] if entry["available"] else f"{entry['log']} (pruned)"
     conn.out(
       f"{index:>3}  {entry['ts']}  {entry['status']:<5}  "
-      f"{_duration(entry['duration_ms']):>7}  {what:<24}  logs/{log}"
+      f"{_duration(entry['duration_ms']):>7}  {what:<24}  var/logs/{log}"
     )

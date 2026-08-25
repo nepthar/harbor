@@ -18,7 +18,7 @@ import yaml
 
 from harbor.lib import lifecycle
 from harbor.lib.apps import read_app_actions, read_last_app_action
-from harbor.lib.config import VOLUME_KINDS, load_config_file
+from harbor.lib.config import VAR_DIRS, VOLUME_KINDS, load_config_file
 from harbor.lib.crypto import FernetCryptoEngine
 from harbor.lib.happ import scan_happs
 from harbor.lib.harbor import HarborCtx
@@ -1215,6 +1215,8 @@ def test_init_bootstraps_a_usable_root(harbor_env, tmp_path):
   assert (root / "config").is_dir()
   for kind in VOLUME_KINDS:
     assert (root / "volumes" / kind).is_dir(), kind
+  for name in VAR_DIRS:
+    assert (root / "var" / name).is_dir(), name
 
   # The master key must be readable back, not merely present: a command against
   # the new root has to load it through load_config_file.
