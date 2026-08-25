@@ -40,13 +40,8 @@ def catalog_tables(catalogs, open_app="", update=None, confirm=False):
       cards.append(
         catalog_card(card_app, card_id, hidden=not is_open, confirm=is_open and confirm)
       )
-      href = (
-        f' data-href="/catalog?app={quote(app_id)}"'
-        if str(app.get("source") or "").startswith("github:")
-        else f' data-card="{esc(card_id)}"'
-      )
       rows.append(
-        f'<tr class="catalog-row"{href}>'
+        f'<tr class="catalog-row" data-card="{esc(card_id)}">'
         f'<td class="name">{esc(name)}</td>'
         f'<td class="mono muted">{esc(app_id)}</td>'
         f'<td class="muted">{esc(version) if version else "&mdash;"}</td>'
@@ -148,12 +143,20 @@ def catalog_actions(app):
   app_id = app.get("app_id") or ""
   label = "Re-install" if app.get("installed") else "Install"
   update = ""
-  if (app.get("update") or {}).get("available"):
+  github = str(app.get("source") or "").startswith("github:")
+  if github and (app.get("update") or {}).get("available"):
     update = (
       f'<form method="get" action="/catalog">'
       f'<input type="hidden" name="app" value="{esc(app_id)}">'
       f'<input type="hidden" name="confirm" value="1">'
       f'<button type="submit">Update</button></form>'
+    )
+  elif github and app.get("update") is None:
+    update = (
+      f'<form method="get" action="/catalog">'
+      f'<input type="hidden" name="app" value="{esc(app_id)}">'
+      f'<input type="hidden" name="check" value="1">'
+      f'<button type="submit">Check for update</button></form>'
     )
   return (
     f'<div class="row actions">'
@@ -342,6 +345,7 @@ def page(
   target="",
   app="",
   confirm=False,
+  check=False,
   job="",
 ):
   """The catalog listing, plus fetch preview / update check when asked."""
@@ -374,7 +378,8 @@ def page(
     return "Catalog", error_card(e), version
   update = None
   job_busy = job_info is not None and job_info.get("state") in ("queued", "running")
-  if open_app and not job_busy:
+  # Opening a card is cheap. GitHub is not: only Check / Update wait on it.
+  if open_app and not job_busy and (check or confirm):
     entry = catalog_app_entry(catalogs, open_app)
     if entry and str(entry.get("source") or "").startswith("github:"):
       try:

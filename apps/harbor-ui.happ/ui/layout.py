@@ -405,8 +405,6 @@ def page(path, title, body, version=""):
     }}
     document.querySelectorAll(".catalog-row").forEach(function (row) {{
       row.addEventListener("click", function () {{
-        var href = row.getAttribute("data-href");
-        if (href) {{ window.location = href; return; }}
         var card = document.getElementById(row.getAttribute("data-card"));
         if (!card) return;
         shade.querySelectorAll(".app-card").forEach(function (other) {{

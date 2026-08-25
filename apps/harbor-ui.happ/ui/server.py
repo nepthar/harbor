@@ -107,6 +107,7 @@ def catalog_get(
   target: str = "",
   app: str = "",
   confirm: str | None = None,
+  check: str | None = None,
   job: str = "",
   ok: str | None = None,
   err: str | None = None,
@@ -121,6 +122,7 @@ def catalog_get(
     target=target,
     app=app,
     confirm=confirm == "1",
+    check=check == "1",
     job=job,
   )
   return html("/catalog", title, body, version)

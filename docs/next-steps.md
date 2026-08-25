@@ -74,10 +74,6 @@ submitted through harbord cannot answer one, and a question asked on every
   things that already exist, so an unauthenticated caller can now pull code
   from GitHub into the apps root. It still cannot stage or start it. FastAPI
   also left `/docs`, `/redoc`, and `/openapi.json` on that same surface.
-- **harbor-ui pip-installs on every start.** `python:3.12-slim` has no
-  FastAPI; the cmd is `pip install -r /app/requirements.txt && uvicorn …`.
-  Every `harbor start` is a network round trip and a cold install. A baked
-  image, or a volume that keeps site-packages, would make start cheap again.
 - **The Logs nav entry is a stub.** `/logs` renders “not built yet.”
 - **harbor-ui has no tests.** Catalog update-check is covered on the daemon
   (`POST /catalog/check`); the happ itself is HTML builders and FastAPI
