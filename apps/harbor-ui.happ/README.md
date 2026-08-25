@@ -2,8 +2,19 @@
 
 The harbor web interface. Reads harbor state over the admin socket that
 `harbord` publishes and renders it server-side — no polling, no client
-framework, no build step. `app.py` is the whole application and uses only the
-standard library, so the image needs nothing installed.
+framework, no build step. The `ui/` directory is the application. The
+container installs FastAPI and uvicorn from `ui/requirements.txt` each time
+it starts, then serves with uvicorn.
+
+| File | What it is |
+|---|---|
+| `server.py` | FastAPI app: routes, GET/POST handlers |
+| `requirements.txt` | fastapi, uvicorn, python-multipart |
+| `api.py` | Client for harbord (unix socket or TCP) |
+| `layout.py` | Page chrome: CSS, JS, nav, shared fragments |
+| `catalog.py` | Catalog listing, app cards, fetch, updates |
+| `installed.py` | Installed-apps list and the app detail page |
+| `volumes.py` | Host volumes and harbor-managed storage |
 
 ## Setup
 
