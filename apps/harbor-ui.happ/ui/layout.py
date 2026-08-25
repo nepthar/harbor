@@ -7,7 +7,7 @@ NAV = (
   ("/apps", "Apps"),
   ("/volumes", "Volumes"),
   ("/catalog", "Catalog"),
-  ("/logs", "Logs"),
+  ("/logs", "Activity"),
 )
 
 STYLE = """
@@ -418,6 +418,28 @@ def page(path, title, body, version=""):
       if (event.target === shade) closeCard();
     }});
   }}
+  // Timestamps ship as UTC in `datetime`; only the browser knows the viewer's
+  // zone, so the friendly text is filled in here. Absolute local time stays on
+  // the tooltip, and the ISO fallback survives with no JS.
+  function relTime(then, now) {{
+    var secs = Math.round((now - then) / 1000);
+    if (secs < 0) return "just now";
+    if (secs < 45) return "just now";
+    var mins = Math.round(secs / 60);
+    if (mins < 60) return mins + "m ago";
+    var hours = Math.round(mins / 60);
+    if (hours < 24) return hours + "h ago";
+    var days = Math.round(hours / 24);
+    if (days < 30) return days + "d ago";
+    return then.toLocaleDateString(undefined,
+      {{ year: "numeric", month: "short", day: "numeric" }});
+  }}
+  document.querySelectorAll("time[datetime]").forEach(function (el) {{
+    var then = new Date(el.getAttribute("datetime"));
+    if (isNaN(then.getTime())) return;
+    el.textContent = relTime(then, new Date());
+    el.title = then.toLocaleString();
+  }});
   if (window.hljs) {{
     document.querySelectorAll("pre.app-card-manifest code").forEach(function (el) {{
       hljs.highlightElement(el);

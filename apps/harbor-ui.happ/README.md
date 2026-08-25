@@ -18,6 +18,7 @@ no longer matches.
 | `catalog.py` | Catalog listing, app cards, fetch, updates |
 | `installed.py` | Installed-apps list and the app detail page |
 | `volumes.py` | Host volumes and harbor-managed storage |
+| `activity.py` | Unattended-run history and per-run output |
 
 ## Setup
 

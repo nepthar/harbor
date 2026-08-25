@@ -460,6 +460,15 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
 
     service["restart"] = run_unit.restart or "unless-stopped"
 
+    # Rotate container logs: dockerd's default json-file driver otherwise
+    # keeps every byte a container ever printed. Deliberately not a managed
+    # key, so a manifest's own `[run.<unit>.compose] logging` (or a happ that
+    # wants the daemon default back) overrides this in the passthrough below.
+    service["logging"] = {
+      "driver": "json-file",
+      "options": {"max-size": "10m", "max-file": "3"},
+    }
+
     mounts = [_mount_string(bound) for bound in run_unit.volumes.values()]
     # Harbor's own mounts come last, and stay out of `${happ.volumes}`: that
     # value tells a happ where the volumes it declared ended up, and it

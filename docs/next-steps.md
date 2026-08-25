@@ -74,7 +74,19 @@ submitted through harbord cannot answer one, and a question asked on every
   things that already exist, so an unauthenticated caller can now pull code
   from GitHub into the apps root. It still cannot stage or start it. FastAPI
   also left `/docs`, `/redoc`, and `/openapi.json` on that same surface.
-- **The Logs nav entry is a stub.** `/logs` renders “not built yet.”
+- **A `cmd` job holds the harbor lock for the command's whole run.** The CLI's
+  `harbor cmd` opts out of the lock (`holds_lock=False`) precisely because a
+  command can stream or be interactive; the daemon's `JobRunner` always locks,
+  so a command run from the UI blocks every other job until it exits. Fine for
+  the batch-style commands the UI is for; a long-runner would wedge the queue.
+  The runner also allocates no TTY, so a command that waits on stdin hangs
+  rather than prompting.
+- **Only daemon jobs file activity output.** A CLI invocation prints to the
+  operator's terminal and records only its status line in `activity.logtab`;
+  whether to also tee it into `$harbor/logs` is undecided. The UI's Activity
+  page therefore shows what harbord ran, not what the operator typed.
+- **The Activity page shows harbor runs, not container logs.** `harbor logs`
+  streams `docker compose logs`; the UI has no equivalent yet.
 - **harbor-ui has no tests.** Catalog update-check is covered on the daemon
   (`POST /catalog/check`); the happ itself is HTML builders and FastAPI
   routes with no TestClient coverage.

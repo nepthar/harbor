@@ -29,3 +29,7 @@ PORT                     = "8080"
 PYTHONUNBUFFERED         = "1"
 UV_PROJECT_ENVIRONMENT   = "/venv"
 UV_NO_MANAGED_PYTHON     = "1"
+
+[commands.test]
+cmd = ["/bin/sh", "-c", "echo 'Hello, world!'"]
+desc = "Test running a command"

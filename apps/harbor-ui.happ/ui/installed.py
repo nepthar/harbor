@@ -210,6 +210,42 @@ def routes_section(app):
   )
 
 
+def commands_section(app):
+  """A Run button per manifest `[commands]` entry, submitted as a `cmd` job.
+
+  Disabled until the app is staged, because a command runs inside the app's
+  own container -- there is nothing to run it in otherwise, and the job would
+  come back failed with exactly that message.
+  """
+  commands = app.get("commands") or []
+  if not commands:
+    return '<p class="empty">This app declares no commands.</p>'
+  staged = app.get("staged")
+  rows = []
+  for command in commands:
+    button = (
+      f'<form method="post" action="/apps/{quote(app["app_id"])}">'
+      f'<input type="hidden" name="action" value="cmd">'
+      f'<input type="hidden" name="command" value="{esc(command["name"])}">'
+      f'<button type="submit"{"" if staged else " disabled"}>Run</button></form>'
+    )
+    rows.append(
+      f'<tr><td class="key">{esc(command["name"])}</td>'
+      f'<td class="muted wrap">{esc(command.get("desc") or "")}</td>'
+      f'<td class="muted">{esc(command["unit"])}</td>'
+      f"<td>{button}</td></tr>"
+    )
+  table = (
+    '<div class="scroll"><table><thead><tr><th>Command</th><th>Description</th>'
+    "<th>Unit</th><th></th></tr></thead><tbody>"
+    + "".join(rows)
+    + "</tbody></table></div>"
+  )
+  if not staged:
+    table += '<p class="sub">Stage the app to run its commands.</p>'
+  return table
+
+
 def unit_volumes_table(unit):
   volumes = unit.get("volumes") or []
   if not volumes:
@@ -282,6 +318,8 @@ def app_page(app, job, notice):
     + f'<div class="card">{volumes_section(app)}</div>'
     + "<h2>Routes</h2>"
     + f'<div class="card">{routes_section(app)}</div>'
+    + "<h2>Commands</h2>"
+    + f'<div class="card">{commands_section(app)}</div>'
     + "<h2>Run units</h2>"
     + units_section(app)
   )

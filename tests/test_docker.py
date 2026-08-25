@@ -55,6 +55,47 @@ def test_a_refused_call_is_recorded_even_though_harbor_swallows_it(
   assert "docker ps -a" in expect_docker_calls.read_text()  # the real evidence
 
 
+def test_streamed_output_goes_to_the_sink_not_stdout(harbor_env, capsys):
+  """`sink_output` is how a job captures compose output no terminal will see."""
+  import io
+
+  from harbor.lib.docker import docker_run_command, sink_output
+
+  harbor_env.set_containers(
+    [{"app_id": "demo", "run_unit": "main", "id": "abc", "state": "running"}]
+  )
+  sink = io.StringIO()
+  with sink_output(sink):
+    # `ps` is the one thing the fake docker prints to stdout; json_output=False
+    # so it takes the streamed path the sink intercepts.
+    docker_run_command(["ps", "-a"], json_output=False, check=False)
+
+  assert "abc" in sink.getvalue()
+  # Nothing leaked to the terminal the operator does not have.
+  assert capsys.readouterr().out == ""
+
+
+def test_a_streamed_failure_hands_the_error_a_tail(harbor_env):
+  """With a sink set, `see the docker output above` points at nothing, so the
+  error carries the captured tail instead."""
+  import io
+
+  from harbor.lib.docker import DockerError, docker_run_command, sink_output
+
+  bin_dir = harbor_env.root / "bin"
+  (bin_dir / "docker").write_text(
+    "#!/usr/bin/env python3\n"
+    "import sys\n"
+    "print('boom: something broke')\n"
+    "sys.exit(1)\n"
+  )
+  (bin_dir / "docker").chmod(0o755)
+
+  with sink_output(io.StringIO()) as _, pytest.raises(DockerError) as excinfo:
+    docker_run_command(["compose", "up"], json_output=False, check=True)
+  assert "boom: something broke" in str(excinfo.value)
+
+
 @pytest.mark.docker
 def test_real_docker_up_and_down(tmp_path):
   if shutil.which("docker") is None:

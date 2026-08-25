@@ -166,6 +166,26 @@ class LogTab:
       raise ValueError(f"Key {key} not found in logtab {self.path} for deletion")
     LogTab.write_entry(self.path, key, "del", comment)
 
+  def history(self, prefix: str = "", suffix: str = "") -> list[tuple[str, Entry]]:
+    """Every `set` record matching, oldest first, without collapsing by key.
+
+    `load` answers "what is the value now"; this answers "what happened", which
+    is the whole reason the table keeps its history. `del`/`clr` records are
+    skipped: they end a value's life, they are not events of their own.
+    """
+    records: list[tuple[str, LogTab.Entry]] = []
+    with open(self.path) as f:
+      for line in f:
+        if line.startswith("#") or not line.strip():
+          continue
+        split = line.strip("\n").split(LogTab.FS, 3)
+        if len(split) != 4 or split[1] != "set":
+          continue
+        ts, _, key, value = split
+        if key.startswith(prefix) and key.endswith(suffix):
+          records.append((key, LogTab.Entry(ts=ts, value=value)))
+    return records
+
   def scan(
     self, prefix: str = "", suffix: str = "", contains: str = ""
   ) -> dict[str, Entry]:

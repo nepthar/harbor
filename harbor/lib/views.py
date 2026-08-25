@@ -14,6 +14,7 @@ from __future__ import annotations
 import difflib
 from typing import Any
 
+from harbor.lib import activity
 from harbor.lib.apps import AppID
 from harbor.lib.fetch import (
   USAGE,
@@ -288,6 +289,26 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
     }
     for tag, volume in sorted(ctx.config.host_volumes.items())
   ]
+
+
+def activity_view(
+  ctx: HarborCtx, *, app: str | None = None, limit: int = 20
+) -> list[dict[str, Any]]:
+  """Recorded unattended runs, newest first; see `lib/activity.py`.
+
+  `app` takes a full app id (or "harbor" for app-less runs); resolving a stem
+  is the caller's business, since a removed app's records outlive its bundle.
+  """
+  return activity.list_runs(ctx.config, app=app, limit=limit)
+
+
+def activity_log_view(ctx: HarborCtx, dirname: str, filename: str) -> dict[str, Any]:
+  """One run's output file, as `list_runs` named it in `log`."""
+  return {
+    "app_id": None if dirname == activity.HARBOR_DIR else dirname,
+    "file": f"{dirname}/{filename}",
+    "text": activity.read_run_log(ctx.config, dirname, filename),
+  }
 
 
 def app_view(app_id: AppID, ctx: HarborCtx) -> dict[str, Any]:

@@ -1332,3 +1332,62 @@ def test_every_command_refuses_to_run_as_root(harbor_env, monkeypatch):
     refused = harbor_env.run(*argv)
     assert refused.returncode == 1, argv
     assert "refuses to run as root" in refused.stderr, argv
+
+
+# --- activity --------------------------------------------------------------
+
+
+def _seed_activity(harbor_env, **kwargs):
+  """File one activity run straight through the lib, as harbord's job runner
+  would. CLI flows do not record activity themselves -- only daemon jobs do."""
+  from datetime import UTC, datetime, timedelta
+
+  from harbor.lib import activity
+  from harbor.lib.apps import AppID
+
+  config = load_config_file(harbor_env.config)
+  started = kwargs.get("started", datetime(2026, 8, 25, 3, 30, tzinfo=UTC))
+  app = kwargs.get("app", "ports-demo")
+  return activity.record_run(
+    config,
+    kwargs.get("verb", "start"),
+    {"app": app or ""},
+    app_id=AppID(app) if app else None,
+    status=kwargs.get("status", activity.OK),
+    started=started,
+    finished=started + timedelta(seconds=1),
+    output=kwargs.get("output", "up and running"),
+  )
+
+
+def test_activity_reports_nothing_when_empty(harbor_env):
+  result = harbor_env.run("activity")
+  assert result.returncode == 0
+  assert "No recorded activity" in result.stdout
+
+
+def test_activity_lists_recorded_runs(harbor_env):
+  _seed_activity(harbor_env, verb="start", app="ports-demo")
+  _seed_activity(harbor_env, verb="stop", app="ports-demo", status="error")
+
+  result = harbor_env.run("activity")
+  assert result.returncode == 0
+  assert "start ports-demo" in result.stdout
+  assert "stop ports-demo" in result.stdout
+  # Newest first.
+  assert result.stdout.index("stop") < result.stdout.index("start")
+
+
+def test_activity_show_prints_a_run_file(harbor_env):
+  _seed_activity(harbor_env, output="the captured output")
+  result = harbor_env.run("activity", "--show")
+  assert result.returncode == 0
+  assert "the captured output" in result.stdout
+
+
+def test_activity_filters_by_app_stem(harbor_env):
+  _seed_activity(harbor_env, app="ports-demo")
+  _seed_activity(harbor_env, app="routes-demo")
+  result = harbor_env.run("activity", "ports-demo")
+  assert "ports-demo" in result.stdout
+  assert "routes-demo" not in result.stdout

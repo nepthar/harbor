@@ -109,6 +109,10 @@ image = "alpine:latest"
         "image": "alpine:latest",
         "hostname": "main",
         "restart": "unless-stopped",
+        "logging": {
+          "driver": "json-file",
+          "options": {"max-size": "10m", "max-file": "3"},
+        },
         "labels": {
           "harbor.app_id": "demo",
           "harbor.version": "1.2.3",
@@ -299,6 +303,33 @@ compose = { healthcheck = { disable = true } }
     "interval": "10s",
   }
   assert services["side"]["healthcheck"] == {"disable": True}
+
+
+def test_container_log_rotation_defaults_on_and_is_overridable(tmp_path):
+  """Harbor caps container logs by default; a manifest's own logging wins."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+
+[run.side]
+image = "alpine"
+compose = { logging = { driver = "journald" } }
+""",
+  )
+
+  services = make_compose_dict(stack, run_data(stack))["services"]
+
+  assert services["main"]["logging"] == {
+    "driver": "json-file",
+    "options": {"max-size": "10m", "max-file": "3"},
+  }
+  # Passthrough replaces the whole key, so a happ can opt out entirely.
+  assert services["side"]["logging"] == {"driver": "journald"}
 
 
 def test_compose_passthrough_may_not_shadow_harbor_managed_keys():

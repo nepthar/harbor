@@ -2,6 +2,7 @@
 
 from urllib.parse import quote, unquote
 
+import activity
 import catalog
 import installed
 import volumes
@@ -129,16 +130,15 @@ def catalog_get(
 
 
 @app.get("/logs")
-def logs():
-  version, unreachable = harbor_version("/logs", "Logs")
+def logs(app: str = "", file: str = ""):
+  version, unreachable = harbor_version("/logs", "Activity")
   if unreachable:
     return unreachable
-  return html(
-    "/logs",
-    "Logs",
-    '<div class="card"><p class="empty">Logs is not built yet.</p></div>',
-    version,
-  )
+  try:
+    body = activity.page(app, file)
+  except ApiError as e:
+    return html("/logs", "Activity", error_card(e), version)
+  return html("/logs", "Activity", body, version)
 
 
 @app.post("/catalog")
@@ -201,6 +201,13 @@ async def post_app(app_id: str, request: Request):
   try:
     if action in ("start", "stop", "stage"):
       job = api("/jobs", "POST", {"verb": action, "args": {"app": app_id}})
+      return see(f"{here}?job={quote(job['id'])}")
+    if action == "cmd":
+      job = api(
+        "/jobs",
+        "POST",
+        {"verb": "cmd", "args": {"app": app_id, "command": field(form, "command")}},
+      )
       return see(f"{here}?job={quote(job['id'])}")
     if action == "config":
       # Blank means "leave it alone" -- especially for secrets, whose
