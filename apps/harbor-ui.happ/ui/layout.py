@@ -4,6 +4,7 @@ import html
 
 NAV = (
   ("/", "Dashboard"),
+  ("/snapshots", "Snapshots"),
   ("/apps", "Apps"),
   ("/volumes", "Volumes"),
   ("/catalog", "Catalog"),
@@ -108,11 +109,17 @@ table { width: 100%; border-collapse: collapse; }
 th {
   text-align: left; font-size: 11px; text-transform: uppercase;
   letter-spacing: 0.04em; color: var(--muted); font-weight: 500;
-  padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  padding: 6px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  vertical-align: middle;
 }
-td { padding: 11px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td {
+  padding: 5px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  vertical-align: middle;
+}
 tr:last-child td { border-bottom: none; }
 td.name { font-weight: 500; }
+/* Trailing action: hug the right edge. Other columns share the leftover width. */
+th.act, td.act { width: 1%; text-align: right; }
 .sub { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
@@ -143,7 +150,8 @@ input[type=text], input[type=password], input:not([type]) {
 label { color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
 button {
   background: var(--accent); color: var(--accent-fg); border: 0;
-  border-radius: 6px; padding: 7px 13px; font: inherit; cursor: pointer;
+  border-radius: 6px; padding: 3px 10px; font: inherit; line-height: 1.3;
+  cursor: pointer;
 }
 button.link {
   background: none; color: var(--muted); padding: 0; text-decoration: underline;
@@ -170,7 +178,7 @@ table.kv td.key .sub { font-weight: 400; }
 table.kv td.field { width: 1%; white-space: nowrap; }
 .cfg-edit { display: flex; align-items: center; gap: 8px; }
 .cfg-edit input { width: 16em; max-width: 100%; }
-.cfg-save { visibility: hidden; padding: 5px 10px; }
+.cfg-save { visibility: hidden; padding: 3px 10px; }
 .cfg-edit.is-dirty .cfg-save { visibility: visible; }
 select {
   background: var(--bg); color: var(--fg); border: 1px solid var(--border);
@@ -185,6 +193,8 @@ pre {
 .error li { margin-bottom: 4px; }
 td.name a { color: inherit; text-decoration: none; }
 td.name a:hover { text-decoration: underline; }
+td.path a { color: inherit; }
+td.path a:hover { color: var(--fg); }
 .notice {
   border: 1px solid var(--ok); border-radius: 8px; padding: 10px 14px;
   margin-bottom: 16px; background: var(--panel);
@@ -220,6 +230,22 @@ details.reveal > summary:hover { color: var(--fg); }
   background: color-mix(in srgb, var(--void) 62%, transparent);
 }
 .shade[hidden] { display: none; }
+.cmd-modal {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; width: min(36rem, 100%);
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+  max-height: min(80vh, 100%);
+}
+.cmd-modal h2 { margin: 0; font-size: 17px; }
+.cmd-modal #cmd-desc { margin: 0; }
+.cmd-bar { width: 100%; }
+.cmd-bar #cmd-command { flex: 0 0 auto; white-space: nowrap; }
+.cmd-bar #cmd-args::placeholder { color: var(--muted); }
+.cmd-out {
+  margin: 0; min-height: 12rem; max-height: 40vh; overflow: auto;
+  padding: 10px; background: var(--bg); border-radius: 6px;
+  font-size: 12px; white-space: pre-wrap;
+}
 .app-card {
   display: flex; flex-direction: row; align-items: stretch;
   background: var(--panel); border: 1px solid var(--border);

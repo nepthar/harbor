@@ -58,12 +58,14 @@ def apps_table(apps):
 
 
 def lifecycle_bar(app):
-  """Start, stop and stage. Each posts a job and comes back with its id."""
+  """Start, stop, stage, snapshot. Each posts a job and comes back with its id."""
   running = app["status"] == "running"
+  staged = app.get("staged")
   buttons = [
     ("start", "Start", not running),
     ("stop", "Stop", running),
     ("stage", "Re-stage", True),
+    ("snapshot", "Snapshot", staged),
   ]
   return (
     '<div class="row actions">'
@@ -191,11 +193,16 @@ def routes_section(app):
       for tag in providers
     )
     url = route.get("published_url") or route.get("url")
+    url_cell = (
+      f'<a href="{esc(url)}" target="_blank" rel="noopener">{esc(url)}</a>'
+      if url
+      else "—"
+    )
     rows.append(
       f'<tr><td class="key">{esc(route["name"])}</td>'
       f'<td class="muted">{esc(route["unit"])}:{esc(route["container_port"])}'
       f" &rarr; {esc(route['host_port'] or 'unallocated')}</td>"
-      f'<td class="path muted">{esc(url or "—")}</td>'
+      f'<td class="path muted">{url_cell}</td>'
       f'<td><form method="post" action="/apps/{quote(app["app_id"])}" class="row">'
       f'<input type="hidden" name="action" value="route">'
       f'<input type="hidden" name="route" value="{esc(route["name"])}">'
@@ -211,7 +218,9 @@ def routes_section(app):
 
 
 def commands_section(app):
-  """A Run button per manifest `[commands]` entry, submitted as a `cmd` job.
+  """A Run button per manifest `[commands]` entry. Opens a modal that posts
+  a `cmd` job and tails its activity file until the job ends or the modal
+  closes.
 
   Disabled until the app is staged, because a command runs inside the app's
   own container -- there is nothing to run it in otherwise, and the job would
@@ -224,26 +233,158 @@ def commands_section(app):
   rows = []
   for command in commands:
     button = (
-      f'<form method="post" action="/apps/{quote(app["app_id"])}">'
-      f'<input type="hidden" name="action" value="cmd">'
-      f'<input type="hidden" name="command" value="{esc(command["name"])}">'
-      f'<button type="submit"{"" if staged else " disabled"}>Run</button></form>'
+      f'<button type="button" class="cmd-open" data-command="{esc(command["name"])}"'
+      f' data-desc="{esc(command.get("desc") or "")}"'
+      f"{'' if staged else ' disabled'}>Run</button>"
     )
     rows.append(
       f'<tr><td class="key">{esc(command["name"])}</td>'
       f'<td class="muted wrap">{esc(command.get("desc") or "")}</td>'
       f'<td class="muted">{esc(command["unit"])}</td>'
-      f"<td>{button}</td></tr>"
+      f'<td class="act">{button}</td></tr>'
     )
   table = (
     '<div class="scroll"><table><thead><tr><th>Command</th><th>Description</th>'
-    "<th>Unit</th><th></th></tr></thead><tbody>"
+    '<th>Unit</th><th class="act"></th></tr></thead><tbody>'
     + "".join(rows)
     + "</tbody></table></div>"
   )
   if not staged:
     table += '<p class="sub">Stage the app to run its commands.</p>'
   return table
+
+
+def cmd_modal(app):
+  """Dialog: name the extra argv, run, tail the activity file, close anytime."""
+  title = esc(app.get("display_name") or app["app_id"])
+  return (
+    f'<div id="cmd-shade" class="shade" hidden data-app="{esc(app["app_id"])}">'
+    '<div class="cmd-modal" role="dialog" aria-modal="true" aria-labelledby="cmd-app">'
+    f'<h2 id="cmd-app">{title}</h2>'
+    '<p class="muted" id="cmd-desc" hidden></p>'
+    '<div class="row cmd-bar">'
+    '<span class="mono" id="cmd-command"></span>'
+    '<input id="cmd-args" class="grow" placeholder="args..." autocomplete="off">'
+    '<button type="button" id="cmd-go">Run</button>'
+    '<button type="button" id="cmd-close" hidden>Close</button>'
+    "</div>"
+    '<pre id="cmd-out" class="cmd-out"></pre>'
+    "</div></div>" + _CMD_SCRIPT
+  )
+
+
+_CMD_SCRIPT = """
+<script>
+(function () {
+  var shade = document.getElementById("cmd-shade");
+  if (!shade) return;
+  var appId = shade.getAttribute("data-app");
+  var commandEl = document.getElementById("cmd-command");
+  var descEl = document.getElementById("cmd-desc");
+  var argsEl = document.getElementById("cmd-args");
+  var outEl = document.getElementById("cmd-out");
+  var go = document.getElementById("cmd-go");
+  var close = document.getElementById("cmd-close");
+  var timer = null;
+  var jobId = null;
+
+  function stopPoll() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function hide() {
+    stopPoll();
+    shade.hidden = true;
+  }
+
+  function showText(text) {
+    outEl.textContent = text || "";
+    outEl.scrollTop = outEl.scrollHeight;
+  }
+
+  function activityUrl(log) {
+    var parts = log.split("/");
+    return "/activity/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts.slice(1).join("/"));
+  }
+
+  function pullLog(log) {
+    if (!log) return Promise.resolve();
+    return fetch(activityUrl(log)).then(function (r) {
+      if (!r.ok) return;
+      return r.json().then(function (body) {
+        if (body && body.text != null) showText(body.text);
+      });
+    }).catch(function () {});
+  }
+
+  function poll() {
+    if (!jobId) return;
+    fetch("/jobs/" + encodeURIComponent(jobId)).then(function (r) {
+      return r.json();
+    }).then(function (job) {
+      if (job.error && !job.log) showText(job.error);
+      var done = job.state === "done" || job.state === "failed";
+      return pullLog(job.log).then(function () {
+        if (done) {
+          stopPoll();
+          if (!job.log && job.error) showText(job.error);
+        }
+      });
+    }).catch(function () {});
+  }
+
+  document.querySelectorAll(".cmd-open").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      stopPoll();
+      jobId = null;
+      commandEl.textContent = btn.getAttribute("data-command") || "";
+      descEl.textContent = btn.getAttribute("data-desc") || "";
+      descEl.hidden = !descEl.textContent;
+      argsEl.value = "";
+      argsEl.disabled = false;
+      outEl.textContent = "";
+      go.hidden = false;
+      go.disabled = false;
+      close.hidden = true;
+      shade.hidden = false;
+      argsEl.focus();
+    });
+  });
+
+  close.addEventListener("click", hide);
+  shade.addEventListener("click", function (event) {
+    if (event.target === shade) hide();
+  });
+
+  go.addEventListener("click", function () {
+    var args = { app: appId, command: commandEl.textContent };
+    if (argsEl.value.trim()) args.args = argsEl.value;
+    go.disabled = true;
+    argsEl.disabled = true;
+    close.hidden = false;
+    go.hidden = true;
+    showText("queued\\u2026");
+    fetch("/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ verb: "cmd", args: args })
+    }).then(function (r) {
+      return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        showText(res.body.error || "failed");
+        return;
+      }
+      jobId = res.body.id;
+      timer = setInterval(poll, 1000);
+      poll();
+    }).catch(function (err) {
+      showText(String(err));
+    });
+  });
+})();
+</script>
+"""
 
 
 def unit_volumes_table(unit):
@@ -322,6 +463,7 @@ def app_page(app, job, notice):
     + f'<div class="card">{commands_section(app)}</div>'
     + "<h2>Run units</h2>"
     + units_section(app)
+    + cmd_modal(app)
   )
 
 

@@ -84,10 +84,7 @@ def test_a_streamed_failure_hands_the_error_a_tail(harbor_env):
 
   bin_dir = harbor_env.root / "bin"
   (bin_dir / "docker").write_text(
-    "#!/usr/bin/env python3\n"
-    "import sys\n"
-    "print('boom: something broke')\n"
-    "sys.exit(1)\n"
+    "#!/usr/bin/env python3\nimport sys\nprint('boom: something broke')\nsys.exit(1)\n"
   )
   (bin_dir / "docker").chmod(0o755)
 

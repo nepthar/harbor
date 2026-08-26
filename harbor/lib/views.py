@@ -25,6 +25,8 @@ from harbor.lib.fetch import (
 )
 from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
+from harbor.lib.lifecycle.restore import snapshot_names, snapshotted_app_ids
+from harbor.lib.lifecycle.snapshot import snapshot_archive, split_snapshot_name
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
 from harbor.lib.run_layout import AppRunData, load_run_data
@@ -289,6 +291,30 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
     }
     for tag, volume in sorted(ctx.config.host_volumes.items())
   ]
+
+
+def snapshots_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """Every snapshot archive, newest name first.
+
+  Names sort as timestamps, so this is recency without opening the tarball.
+  A listing that extracted each archive would make the page pay for restore.
+  """
+  rows = []
+  for app_id in snapshotted_app_ids(ctx):
+    for name in snapshot_names(app_id, ctx):
+      taken_at, tag = split_snapshot_name(name)
+      archive = snapshot_archive(ctx.config.snapshot_root, app_id, name)
+      rows.append(
+        {
+          "app_id": str(app_id),
+          "name": name,
+          "taken_at": taken_at,
+          "tag": tag,
+          "bytes": archive.stat().st_size if archive.is_file() else None,
+        }
+      )
+  rows.sort(key=lambda row: row["name"], reverse=True)
+  return rows
 
 
 def activity_view(

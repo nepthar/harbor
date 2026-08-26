@@ -5,10 +5,11 @@ from urllib.parse import quote, unquote
 import activity
 import catalog
 import installed
+import snapshots
 import volumes
 from api import ApiError, api, where
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from layout import error_card, esc, page
 
 app = FastAPI()
@@ -73,6 +74,36 @@ def apps_list():
     return err
   title, body, version = installed.list_page(version)
   return html("/apps", title, body, version)
+
+
+@app.get("/snapshots")
+def snapshots_get(job: str = "", ok: str | None = None, err: str | None = None):
+  version, unreachable = harbor_version("/snapshots", "Snapshots")
+  if unreachable:
+    return unreachable
+  try:
+    body = snapshots.page(banner(ok, err), job)
+  except ApiError as e:
+    return html("/snapshots", "Snapshots", error_card(e), version)
+  return html("/snapshots", "Snapshots", body, version)
+
+
+@app.post("/snapshots")
+async def post_snapshots(request: Request):
+  form = await request.form()
+  app_id = field(form, "app")
+  name = field(form, "snapshot")
+  if not app_id or not name:
+    return see("/snapshots")
+  try:
+    job = api(
+      "/jobs",
+      "POST",
+      {"verb": "restore", "args": {"app": app_id, "snapshot": name}},
+    )
+    return see(f"/snapshots?job={quote(job['id'])}")
+  except ApiError as e:
+    return see(f"/snapshots?err={quote(str(e))}")
 
 
 @app.get("/apps/{app_id}")
@@ -199,7 +230,7 @@ async def post_app(app_id: str, request: Request):
   here = f"/apps/{quote(app_id)}"
   action = field(form, "action")
   try:
-    if action in ("start", "stop", "stage"):
+    if action in ("start", "stop", "stage", "snapshot"):
       job = api("/jobs", "POST", {"verb": action, "args": {"app": app_id}})
       return see(f"{here}?job={quote(job['id'])}")
     if action == "cmd":
@@ -234,6 +265,40 @@ async def post_app(app_id: str, request: Request):
     return see(here)
   except ApiError as e:
     return see(f"{here}?err={quote(str(e))}")
+
+
+@app.post("/jobs")
+async def proxy_job_submit(request: Request):
+  """Forward a job from the command modal. JSON in, JSON out."""
+  try:
+    body = await request.json()
+  except Exception:
+    return JSONResponse({"error": "Expected a JSON object"}, status_code=400)
+  verb = body.get("verb") if isinstance(body, dict) else None
+  args = body.get("args") if isinstance(body, dict) else None
+  if not verb or not isinstance(args, dict):
+    return JSONResponse({"error": "Expected verb and args"}, status_code=400)
+  try:
+    job = api("/jobs", "POST", {"verb": verb, "args": args})
+  except ApiError as e:
+    return JSONResponse({"error": str(e)}, status_code=400)
+  return JSONResponse(job, status_code=202)
+
+
+@app.get("/jobs/{job_id}")
+def proxy_job(job_id: str):
+  try:
+    return api(f"/jobs/{quote(job_id)}")
+  except ApiError as e:
+    return JSONResponse({"error": str(e)}, status_code=404)
+
+
+@app.get("/activity/{dirname}/{filename}")
+def proxy_activity_log(dirname: str, filename: str):
+  try:
+    return api(f"/activity/{quote(dirname)}/{quote(filename)}")
+  except ApiError as e:
+    return JSONResponse({"error": str(e)}, status_code=404)
 
 
 @app.get("/{path:path}")
