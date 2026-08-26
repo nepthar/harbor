@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harbor.lib.apps import AppID, read_app_actions
-from harbor.lib.docker import HarborRunUnitStatus
+from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
 
 if TYPE_CHECKING:
   from harbor.lib.harbor import HarborCtx
@@ -87,12 +87,12 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
     if ctx.config.run_root.is_dir()
     else set()
   )
-  docker = ctx.docker_container_statuses()
-  db_ids = set(ctx.harbor_db().app_ids())
+  docker = load_harbor_run_unit_status()
+  db_ids = set(ctx.harbor_db.app_ids())
   config_ids = ctx.config.app_config_ids()
   app_ids = set(bundles) | run_ids | set(docker) | db_ids | config_ids
 
-  actions = read_app_actions(ctx.config)
+  actions = read_app_actions(ctx)
 
   observations: dict[str, AppObservation] = {}
   for raw_id in app_ids:

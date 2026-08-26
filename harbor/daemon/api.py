@@ -42,7 +42,8 @@ from harbor.lib.stack import AppStack
 # Bumped when a response shape changes in a way a client would notice. The web
 # UI ships separately from the daemon, so it has to be able to tell.
 # 3: /activity endpoints; jobs carry a `log` path.
-API_VERSION = 3
+# 4: /snapshots; restore is a job.
+API_VERSION = 4
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -86,9 +87,9 @@ class FetchTarget(BaseModel):
   """A github: target to look at, as the UI sends it.
 
   A URL, which the rest of this API refuses to take -- see the note above
-  `VERBS` in jobs.py. It is allowed here because looking is not installing:
-  the preview downloads to a scratch directory, reads the manifest, and throws
-  the copy away. Nothing it fetches survives the request.
+  `VERBS` in `harbor.daemon.jobs`. It is allowed here because looking is not
+  installing: the preview downloads to a scratch directory, reads the manifest,
+  and throws the copy away. Nothing it fetches survives the request.
   """
 
   model_config = ConfigDict(extra="forbid")
@@ -250,13 +251,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     """
     try:
       resolved = ctx.resolve_app(app_id)
-      stack = ctx.staged_stack(resolved) or _bundle_stack(resolved, ctx)
-      if body.set:
-        apply_config_sets(stack, list(body.set.items()), ctx)
-      for volume_name, tag in body.bind.items():
-        bind(stack, volume_name, tag, ctx)
-      for route_name, tag in body.route.items():
-        _assign_route(resolved, stack, route_name, tag, ctx)
+      with ctx.locked(f"config {resolved}", resolved):
+        stack = ctx.staged_stack(resolved) or _bundle_stack(resolved, ctx)
+        if body.set:
+          apply_config_sets(stack, list(body.set.items()), ctx)
+        for volume_name, tag in body.bind.items():
+          bind(stack, volume_name, tag, ctx)
+        for route_name, tag in body.route.items():
+          _assign_route(resolved, stack, route_name, tag, ctx)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return views.app_view(resolved, _ctx_again(ctx))
@@ -270,19 +272,24 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
   def list_host_volumes(ctx: Ctx) -> dict:
     return {"host_volumes": views.host_volumes_view(ctx)}
 
+  @app.get("/snapshots", tags=["snapshots"])
+  def list_snapshots(ctx: Ctx) -> dict:
+    return {"snapshots": views.snapshots_view(ctx)}
+
   @app.post("/host-volumes", status_code=201, tags=["host volumes"])
   def create_host_volume(body: NewHostVolume, ctx: Ctx) -> dict:
     # Config edits are milliseconds, so they answer inline rather than as a
     # job. They still take the harbor lock, so one running behind a snapshot
     # waits and then fails naming the holder.
     try:
-      add_host_volume(
-        ctx,
-        body.tag,
-        body.path,
-        readonly=body.readonly,
-        require_mount=body.require_mount,
-      )
+      with ctx.harbor_lock(f"host-volume add {body.tag}"):
+        add_host_volume(
+          ctx,
+          body.tag,
+          body.path,
+          readonly=body.readonly,
+          require_mount=body.require_mount,
+        )
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
@@ -292,13 +299,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     if tag not in ctx.config.host_volumes:
       raise HTTPException(404, f"No host volume {tag!r}")
     try:
-      set_host_volume(
-        ctx,
-        tag,
-        body.path,
-        readonly=body.readonly,
-        require_mount=body.require_mount,
-      )
+      with ctx.harbor_lock(f"host-volume set {tag}"):
+        set_host_volume(
+          ctx,
+          tag,
+          body.path,
+          readonly=body.readonly,
+          require_mount=body.require_mount,
+        )
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}
@@ -308,7 +316,8 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     if tag not in ctx.config.host_volumes:
       raise HTTPException(404, f"No host volume {tag!r}")
     try:
-      remove_host_volume(ctx, tag)
+      with ctx.harbor_lock(f"host-volume rm {tag}"):
+        remove_host_volume(ctx, tag)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
     return {"host_volumes": views.host_volumes_view(_ctx_again(ctx))}

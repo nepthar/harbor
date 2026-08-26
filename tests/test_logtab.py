@@ -250,7 +250,9 @@ def test_load_skips_malformed_line(tmp_path, caplog):
 
 
 # ── key / value validation ────────────────────────────────────────────────
-@pytest.mark.parametrize("key", ["", "has space", "bad!char", "x" * 513])
+@pytest.mark.parametrize(
+  "key", ["", "has space", "bad!char", "x" * (LogTab.MAX_KEY_LENGTH + 1)]
+)
 def test_write_rejects_invalid_key(tab, key):
   with pytest.raises(ValueError):
     tab.write(key, "v")
@@ -269,7 +271,7 @@ def test_write_rejects_newline_in_value(tab):
 
 def test_write_rejects_oversized_value(tab):
   with pytest.raises(ValueError):
-    tab.write("a", "x" * 1025)
+    tab.write("a", "x" * (LogTab.MAX_VAL_LENGTH + 1))
 
 
 def test_value_may_contain_tabs(tab):
@@ -283,3 +285,198 @@ def test_empty_value_round_trips(tab):
   tab.write("a", "")
   assert tab.read("a").value == ""
   assert _values(tab.load()) == {"a": ""}
+
+
+# ── compact ───────────────────────────────────────────────────────────────
+def _data_lines(path):
+  return [ln for ln in path.read_text().splitlines() if ln and not ln.startswith("#")]
+
+
+def test_compact_rejects_negative_history(tab):
+  with pytest.raises(ValueError, match="history must be >= 0"):
+    tab.compact(-1)
+
+
+def test_compact_noop_when_fewer_records_than_history(tab):
+  tab.write("a", "1")
+  tab.write("b", "2")
+  before = tab.path.read_text()
+  tab.compact(5)
+  assert tab.path.read_text() == before
+
+
+def test_compact_zero_collapses_overwrites(tab):
+  tab.write("a", "1")
+  tab.write("a", "2")
+  tab.write("b", "1")
+  tab.compact(0)
+  assert _values(tab.load()) == {"a": "2", "b": "1"}
+  body = _data_lines(tab.path)
+  assert len(body) == 2
+  assert {ln.split("\t")[2] for ln in body} == {"a", "b"}
+  text = tab.path.read_text()
+  assert text.startswith("# Compacted logtab at ")
+  assert text.strip().endswith("# end compacted entries")
+  assert not tab.path.with_name(tab.path.name + ".compact").exists()
+
+
+def test_compact_preserves_last_timestamps(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\ta\t1\n"
+    "2026-01-01T00:00:01Z\tset\ta\t2\n"
+    "2026-01-01T00:00:02Z\tset\tb\t1\n"
+  )
+  LogTab(path).compact(0)
+  by_key = {ln.split("\t")[2]: ln.split("\t") for ln in _data_lines(path)}
+  assert by_key["a"][0] == "2026-01-01T00:00:01Z"
+  assert by_key["a"][3] == "2"
+  assert by_key["b"][0] == "2026-01-01T00:00:02Z"
+
+
+def test_compact_backfills_keys_missing_from_tail(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\tquiet\t1\n"
+    "2026-01-01T00:00:01Z\tset\tchatty\t1\n"
+    "2026-01-01T00:00:02Z\tset\tchatty\t2\n"
+    "2026-01-01T00:00:03Z\tset\tchatty\t3\n"
+  )
+  LogTab(path).compact(2)
+  body = _data_lines(path)
+  assert [ln.split("\t")[1:4] for ln in body] == [
+    ["set", "quiet", "1"],
+    ["set", "chatty", "2"],
+    ["set", "chatty", "3"],
+  ]
+  assert _values(LogTab(path).load()) == {"quiet": "1", "chatty": "3"}
+  assert [k for k, _ in LogTab(path).history()] == ["quiet", "chatty", "chatty"]
+
+
+def test_compact_tail_delete_is_not_resurrected(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\ta\t1\n"
+    "2026-01-01T00:00:01Z\tset\tb\t1\n"
+    "2026-01-01T00:00:02Z\tdel\ta\t\n"
+  )
+  LogTab(path).compact(1)
+  assert _values(LogTab(path).load()) == {"b": "1"}
+  ops = [ln.split("\t")[1:3] for ln in _data_lines(path)]
+  assert ops == [["set", "b"], ["del", "a"]]
+
+
+def test_compact_clr_in_tail_does_not_backfill_cleared_keys(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\ta/1\tx\n"
+    "2026-01-01T00:00:01Z\tset\ta/2\ty\n"
+    "2026-01-01T00:00:02Z\tset\tb/1\tz\n"
+    "2026-01-01T00:00:03Z\tclr\ta/\t\n"
+  )
+  LogTab(path).compact(1)
+  assert _values(LogTab(path).load()) == {"b/1": "z"}
+  ops = [ln.split("\t")[1:3] for ln in _data_lines(path)]
+  assert ops == [["set", "b/1"], ["clr", "a/"]]
+
+
+def test_compact_zero_drops_delete_history(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\ta\t1\n"
+    "2026-01-01T00:00:01Z\tdel\ta\t\n"
+    "2026-01-01T00:00:02Z\tset\tb\t1\n"
+  )
+  LogTab(path).compact(0)
+  assert _data_lines(path)[0].split("\t")[1:4] == ["set", "b", "1"]
+  assert _values(LogTab(path).load()) == {"b": "1"}
+
+
+def test_write_after_compact_appends_past_end_comment(tab):
+  tab.write("a", "1")
+  tab.compact(0)
+  tab.write("b", "2")
+  text = tab.path.read_text()
+  end = text.index("# end compacted entries")
+  assert "\tset\tb\t2" in text[end:]
+  assert _values(tab.load()) == {"a": "1", "b": "2"}
+
+
+# ── auto-compact ──────────────────────────────────────────────────────────
+def _ops(path):
+  return [ln.split("\t")[1:3] for ln in _data_lines(path)]
+
+
+def test_auto_compact_off_by_default(tab):
+  tab.write("a", "1")
+  tab.write("a", "2")
+  tab.delete("a")
+  assert _ops(tab.path) == [["set", "a"], ["set", "a"], ["del", "a"]]
+
+
+def test_auto_compact_skips_when_under_threshold(tmp_path):
+  path = tmp_path / "t.logtab"
+  tab = LogTab(path, auto_compact_size_bytes=10_000)
+  tab.write("a", "1")
+  tab.write("a", "2")
+  assert _ops(path) == [["set", "a"], ["set", "a"]]
+  assert "# Compacted logtab at " not in path.read_text()
+
+
+def test_auto_compact_does_not_run_on_read(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n2026-01-01T00:00:00Z\tset\ta\t1\n2026-01-01T00:00:01Z\tset\ta\t2\n"
+  )
+  before = path.read_text()
+  tab = LogTab(path, auto_compact_size_bytes=1)
+  assert tab.read("a").value == "2"
+  assert _values(tab.load()) == {"a": "2"}
+  assert path.read_text() == before
+
+
+def test_auto_compact_write_collapses_history(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n2026-01-01T00:00:00Z\tset\ta\t1\n2026-01-01T00:00:01Z\tset\ta\t2\n"
+  )
+  tab = LogTab(path, auto_compact_size_bytes=path.stat().st_size)
+  tab.write("b", "1")
+  assert _values(tab.load()) == {"a": "2", "b": "1"}
+  assert _ops(path) == [["set", "a"], ["set", "b"]]
+  text = path.read_text()
+  assert text.startswith("# Compacted logtab at ")
+  assert text.strip().endswith("# end compacted entries")
+
+
+def test_auto_compact_delete_drops_dead_keys(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\ta\t1\n"
+    "2026-01-01T00:00:01Z\tset\ta\t2\n"
+    "2026-01-01T00:00:02Z\tset\tb\t1\n"
+  )
+  tab = LogTab(path, auto_compact_size_bytes=path.stat().st_size)
+  tab.delete("b")
+  assert _values(tab.load()) == {"a": "2"}
+  assert _ops(path) == [["set", "a"]]
+
+
+def test_auto_compact_clear_drops_matching_prefix(tmp_path):
+  path = tmp_path / "t.logtab"
+  path.write_text(
+    "# header\n"
+    "2026-01-01T00:00:00Z\tset\ta/1\tx\n"
+    "2026-01-01T00:00:01Z\tset\ta/2\ty\n"
+    "2026-01-01T00:00:02Z\tset\tb/1\tz\n"
+  )
+  tab = LogTab(path, auto_compact_size_bytes=path.stat().st_size)
+  tab.clear("a/")
+  assert _values(tab.load()) == {"b/1": "z"}
+  assert _ops(path) == [["set", "b/1"]]

@@ -22,11 +22,11 @@ no longer matches.
 
 ## Setup
 
-It needs `harbord` running on the host, and `$harbor/conn` bound in. For now
+It needs `harbord` running on the host, and `$harbor/var/conn` bound in. For now
 that is manual — declare the directory as a host volume:
 
 ```
-harbor config-sys host-volume --add harbor_conn=${harbor_root}/conn
+harbor config-sys host-volume --add harbor_conn=${harbor_root}/var/conn
 harbor config harbor-ui --bind conn=harbor_conn
 harbor start harbor-ui
 ```

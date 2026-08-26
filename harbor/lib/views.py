@@ -25,6 +25,8 @@ from harbor.lib.fetch import (
 )
 from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
+from harbor.lib.lifecycle.restore import snapshot_names, snapshotted_app_ids
+from harbor.lib.lifecycle.snapshot import snapshot_archive, split_snapshot_name
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
 from harbor.lib.run_layout import AppRunData, load_run_data
@@ -219,7 +221,7 @@ def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
   Fetch records the full github: spec; the catalog only needs the publisher.
   Anything else -- a path, a missing record, a spec we cannot read -- is local.
   """
-  record = ctx.harbor_db().get_app_source(app_id)
+  record = ctx.harbor_db.get_app_source(app_id)
   if record is None:
     return "local"
   spec = record["source"]
@@ -291,6 +293,30 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   ]
 
 
+def snapshots_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """Every snapshot archive, newest name first.
+
+  Names sort as timestamps, so this is recency without opening the tarball.
+  A listing that extracted each archive would make the page pay for restore.
+  """
+  rows = []
+  for app_id in snapshotted_app_ids(ctx):
+    for name in snapshot_names(app_id, ctx):
+      taken_at, tag = split_snapshot_name(name)
+      archive = snapshot_archive(ctx.config.snapshot_root, app_id, name)
+      rows.append(
+        {
+          "app_id": str(app_id),
+          "name": name,
+          "taken_at": taken_at,
+          "tag": tag,
+          "bytes": archive.stat().st_size if archive.is_file() else None,
+        }
+      )
+  rows.sort(key=lambda row: row["name"], reverse=True)
+  return rows
+
+
 def activity_view(
   ctx: HarborCtx, *, app: str | None = None, limit: int = 20
 ) -> list[dict[str, Any]]:
@@ -299,7 +325,7 @@ def activity_view(
   `app` takes a full app id (or "harbor" for app-less runs); resolving a stem
   is the caller's business, since a removed app's records outlive its bundle.
   """
-  return activity.list_runs(ctx.config, app=app, limit=limit)
+  return activity.list_runs(ctx, app=app, limit=limit)
 
 
 def activity_log_view(ctx: HarborCtx, dirname: str, filename: str) -> dict[str, Any]:
@@ -307,7 +333,7 @@ def activity_log_view(ctx: HarborCtx, dirname: str, filename: str) -> dict[str, 
   return {
     "app_id": None if dirname == activity.HARBOR_DIR else dirname,
     "file": f"{dirname}/{filename}",
-    "text": activity.read_run_log(ctx.config, dirname, filename),
+    "text": activity.read_run_log(ctx, dirname, filename),
   }
 
 

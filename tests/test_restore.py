@@ -64,7 +64,7 @@ def test_snapshot_copies_data_volumes_in_a_container(harbor_env):
   archive = Path(taken.stdout.split("written to ")[1].strip())
 
   copy = next(args for args in _root_runs(harbor_env) if "cp -a -- " in args[-1])
-  staged = harbor_env.root / "temp" / "current_snapshot" / "volumes" / "data"
+  staged = harbor_env.root / "var" / "temp" / "current_snapshot" / "volumes" / "data"
   assert copy[:2] == ["run", "--rm"]
   assert copy[-3:-1] == ["sh", "-c"]
   assert copy[copy.index("sh") - 1] == ROOTFS_IMAGE
@@ -130,7 +130,7 @@ def test_restore_rebuilds_a_removed_app_from_its_snapshot(harbor_env):
   assert harbor_env.read_db()["routes"][app_id]["web"]["host_port"] == 41000
 
   ctx = HarborCtx(load_config_file(harbor_env.config))
-  assert read_last_app_action(app_id, ctx.config) == f"restored - {name}"
+  assert read_last_app_action(app_id, ctx) == f"restored - {name}"
 
   assert harbor_env.run("start", app_id).returncode == 0
 
@@ -271,13 +271,20 @@ def test_restore_declined_at_the_prompt_changes_nothing(harbor_env):
   assert marker.exists()
 
 
-def test_snapshot_refuses_while_containers_are_running(harbor_env):
+def test_snapshot_stops_and_restarts_a_running_app(harbor_env):
+  """Snapshot holds the app, releases harbor during the copy, and brings it back."""
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
 
-  refused = harbor_env.run("snapshot", app_id, "--label", "nope")
-  assert refused.returncode == 1
-  assert f"harbor stop {app_id}" in refused.stderr
+  taken = harbor_env.run("snapshot", app_id, "--label", "live")
+  assert taken.returncode == 0, taken.stderr
+  archive = Path(taken.stdout.split("written to ")[1].strip())
+  assert archive.is_file()
+
+  ps = harbor_env.run("ps")
+  assert ps.returncode == 0, ps.stderr
+  assert app_id in ps.stdout
+  assert "running" in ps.stdout
 
 
 # --- what does and does not need a container -------------------------------

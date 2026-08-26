@@ -316,7 +316,7 @@ def _compare_route(
 def _load_routes(
   stack: AppStack, issues: list[ConfigIssue], ctx: HarborCtx
 ) -> dict[str, AssignedRoute]:
-  found_routes = ctx.harbor_db().list_routes(stack.app)
+  found_routes = ctx.harbor_db.list_routes(stack.app)
 
   missing_routes = set(stack.routes.keys()) - set(found_routes.keys())
   extra_routes = set(found_routes.keys()) - set(stack.routes.keys())

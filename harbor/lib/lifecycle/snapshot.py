@@ -15,6 +15,23 @@ from harbor.lib.util import validate_identifier
 logger = getLogger("harbor.lifecycle.snapshot")
 
 SNAPSHOT_TAR_SUFFIX = ".tar.gz"
+SNAPSHOT_STAMP = "%Y-%m-%d_%H-%MZ"
+
+
+def split_snapshot_name(name: str) -> tuple[str | None, str]:
+  """ISO timestamp and label encoded in a snapshot folder name.
+
+  `2026-08-25_23-19Z` has no label. `2026-08-25_23-19Z_pre-restore` does.
+  """
+  date, sep, rest = name.partition("_")
+  if not sep:
+    return None, ""
+  clock, _, label = rest.partition("_")
+  try:
+    when = datetime.strptime(f"{date}_{clock}", SNAPSHOT_STAMP).replace(tzinfo=UTC)
+  except ValueError:
+    return None, ""
+  return when.isoformat(timespec="seconds").replace("+00:00", "Z"), label
 
 
 def _toml_str_array(values: list[str]) -> str:
@@ -121,6 +138,10 @@ def snapshot(
   ctx: HarborCtx,
   label: str = "",
 ) -> Path:
+  """Copy a stopped app's happ, config, and data volumes into an archive.
+
+  Assumes the caller holds the app lock and the app is stopped.
+  """
   paths = ctx.staged_paths(app)
 
   if not paths.run_path.exists():
@@ -145,7 +166,7 @@ def snapshot(
         "This app appears to be staged improperly"
       )
 
-  folder_name = datetime.now(UTC).strftime("%Y-%m-%d_%H-%MZ")
+  folder_name = datetime.now(UTC).strftime(SNAPSHOT_STAMP)
   if label:
     validate_identifier(label)
     folder_name = f"{folder_name}_{label}"
@@ -163,7 +184,7 @@ def snapshot(
       f"remove it with `rm -rf {snapshot_folder}` before retrying."
     )
 
-  staging = ctx.config.harbor_root / "temp" / "current_snapshot"
+  staging = ctx.config.temp_root / "current_snapshot"
   if staging.exists():
     raise ValueError(
       f"Incomplete snapshot left at {staging}; "

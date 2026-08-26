@@ -4,11 +4,10 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from harbor.lib.logtab import LogTab
 from harbor.lib.util import validate_identifier
 
 if TYPE_CHECKING:
-  from harbor.lib.config import Config
+  from harbor.lib.harbor import HarborCtx
 
 logger = logging.getLogger("harbor.apps")
 
@@ -31,29 +30,25 @@ class AppID(str):
     return self.parts[-1]
 
 
-def record_app_action(action: str, app_id: AppID, config: Config) -> None:
+def record_app_action(action: str, app_id: AppID, ctx: HarborCtx) -> None:
   """Record informational last-action metadata."""
-  key = f"apps/{app_id}/status"
-  LogTab(config.activity_log).write(key, action)
+  ctx.activity_log.write(f"apps/{app_id}/status", action)
 
 
-def read_last_app_action(app_id: AppID, config: Config) -> str | None:
+def read_last_app_action(app_id: AppID, ctx: HarborCtx) -> str | None:
   """Read informational last-action metadata."""
-  key = f"apps/{app_id}/status"
-  entry = LogTab(config.activity_log).read(key)
+  entry = ctx.activity_log.read(f"apps/{app_id}/status")
   return entry.value if entry else None
 
 
-def read_app_actions(config: Config) -> dict[str, tuple[datetime, str]]:
+def read_app_actions(ctx: HarborCtx) -> dict[str, tuple[datetime, str]]:
   """Last recorded action for every app, in one pass over the activity log.
 
   All apps share one log, so callers reporting on many of them should read it
   once rather than per app. Keys are bare app ids.
   """
   actions: dict[str, tuple[datetime, str]] = {}
-  for key, entry in (
-    LogTab(config.activity_log).scan(prefix="apps/", suffix="/status").items()
-  ):
+  for key, entry in ctx.activity_log.scan(prefix="apps/", suffix="/status").items():
     app_id = key.removeprefix("apps/").removesuffix("/status")
     if app_id:
       actions[app_id] = (entry.datetime(), entry.value)

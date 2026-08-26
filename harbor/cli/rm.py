@@ -24,7 +24,8 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     conn.out("Nothing removed.")
     return
 
-  rm(plan, ctx)
+  with ctx.locked(f"rm {plan.app_id}", plan.app_id):
+    rm(plan, ctx)
   conn.out(f"Removed {plan.app_id}")
 
 

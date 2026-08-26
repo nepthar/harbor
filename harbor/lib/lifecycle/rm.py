@@ -80,9 +80,9 @@ def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
       shutil.rmtree(path)
       logger.info("removed volume %s", path)
 
-  ctx.harbor_db().purge_app(app_id)
+  ctx.harbor_db.purge_app(app_id)
 
   # The activity log outlives the app on purpose, so close it out rather than
   # leaving the trail ending at whatever happened before the removal.
-  record_app_action("removed", app_id, ctx.config)
+  record_app_action("removed", app_id, ctx)
   logger.info("removed %s", app_id)

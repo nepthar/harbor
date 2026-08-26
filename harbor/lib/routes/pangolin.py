@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import Config, RouteProviderEntry
-from harbor.lib.store import HarborStore
+from harbor.lib.config import RouteProviderEntry
 
 from .base import RouteProvider, RouteProviderError, refuse_foreign_route
+
+if TYPE_CHECKING:
+  from harbor.lib.harbor import HarborCtx
 
 logger = logging.getLogger("harbor.routes")
 
@@ -44,15 +49,14 @@ class PangolinRouteProvider(RouteProvider):
     cls,
     tag: str,
     conf: RouteProviderEntry,
-    config: Config,
-    harbor_db: HarborStore,
-  ) -> "PangolinRouteProvider":
+    ctx: HarborCtx,
+  ) -> PangolinRouteProvider:
     args = cls._args(tag, conf)
-    api_key = cls._secret(harbor_db, args.pop("api_key_secret"))
+    api_key = cls._secret(ctx.harbor_db, args.pop("api_key_secret"))
     return cls(
       api_key=api_key,
       harbor_domain=conf.domain,
-      harbor_address=config.harbor_address,
+      harbor_address=ctx.config.harbor_address,
       **args,
     )
 

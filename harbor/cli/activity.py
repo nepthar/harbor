@@ -30,8 +30,7 @@ def register(subparsers) -> None:
     metavar="N",
     help="Print the output of the Nth listed run (default: 1, the newest)",
   )
-  # Reads the index and, with --show, one file; changes nothing.
-  parser.set_defaults(func=run, holds_lock=False)
+  parser.set_defaults(func=run)
 
 
 def _resolve(query: str | None, ctx: HarborCtx) -> str | None:
@@ -54,7 +53,7 @@ def _duration(ms: int | None) -> str:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = _resolve(args.app_id, ctx)
-  runs = activity.list_runs(ctx.config, app=app, limit=max(args.last, args.show or 0))
+  runs = activity.list_runs(ctx, app=app, limit=max(args.last, args.show or 0))
 
   if not runs:
     where = f" for {app}" if app else ""
@@ -71,7 +70,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
         f"its index record above is all that remains"
       )
     dirname, _, filename = entry["log"].partition("/")
-    conn.out(activity.read_run_log(ctx.config, dirname, filename).rstrip("\n"))
+    conn.out(activity.read_run_log(ctx, dirname, filename).rstrip("\n"))
     return
 
   for index, entry in enumerate(runs, start=1):
@@ -79,5 +78,5 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     log = entry["log"] if entry["available"] else f"{entry['log']} (pruned)"
     conn.out(
       f"{index:>3}  {entry['ts']}  {entry['status']:<5}  "
-      f"{_duration(entry['duration_ms']):>7}  {what:<24}  logs/{log}"
+      f"{_duration(entry['duration_ms']):>7}  {what:<24}  var/logs/{log}"
     )

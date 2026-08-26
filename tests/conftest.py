@@ -15,6 +15,7 @@ import pytest
 
 from harbor.cli.main import run as cli_run
 from harbor.lib.apps import AppID
+from harbor.lib.config import VAR_DIRS
 from harbor.lib.happ import scan_happs
 from harbor.lib.logtab import LogTab
 from harbor.lib.stack import AppStack
@@ -163,7 +164,10 @@ class HarborEnv:
 
   @property
   def harbor_lockfile_path(self) -> Path:
-    return self.root / "harbor.lock"
+    return self.root / "var" / "lock" / "harbor.lock"
+
+  def app_lockfile_path(self, app_id: str) -> Path:
+    return self.root / "var" / "lock" / f"{app_id}.lock"
 
   def read_db(self) -> dict[str, Any]:
     """Reconstruct the harbor DB as a nested dict from its flat logtab keys.
@@ -325,6 +329,8 @@ def harbor_env(
   (root / "run").mkdir()
   (root / "config").mkdir()
   (root / "volumes").mkdir()
+  for name in VAR_DIRS:
+    (root / "var" / name).mkdir(parents=True)
 
   for _, rel_path in scan_happs(FIXTURES):
     source = FIXTURES / rel_path

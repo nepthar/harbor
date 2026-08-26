@@ -163,7 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument(
     "--socket",
     metavar="PATH",
-    help="Admin socket path (default: <harbor_root>/conn/admin.sock)",
+    help="Admin socket path (default: <harbor_root>/var/conn/admin.sock)",
   )
   parser.add_argument(
     "--port",

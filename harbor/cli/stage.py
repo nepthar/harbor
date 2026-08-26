@@ -1,5 +1,7 @@
 import argparse
+from pathlib import Path
 
+from harbor.lib.happ import app_id_from_path, is_pathlike
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import stage, staging_target
 from harbor.lib.util import Conn
@@ -19,16 +21,22 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  target = staging_target(ctx, args.app)
-  app = target.app_id
-  if target.linked_entry is not None:
-    conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
+  app = (
+    app_id_from_path(Path(args.app).expanduser().resolve())
+    if is_pathlike(args.app)
+    else ctx.resolve_app(args.app)
+  )
+  with ctx.locked(f"stage {app}", app):
+    target = staging_target(ctx, args.app)
+    app = target.app_id
+    if target.linked_entry is not None:
+      conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
 
-  result = stage(app, target.bundle or ctx.bundle_path(app), ctx)
-  for name in result.dropped_volumes:
-    conn.err(
-      f"volume {name} is no longer declared in the manifest; "
-      f"its link is gone but its data was left in place"
-    )
-  conn.out(f"Staged {app} at {ctx.run_path(app)}")
-  conn.out(f"Start it with: harbor start {app}")
+    result = stage(app, target.bundle or ctx.bundle_path(app), ctx)
+    for name in result.dropped_volumes:
+      conn.err(
+        f"volume {name} is no longer declared in the manifest; "
+        f"its link is gone but its data was left in place"
+      )
+    conn.out(f"Staged {app} at {ctx.run_path(app)}")
+    conn.out(f"Start it with: harbor start {app}")

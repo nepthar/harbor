@@ -14,8 +14,7 @@ from harbor.lib.config_edit import (
   remove_host_volume,
   set_host_volume,
 )
-from harbor.lib.harbor import LOCK_KEY, HarborCtx
-from harbor.lib.logtab import LogTab
+from harbor.lib.harbor import HarborCtx
 
 
 def ctx_of(harbor_env) -> HarborCtx:
@@ -82,7 +81,7 @@ def test_config_toml_is_never_left_invalid(harbor_env):
   before = harbor_env.config.read_text()
 
   with pytest.raises(ValueError) as raised:
-    with edit_config(ctx_of(harbor_env), "a bad idea") as document:
+    with edit_config(ctx_of(harbor_env)) as document:
       document["port_base"] = "not a number"
 
   assert "not valid" in str(raised.value)
@@ -93,13 +92,13 @@ def test_config_toml_is_never_left_invalid(harbor_env):
 
 def test_an_edit_is_recorded_as_a_lock_holder(harbor_env, host_dir):
   """config.toml is harbor-wide state; two writers would lose an edit."""
-  add_host_volume(ctx_of(harbor_env), "extra", str(host_dir))
+  added = harbor_env.run("config-sys", "host-volume", "--add", f"extra={host_dir}")
+  assert added.returncode == 0, added.stderr
 
-  record = json.loads(
-    LogTab(ctx_of(harbor_env).config.activity_log).read(LOCK_KEY).value
-  )
-  assert record["by"] == "host-volume add extra"
-  assert record["state"] == "released"
+  record = json.loads(harbor_env.harbor_lockfile_path.read_text())
+  assert record["by"] == "host-volume"
+  assert "pid" in record
+  assert "at" in record
 
 
 @pytest.mark.parametrize(

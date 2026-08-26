@@ -22,17 +22,18 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
   app = ctx.resolve_app(args.app)
-  plan = dev_plan(app, ctx, publish_routes=args.routes)
+  with ctx.locked(f"dev {app}", app):
+    plan = dev_plan(app, ctx, publish_routes=args.routes)
 
-  if plan.manifest_stale and not _confirmed(plan, conn):
-    conn.out("Nothing started.")
-    return
+    if plan.manifest_stale and not _confirmed(plan, conn):
+      conn.out("Nothing started.")
+      return
 
-  conn.out(_receipt(plan, ctx))
+    conn.out(_receipt(plan, ctx))
 
-  code = dev(plan, ctx)
-  if code:
-    raise SystemExit(code)
+    code = dev(plan, ctx)
+    if code:
+      raise SystemExit(code)
 
 
 def _confirmed(plan: DevPlan, conn: Conn) -> bool:

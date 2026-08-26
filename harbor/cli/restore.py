@@ -49,7 +49,8 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
     conn.out("Nothing restored.")
     return
 
-  restore(plan, ctx, snapshot_first=snapshot_first)
+  with ctx.locked(f"restore {app}", app):
+    restore(plan, ctx, snapshot_first=snapshot_first)
   conn.out(f"Restored {plan.app_id} from {plan.snapshot_path}")
 
 

@@ -203,7 +203,7 @@ def dev(plan: DevPlan, ctx: HarborCtx) -> int:
   link_host_volumes(plan.stack, plan.run_data)
   try:
     with source_volume_links(plan):
-      record_app_action("dev", app, ctx.config)
+      record_app_action("dev", app, ctx)
       if plan.published:
         try:
           register_app_routes(plan.run_data, ctx)
@@ -224,5 +224,5 @@ def dev(plan: DevPlan, ctx: HarborCtx) -> int:
   finally:
     unlink_host_volumes(plan.run_path)
 
-  record_app_action("dev-stopped", app, ctx.config)
+  record_app_action("dev-stopped", app, ctx)
   return result.returncode

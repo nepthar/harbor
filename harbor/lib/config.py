@@ -19,6 +19,10 @@ from harbor.lib.util import validate_identifier
 
 VOLUME_KINDS = ("data", "temp", "bulk", "logs")
 
+# Runtime state under `$harbor/var/`. Operator-facing tree is apps/, run/,
+# volumes/, config/; this is sockets, activity files, scratch, and locks.
+VAR_DIRS = ("conn", "logs", "temp", "lock")
+
 # The name of the app source backed by `apps_root`. Always present, always
 # first, and the only one harbor itself writes to (`fetch`, and the symlink
 # `stage <path>` leaves behind).
@@ -182,8 +186,23 @@ class Config:
     self.host_volumes = host_volumes or {}
 
   @property
+  def var_root(self) -> Path:
+    return self.harbor_root / "var"
+
+  @property
+  def lock_root(self) -> Path:
+    return self.var_root / "lock"
+
+  @property
   def harbor_lockfile_path(self) -> Path:
-    return self.harbor_root / "harbor.lock"
+    return self.lock_root / "harbor.lock"
+
+  def app_lockfile_path(self, app_id: AppID | str) -> Path:
+    return self.lock_root / f"{app_id}.lock"
+
+  @property
+  def temp_root(self) -> Path:
+    return self.var_root / "temp"
 
   @property
   def harbordb_path(self) -> Path:
@@ -200,16 +219,15 @@ class Config:
     Not container logs -- those belong to dockerd and `harbor logs` streams
     them. This is what a verb printed while a job (and later, cron) ran it.
     """
-    return self.harbor_root / "logs"
+    return self.var_root / "logs"
 
   def app_run_path(self, app_id: AppID) -> Path:
     return self.run_root / app_id
 
   @property
   def conn_root(self) -> Path:
-    """Where harbord's sockets live. Under the harbor root so that a happ
-    granted admin access is granted it by mounting one path."""
-    return self.harbor_root / "conn"
+    """Where harbord's sockets live. One path to mount for admin access."""
+    return self.var_root / "conn"
 
   @property
   def admin_socket_path(self) -> Path:

@@ -56,7 +56,7 @@ def api(path, method="GET", payload=None, timeout=10):
     status = response.status
   except FileNotFoundError as e:
     raise ApiError(
-      f"No socket at {SOCKET}. Is harbord running, and is $harbor/conn bound "
+      f"No socket at {SOCKET}. Is harbord running, and is $harbor/var/conn bound "
       f"into this container?"
     ) from e
   except OSError as e:

@@ -40,7 +40,7 @@ def preflight_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
     return
 
   for _, route, tag in routes:
-    provider = get_route_provider(ctx.harbor_db(), ctx.config, tag)
+    provider = get_route_provider(ctx, tag)
     owners = provider.route_owners()
     subdomain = route.subdomain
     if subdomain not in owners:
@@ -64,7 +64,7 @@ def register_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
         f"route {route_name!r} has no allocated host port; run `harbor stage` first"
       )
 
-    provider = get_route_provider(ctx.harbor_db(), ctx.config, tag)
+    provider = get_route_provider(ctx, tag)
     domain = ctx.config.provider_domain(tag)
     provider.register_route(
       run_data.app, host_port, route.subdomain, domain, scheme=route.scheme
@@ -81,7 +81,7 @@ def register_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
 
 
 def unregister_app_routes(app: AppID, ctx: HarborCtx) -> None:
-  hdb_routes = ctx.harbor_db().list_routes(app)
+  hdb_routes = ctx.harbor_db.list_routes(app)
   assignments = ctx.app_store(app).list_route_assignments()
   for route_name, route_dict in hdb_routes.items():
     tag = assignments.get(route_name)
@@ -101,7 +101,7 @@ def unregister_app_routes(app: AppID, ctx: HarborCtx) -> None:
       logger.error("skipping malformed route record %s for %s: %s", route_name, app, e)
       continue
 
-    provider = get_route_provider(ctx.harbor_db(), ctx.config, tag)
+    provider = get_route_provider(ctx, tag)
     domain = ctx.config.provider_domain(tag)
     try:
       provider.unregister_route(route.subdomain, domain)
@@ -133,7 +133,7 @@ def sync_route_assignment(
   The AppStore assignment is already written by the caller; this only talks to
   providers, which need the allocated host port from harbordb.
   """
-  hdb_routes = ctx.harbor_db().list_routes(app)
+  hdb_routes = ctx.harbor_db.list_routes(app)
   entry = hdb_routes.get(route_name)
   if entry is None:
     raise ValueError(
@@ -147,7 +147,7 @@ def sync_route_assignment(
 
   if old_tag and old_tag != NONE_ROUTE_PROVIDER_TAG:
     try:
-      old = get_route_provider(ctx.harbor_db(), ctx.config, old_tag)
+      old = get_route_provider(ctx, old_tag)
       old.unregister_route(subdomain, ctx.config.provider_domain(old_tag))
     except RouteProviderError as e:
       logger.error("failed to unregister %s from %s: %s", route_name, old_tag, e)
@@ -158,7 +158,7 @@ def sync_route_assignment(
         f"route {route_name!r} has no allocated host port for {app}; "
         f"run `harbor stage {app}` first"
       )
-    new = get_route_provider(ctx.harbor_db(), ctx.config, new_tag)
+    new = get_route_provider(ctx, new_tag)
     new.register_route(
       app, host_port, subdomain, ctx.config.provider_domain(new_tag), scheme=scheme
     )

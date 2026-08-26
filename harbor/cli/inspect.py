@@ -26,32 +26,34 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   if is_pathlike(args.app):
     source = Path(args.app).expanduser().resolve()
-    stack = load_happ(source).app_stack()
-    conn.out(capability_receipt(stack, None, ctx, compact=False))
+    with ctx.harbor_lock(f"inspect {source}"):
+      stack = load_happ(source).app_stack()
+      conn.out(capability_receipt(stack, None, ctx, compact=False))
     return
 
   app = ctx.resolve_app(args.app)
-  # Report what is installed under run/, never the catalog entry under apps/.
-  # Pass a path to a .happ to inspect a bundle that is not staged yet.
-  stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
-  run_data = load_run_data(stack, ctx)
-  notes = ()
-  if ctx.manifest_stale(app):
-    notes = (
-      f"manifest has changed, `harbor stage {app}` may be required to reflect changes",
+  with ctx.locked(f"inspect {app}", app):
+    # Report what is installed under run/, never the catalog entry under apps/.
+    # Pass a path to a .happ to inspect a bundle that is not staged yet.
+    stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
+    run_data = load_run_data(stack, ctx)
+    notes = ()
+    if ctx.manifest_stale(app):
+      notes = (
+        f"manifest has changed, `harbor stage {app}` may be required to reflect changes",
+      )
+    conn.out(
+      capability_receipt(
+        stack,
+        run_data,
+        ctx,
+        compact=False,
+        notes=notes,
+        state_line=_state_line(ctx.run_state(app)),
+        last_action=read_last_app_action(app, ctx) or "-",
+        show_logs=True,
+      )
     )
-  conn.out(
-    capability_receipt(
-      stack,
-      run_data,
-      ctx,
-      compact=False,
-      notes=notes,
-      state_line=_state_line(ctx.run_state(app)),
-      last_action=read_last_app_action(app, ctx.config) or "-",
-      show_logs=True,
-    )
-  )
 
 
 def _state_line(state: RunState) -> str:

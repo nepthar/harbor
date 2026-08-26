@@ -23,7 +23,7 @@ def host_volume_rows(entries):
       f'<td class="name">{esc(entry["tag"])}</td>'
       f'<td class="muted path">{esc(entry["path"])}{missing}</td>'
       f'<td class="muted">{esc(flags or "—")}</td>'
-      f'<td><form method="post" action="/volumes">'
+      f'<td class="act"><form method="post" action="/volumes">'
       f'<input type="hidden" name="action" value="delete">'
       f'<input type="hidden" name="tag" value="{esc(entry["tag"])}">'
       f'<button class="link" type="submit">Delete</button></form></td>'
@@ -31,7 +31,7 @@ def host_volume_rows(entries):
     )
   return (
     '<div class="scroll"><table><thead><tr><th>Tag</th><th>Path</th>'
-    "<th>Flags</th><th></th></tr></thead><tbody>"
+    '<th>Flags</th><th class="act"></th></tr></thead><tbody>'
     + "".join(rows)
     + "</tbody></table></div>"
   )

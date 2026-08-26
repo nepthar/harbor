@@ -12,27 +12,28 @@ def register(subparsers) -> None:
 
 
 def run(_args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  rows = []
+  with ctx.harbor_lock("volumes"):
+    rows = []
 
-  for volume_type, root in ctx.config.volume_roots.items():
-    if not root.is_dir():
-      continue
-    for app_dir in root.iterdir():
-      if not app_dir.is_dir():
+    for volume_type, root in ctx.config.volume_roots.items():
+      if not root.is_dir():
         continue
-      for volume_dir in app_dir.iterdir():
-        if not volume_dir.is_dir():
+      for app_dir in root.iterdir():
+        if not app_dir.is_dir():
           continue
-        rows.append(
-          (
-            app_dir.name,
-            volume_dir.name,
-            volume_type,
-            fmt_size(path_size(volume_dir)),
+        for volume_dir in app_dir.iterdir():
+          if not volume_dir.is_dir():
+            continue
+          rows.append(
+            (
+              app_dir.name,
+              volume_dir.name,
+              volume_type,
+              fmt_size(path_size(volume_dir)),
+            )
           )
-        )
 
-  rows.sort()
-  conn.out(
-    tabulate(rows, headers=["app_id", "volume", "type", "size"], tablefmt="simple")
-  )
+    rows.sort()
+    conn.out(
+      tabulate(rows, headers=["app_id", "volume", "type", "size"], tablefmt="simple")
+    )

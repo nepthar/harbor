@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -125,7 +126,7 @@ def test_catalog_groups_a_second_app_source(harbor_env, client):
 
 
 def test_catalog_names_a_github_origin(harbor_env, client):
-  ctx().harbor_db().set_app_source(
+  ctx().harbor_db.set_app_source(
     "ports-demo",
     source="github:nepthar/harbor/main/examples/ports-demo.happ",
     current="0.1.0@" + "a" * 40,
@@ -368,8 +369,7 @@ def test_cmd_verb_runs_a_manifest_command_as_a_job(harbor_env, client, jobs):
   # It reached docker as an exec of the declared argv, not something the caller
   # supplied.
   calls = [
-    json.loads(line)["args"]
-    for line in harbor_env.docker_log.read_text().splitlines()
+    json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
   ]
   assert any(call[:3] == ["compose", "exec", "main"] for call in calls)
 
@@ -377,6 +377,22 @@ def test_cmd_verb_runs_a_manifest_command_as_a_job(harbor_env, client, jobs):
   runs = client.get("/activity?app=cmd-demo").json()["activity"]
   assert runs[0]["verb"] == "cmd"
   assert runs[0]["status"] == "ok"
+
+
+def test_cmd_verb_forwards_extra_arguments(harbor_env, client, jobs):
+  _install_cmd_demo(harbor_env)
+  harbor_env.run("start", "cmd-demo")
+
+  job = submit(
+    client, jobs, "cmd", {"app": "cmd-demo", "command": "ping", "args": "extra word"}
+  )
+  assert job["state"] == "done", job["error"]
+  calls = [
+    json.loads(line)["args"] for line in harbor_env.docker_log.read_text().splitlines()
+  ]
+  execs = [call for call in calls if call[:3] == ["compose", "exec", "main"]]
+  assert execs
+  assert execs[-1][-2:] == ["extra", "word"]
 
 
 def test_cmd_verb_requires_a_command_argument(harbor_env, client):
@@ -390,6 +406,73 @@ def test_cmd_verb_reports_an_unknown_command(harbor_env, client, jobs):
   job = submit(client, jobs, "cmd", {"app": "basic-features", "command": "nope"})
   assert job["state"] == "failed"
   assert "nope" in job["error"]
+
+
+def test_snapshots_empty_when_none_taken(harbor_env, client):
+  assert client.get("/snapshots").json() == {"snapshots": []}
+
+
+def test_snapshots_lists_archives_newest_first(harbor_env, client):
+  snap = harbor_env.root / "snapshots" / "ports-demo"
+  snap.mkdir(parents=True)
+  (snap / "2020-01-01_00-00Z_old.tar.gz").write_bytes(b"x")
+  (snap / "2024-06-15_12-00Z.tar.gz").write_bytes(b"z")
+  (snap / "2026-01-01_00-00Z_new.tar.gz").write_bytes(b"y")
+  body = client.get("/snapshots").json()["snapshots"]
+  assert body == [
+    {
+      "app_id": "ports-demo",
+      "name": "2026-01-01_00-00Z_new",
+      "taken_at": "2026-01-01T00:00:00Z",
+      "tag": "new",
+      "bytes": 1,
+    },
+    {
+      "app_id": "ports-demo",
+      "name": "2024-06-15_12-00Z",
+      "taken_at": "2024-06-15T12:00:00Z",
+      "tag": "",
+      "bytes": 1,
+    },
+    {
+      "app_id": "ports-demo",
+      "name": "2020-01-01_00-00Z_old",
+      "taken_at": "2020-01-01T00:00:00Z",
+      "tag": "old",
+      "bytes": 1,
+    },
+  ]
+
+
+def test_restore_verb(harbor_env, client, jobs):
+  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  taken = harbor_env.run("snapshot", "ports-demo", "--label", "back")
+  assert taken.returncode == 0, taken.stderr
+  name = Path(taken.stdout.split("written to ")[1].strip()).name.removesuffix(".tar.gz")
+  job = submit(client, jobs, "restore", {"app": "ports-demo", "snapshot": name})
+  assert job["state"] == "done", job["error"]
+  assert "Restored" in job["output"]
+
+
+def test_restore_unknown_snapshot_is_refused(harbor_env, client):
+  snap = harbor_env.root / "snapshots" / "ports-demo"
+  snap.mkdir(parents=True)
+  (snap / "2026-01-01_00-00Z_real.tar.gz").write_bytes(b"x")
+  response = client.post(
+    "/jobs",
+    json={"verb": "restore", "args": {"app": "ports-demo", "snapshot": "nope"}},
+  )
+  assert response.status_code == 400
+  assert "No snapshot nope" in response.json()["error"]
+
+
+def test_restore_unknown_app_is_refused(harbor_env, client):
+  response = client.post(
+    "/jobs",
+    json={"verb": "restore", "args": {"app": "never-snapshotted", "snapshot": "x"}},
+  )
+  assert response.status_code == 400
+  assert "No snapshots found" in response.json()["error"]
 
 
 @pytest.mark.parametrize(
@@ -444,6 +527,7 @@ def test_openapi_documents_the_surface(harbor_env, client):
     "/catalog/check",
     "/jobs",
     "/jobs/{job_id}",
+    "/snapshots",
   } <= set(paths)
   assert "post" in paths["/jobs"]
 

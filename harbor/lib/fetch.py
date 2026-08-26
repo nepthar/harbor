@@ -726,7 +726,7 @@ def install_target(
     stack = load_happ(fetched.path).app_stack()
     current = format_current(stack.version, fetched.sha)
     dest = commit_happ(fetched, apps_root)
-    ctx.harbor_db().set_app_source(
+    ctx.harbor_db.set_app_source(
       str(fetched.app_id), source=recorded_source(spec, pin), current=current
     )
     committed = True
@@ -749,7 +749,7 @@ def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str
   had. Those are outcomes, not failures, and an exception would make every
   caller catch one to print it.
   """
-  record = ctx.harbor_db().get_app_source(str(app))
+  record = ctx.harbor_db.get_app_source(str(app))
   if not record:
     raise ValueError(
       f"{app} has no recorded GitHub source (it was not installed with "
@@ -773,7 +773,7 @@ def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str
   new_source = recorded_source(spec, pin)
   if resolved == current_sha:
     if new_source != source:
-      ctx.harbor_db().set_app_source(str(app), source=new_source, current=current)
+      ctx.harbor_db.set_app_source(str(app), source=new_source, current=current)
       return f"Pinned {app} at {current}"
     return f"{app} is already at {current}"
 
@@ -784,7 +784,7 @@ def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str
     stack = load_happ(fetched.path).app_stack()
     new_current = format_current(stack.version, fetched.sha)
     replace_happ(fetched, dest)
-    ctx.harbor_db().set_app_source(str(app), source=new_source, current=new_current)
+    ctx.harbor_db.set_app_source(str(app), source=new_source, current=new_current)
     committed = True
   finally:
     if not committed:
@@ -806,7 +806,7 @@ def check_update(app: AppID, ctx: HarborCtx) -> UpdateCheck:
   data a viewer can show. The download is thrown away; applying is a
   separate `update_app` call after the operator has seen the diff.
   """
-  record = ctx.harbor_db().get_app_source(str(app))
+  record = ctx.harbor_db.get_app_source(str(app))
   if not record:
     raise ValueError(
       f"{app} has no recorded GitHub source (it was not installed with "

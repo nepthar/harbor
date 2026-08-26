@@ -18,12 +18,10 @@ import yaml
 
 from harbor.lib import lifecycle
 from harbor.lib.apps import read_app_actions, read_last_app_action
-from harbor.lib.config import VOLUME_KINDS, load_config_file
+from harbor.lib.config import VAR_DIRS, VOLUME_KINDS, load_config_file
 from harbor.lib.crypto import FernetCryptoEngine
 from harbor.lib.happ import scan_happs
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.logtab import LogTab
-from harbor.lib.store import HarborStore
 from harbor.lib.util import refuse_root
 
 BASIC = "io.p2net.basic-features"
@@ -1013,8 +1011,7 @@ def test_unallocated_routes_are_not_reported_as_missing_config(harbor_env):
   assert harbor_env.run("stop", app_id).returncode == 0
 
   # Route rows gone while the run dir survives -- the pre-start allocation state.
-  config = load_config_file(harbor_env.config)
-  HarborStore.from_config(config).clear_routes(app_id)
+  HarborCtx(load_config_file(harbor_env.config)).harbor_db.clear_routes(app_id)
   assert (harbor_env.run_root / app_id / "compose.yml").is_file()
 
   listed = harbor_env.run("ps")
@@ -1140,7 +1137,7 @@ def stub_provider(monkeypatch):
     provider = _RecordingRouteProvider(owners)
     monkeypatch.setattr(
       "harbor.lib.lifecycle.routes.get_route_provider",
-      lambda db, config, tag: provider,
+      lambda ctx, tag: provider,
     )
     monkeypatch.setattr("harbor.lib.harbor.load_harbor_run_unit_status", lambda: {})
     return provider
@@ -1215,6 +1212,8 @@ def test_init_bootstraps_a_usable_root(harbor_env, tmp_path):
   assert (root / "config").is_dir()
   for kind in VOLUME_KINDS:
     assert (root / "volumes" / kind).is_dir(), kind
+  for name in VAR_DIRS:
+    assert (root / "var" / name).is_dir(), name
 
   # The master key must be readable back, not merely present: a command against
   # the new root has to load it through load_config_file.
@@ -1283,8 +1282,8 @@ def test_last_action_is_read_in_one_pass(harbor_env):
   assert harbor_env.run("start", "ports-demo").returncode == 0
   assert harbor_env.run("start", "routes-demo").returncode == 0
 
-  config = load_config_file(harbor_env.config)
-  assert {k: v[1] for k, v in read_app_actions(config).items()} == {
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+  assert {k: v[1] for k, v in read_app_actions(ctx).items()} == {
     "ports-demo": "started",
     "routes-demo": "started",
   }
@@ -1299,14 +1298,14 @@ def test_removal_is_recorded_when_an_app_is_removed(harbor_env):
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
 
-  config = load_config_file(harbor_env.config)
-  assert read_last_app_action(app_id, config) == "started"
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+  assert read_last_app_action(app_id, ctx) == "started"
 
   assert harbor_env.run("rm", app_id, "-y").returncode == 0
 
   assert not (harbor_env.run_root / app_id).exists()
-  assert read_last_app_action(app_id, config) == "removed"
-  assert f"apps/{app_id}/status" in LogTab(config.activity_log).load()
+  assert read_last_app_action(app_id, ctx) == "removed"
+  assert f"apps/{app_id}/status" in ctx.activity_log.load()
 
 
 # --- running as root -------------------------------------------------------
@@ -1345,11 +1344,11 @@ def _seed_activity(harbor_env, **kwargs):
   from harbor.lib import activity
   from harbor.lib.apps import AppID
 
-  config = load_config_file(harbor_env.config)
+  ctx = HarborCtx(load_config_file(harbor_env.config))
   started = kwargs.get("started", datetime(2026, 8, 25, 3, 30, tzinfo=UTC))
   app = kwargs.get("app", "ports-demo")
   return activity.record_run(
-    config,
+    ctx,
     kwargs.get("verb", "start"),
     {"app": app or ""},
     app_id=AppID(app) if app else None,

@@ -36,21 +36,22 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
-  spec, pin = split_pin(args.target)
-  if spec.startswith("github:"):
-    _install(spec, pin, args.yes, ctx, conn)
-  elif is_pathlike(spec):
-    raise ValueError(
-      f"Don't know how to fetch {args.target!r}; expected a github: target "
-      f"or an installed app id.\n  {USAGE}"
-    )
-  elif "@" in args.target and pin is None:
-    raise ValueError(
-      f"Pin must be a full 40-character commit sha, not "
-      f"{args.target.rsplit('@', 1)[-1]!r}"
-    )
-  else:
-    _update(spec, pin, ctx, conn)
+  with ctx.harbor_lock(f"fetch {args.target}"):
+    spec, pin = split_pin(args.target)
+    if spec.startswith("github:"):
+      _install(spec, pin, args.yes, ctx, conn)
+    elif is_pathlike(spec):
+      raise ValueError(
+        f"Don't know how to fetch {args.target!r}; expected a github: target "
+        f"or an installed app id.\n  {USAGE}"
+      )
+    elif "@" in args.target and pin is None:
+      raise ValueError(
+        f"Pin must be a full 40-character commit sha, not "
+        f"{args.target.rsplit('@', 1)[-1]!r}"
+      )
+    else:
+      _update(spec, pin, ctx, conn)
 
 
 def _install(spec: str, pin: str | None, yes: bool, ctx: HarborCtx, conn) -> None:

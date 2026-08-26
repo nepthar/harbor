@@ -2,7 +2,7 @@
 
 Container logs are docker's and stream through `harbor logs`; this page shows
 the other stream -- job (and, later, cron) output that harbord filed under
-`$harbor/logs`. The list is the activity index; each available run links to
+`$harbor/var/logs`. The list is the activity index; each available run links to
 its output file.
 """
 
@@ -38,7 +38,7 @@ def _rows(runs):
     rows.append(
       "<tr>"
       f'<td class="muted"><time datetime="{esc(run["ts"])}">'
-      f'{esc(run["ts"])}</time></td>'
+      f"{esc(run['ts'])}</time></td>"
       f'<td class="name">{esc(run["verb"])}</td>'
       f"<td>{esc(app)}</td>"
       f"<td>{_pill(run['status'])}</td>"
@@ -58,10 +58,9 @@ def list_page():
   return (
     "<h2>Activity</h2>"
     + '<p class="lede">What harbor ran on your behalf &mdash; each job&rsquo;s '
-    "output, kept as plain files under <code>$harbor/logs</code>. Container "
+    "output, kept as plain files under <code>$harbor/var/logs</code>. Container "
     "logs stay with docker: <code>harbor logs &lt;app&gt;</code> streams "
-    "those.</p>"
-    + f'<div class="card">{_rows(runs)}</div>'
+    "those.</p>" + f'<div class="card">{_rows(runs)}</div>'
   )
 
 

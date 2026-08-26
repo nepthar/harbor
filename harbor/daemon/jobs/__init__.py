@@ -6,9 +6,10 @@ useful verbs are slow -- `snapshot` copies volumes, `start` can pull images --
 and an HTTP request that waits for them dies to a proxy timeout or a page
 refresh long before the work does.
 
-Execution is serial by construction. Harbor allows one writer at a time (see
-`HarborCtx.lock`), so a single worker turns "harbor is busy" into a state a
-caller can see rather than a lock timeout it has to interpret.
+Execution is serial by construction. Each verb takes the same locks the CLI
+does, so a CLI command and a job cannot write the same app (or harbor-wide
+state) at once. A single worker turns "harbor is busy" into a state a caller
+can see rather than a lock timeout it has to interpret.
 """
 
 from __future__ import annotations
@@ -24,20 +25,19 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from harbor.lib import activity, lifecycle
+from harbor.daemon.jobs.cmd import run as cmd
+from harbor.daemon.jobs.fetch import run as fetch
+from harbor.daemon.jobs.restore import run as restore
+from harbor.daemon.jobs.snapshot import run as snapshot
+from harbor.daemon.jobs.stage import run as stage
+from harbor.daemon.jobs.start import run as start
+from harbor.daemon.jobs.stop import run as stop
+from harbor.lib import activity
 from harbor.lib.apps import AppID
 from harbor.lib.docker import sink_output
-from harbor.lib.fetch import (
-  GITHUB_PREFIX,
-  USAGE,
-  FetchResult,
-  install_target,
-  split_pin,
-  update_app,
-)
-from harbor.lib.happ import is_pathlike
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.receipt import published_urls
+from harbor.lib.lifecycle import resolve_snapshot_app, snapshot_names
+from harbor.lib.lifecycle.snapshot import SNAPSHOT_TAR_SUFFIX
 
 logger = logging.getLogger("harbor.jobs")
 
@@ -67,7 +67,7 @@ class Job:
   created_at: str = field(default_factory=_now)
   started_at: str | None = None
   finished_at: str | None = None
-  # Where the run's output file landed, relative to `$harbor/logs`. Jobs are
+  # Where the run's output file landed, relative to `$harbor/var/logs`. Jobs are
   # forgotten (restart, MAX_HISTORY); the file is what remains afterwards.
   log: str | None = None
 
@@ -111,98 +111,6 @@ def _capture_harbor_logging(buffer: io.StringIO) -> Iterator[None]:
     harbor_logger.setLevel(previous_level)
 
 
-def _start(ctx: HarborCtx, args: dict[str, str]) -> str:
-  app = ctx.resolve_app(args["app"])
-  # Mirrors `harbor start`: prefer the run copy once staged, so an app whose
-  # catalog entry has since been deleted still starts.
-  bundle = ctx.config.app_run_path(app) if ctx.is_staged(app) else ctx.bundle_path(app)
-  result = lifecycle.start(app, bundle, ctx)
-  lines = [f"Started {app}"]
-  lines += [f"  {url}" for url in published_urls(result.stack, result.run_data, ctx)]
-  return "\n".join(lines)
-
-
-def _stop(ctx: HarborCtx, args: dict[str, str]) -> str:
-  app = ctx.resolve_app(args["app"])
-  lifecycle.stop(app, ctx)
-  return f"Stopped {app}"
-
-
-def _stage(ctx: HarborCtx, args: dict[str, str]) -> str:
-  app = ctx.resolve_app(args["app"])
-  result = lifecycle.stage(app, ctx.bundle_path(app), ctx)
-  lines = [f"Staged {app} at {ctx.run_path(app)}"]
-  lines += [
-    f"  volume {name} is no longer declared in the manifest; its link is gone "
-    f"but its data was left in place"
-    for name in result.dropped_volumes
-  ]
-  return "\n".join(lines)
-
-
-def _fetch(ctx: HarborCtx, args: dict[str, str]) -> str:
-  """`harbor fetch <target>`, with the prompt replaced by an explicit `yes`.
-
-  The CLI asks before a first install, because harbor cannot vouch for a happ's
-  author and the receipt is the only check there is. A job cannot be asked
-  anything, so the caller has to have decided already -- a client that wants
-  the operator to see what they are approving shows them the preview first.
-  An update carries no prompt in the CLI either, so it needs no `yes` here.
-  """
-  spec, pin = split_pin(args["target"])
-  if spec.startswith(GITHUB_PREFIX):
-    if args.get("yes") not in ("1", "true", "yes"):
-      raise ValueError(
-        f"Fetching {spec} installs code harbor cannot vouch for. Read its "
-        f"manifest first, then resubmit with yes=1 to confirm."
-      )
-    result = install_target(spec, pin, ctx)
-    return f"Installed {result.app_id} at {result.path}"
-
-  if is_pathlike(spec):
-    raise ValueError(
-      f"Don't know how to fetch {args['target']!r}; expected a github: target "
-      f"or an installed app id.\n  {USAGE}"
-    )
-  if "@" in args["target"] and pin is None:
-    raise ValueError(
-      f"Pin must be a full 40-character commit sha, not "
-      f"{args['target'].rsplit('@', 1)[-1]!r}"
-    )
-
-  app = ctx.resolve_app(spec)
-  result = update_app(app, pin, ctx)
-  if not isinstance(result, FetchResult):
-    return result
-  lines = [f"Updated {app}", f" - {result.previous}", f" + {result.current}"]
-  if result.staged:
-    lines.append(f"Re-stage and restart to pick it up: harbor stage {app}")
-  return "\n".join(lines)
-
-
-def _snapshot(ctx: HarborCtx, args: dict[str, str]) -> str:
-  app = ctx.resolve_app(args["app"])
-  path = lifecycle.snapshot(app, ctx, label=args.get("label", ""))
-  return f"Snapshot of {app} written to {path}"
-
-
-def _cmd(ctx: HarborCtx, args: dict[str, str]) -> str:
-  """Run a manifest `[commands]` entry, exactly what `harbor cmd` does.
-
-  `command` names an entry the happ's manifest already declares -- an id of a
-  thing that exists, like every other verb's argument. The argv it runs is the
-  manifest's, not the caller's, so this grants the operator nothing their happ
-  did not already define. Any output the command produced is captured into the
-  job (and its activity file) by the runner; a non-zero exit fails the job so
-  it reads as an error rather than a silent success.
-  """
-  app = ctx.resolve_app(args["app"])
-  code = lifecycle.run_command(app, args["command"], [], ctx)
-  if code != 0:
-    raise ValueError(f"Command {args['command']!r} for {app} exited with status {code}")
-  return f"Ran command {args['command']!r} for {app}"
-
-
 @dataclass(frozen=True)
 class Verb:
   run: Callable[[HarborCtx, dict[str, str]], str]
@@ -219,18 +127,21 @@ class Verb:
 # anything that is not one -- and it only copies files into the apps root;
 # staging and starting stay separate, deliberate steps.
 VERBS: dict[str, Verb] = {
-  "start": Verb(_start),
-  "stop": Verb(_stop),
-  "stage": Verb(_stage),
-  "snapshot": Verb(_snapshot, optional=("label",)),
-  # Runs an argv the manifest already declares. See `_cmd`: the caller names
+  "start": Verb(start),
+  "stop": Verb(stop),
+  "stage": Verb(stage),
+  "snapshot": Verb(snapshot, optional=("label",)),
+  # The app is an id under snapshots/, not the catalog: restoring a removed
+  # app is the point. `snapshot` names an archive that already exists there.
+  "restore": Verb(restore, required=("app", "snapshot")),
+  # Runs an argv the manifest already declares. See `cmd`: the caller names
   # which command, never what it does.
-  "cmd": Verb(_cmd, required=("app", "command")),
+  "cmd": Verb(cmd, required=("app", "command"), optional=("args",)),
   # The one verb that takes a URL rather than an id. See the note above: it is
   # here because the operator asked for it from the web UI, and it is confined
   # to what `harbor fetch` already does -- copy a happ into the apps root. It
   # neither stages nor starts, so nothing it fetches runs until someone asks.
-  "fetch": Verb(_fetch, required=("target",), optional=("yes",)),
+  "fetch": Verb(fetch, required=("target",), optional=("yes",)),
 }
 
 
@@ -258,6 +169,15 @@ def validate(verb: str, args: dict[str, str], ctx: HarborCtx) -> None:
 
   # Only for the verbs that name an app. `fetch` takes a target that may not
   # resolve to anything yet -- that is the whole point of fetching it.
+  # `restore` looks under snapshots/, so a removed app still resolves.
+  if verb == "restore":
+    app = resolve_snapshot_app(ctx, args["app"])
+    name = args["snapshot"].removesuffix(SNAPSHOT_TAR_SUFFIX)
+    available = snapshot_names(app, ctx)
+    if name not in available:
+      detail = "\n".join(f"  {n}" for n in available) if available else "  (none)"
+      raise ValueError(f"No snapshot {name} for {app}. Available:\n{detail}")
+    return
   if "app" in spec.required:
     ctx.resolve_app(args["app"])
 
@@ -288,9 +208,9 @@ class JobRunner:
     with self._lock:
       self._jobs[job.id] = job
       self._trim()
-      snapshot = job.as_dict()
+      payload = job.as_dict()
     self._queue.put(job.id)
-    return snapshot
+    return payload
 
   def get(self, job_id: str) -> dict[str, Any] | None:
     with self._lock:
@@ -335,7 +255,6 @@ class JobRunner:
       with (
         _capture_harbor_logging(captured),
         sink_output(captured),
-        ctx.lock(f"{verb} {args.get('app', '')}".strip()),
       ):
         output, error = VERBS[verb].run(ctx, args), None
     except (ValueError, RuntimeError) as e:
@@ -367,12 +286,12 @@ class JobRunner:
     finished: datetime,
     output: str,
   ) -> str | None:
-    """File the run under `$harbor/logs`. Never fails the job over it."""
+    """File the run under `$harbor/var/logs`. Never fails the job over it."""
     if ctx is None:
       return None
     try:
       return activity.record_run(
-        ctx.config,
+        ctx,
         verb,
         args,
         app_id=self._record_app(ctx, args),
