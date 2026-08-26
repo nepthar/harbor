@@ -22,11 +22,12 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import Config
-from harbor.lib.logtab import LogTab
+
+if TYPE_CHECKING:
+  from harbor.lib.harbor import HarborCtx
 
 logger = logging.getLogger("harbor.activity")
 
@@ -70,7 +71,7 @@ def _run_file(directory: Path, started: datetime, verb: str) -> Path:
 
 
 def record_run(
-  config: Config,
+  ctx: HarborCtx,
   verb: str,
   args: dict[str, str],
   *,
@@ -86,7 +87,7 @@ def record_run(
   The file is written first: an index record pointing at a file that never
   made it would be a lie, while a file the index missed is merely unlisted.
   """
-  directory = config.activity_root / _dirname(app_id)
+  directory = ctx.config.activity_root / _dirname(app_id)
   directory.mkdir(parents=True, exist_ok=True)
   path = _run_file(directory, started, verb)
 
@@ -103,7 +104,7 @@ def record_run(
 
   relpath = f"{directory.name}/{path.name}"
   duration_ms = max(0, int((finished - started).total_seconds() * 1000))
-  LogTab(config.activity_log).write(
+  ctx.activity_log.write(
     _index_key(app_id),
     json.dumps(
       {"verb": verb, "status": status, "ms": duration_ms, "log": relpath},
@@ -126,17 +127,16 @@ def _prune(directory: Path) -> None:
 
 
 def list_runs(
-  config: Config, *, app: str | None = None, limit: int = 20
+  ctx: HarborCtx, *, app: str | None = None, limit: int = 20
 ) -> list[dict[str, Any]]:
   """Recorded runs, newest first. `app` narrows to one app's (full) id.
 
   Read from the index, not the directory: the index remembers runs whose
   output file has since been pruned, and `available` says which is which.
   """
-  table = LogTab(config.activity_log)
   key = _index_key(AppID(app)) if app and app != HARBOR_DIR else None
   runs: list[dict[str, Any]] = []
-  for record_key, entry in table.history(suffix="/run"):
+  for record_key, entry in ctx.activity_log.history(suffix="/run"):
     if key is not None and record_key != key:
       continue
     if app == HARBOR_DIR and record_key != _index_key(None):
@@ -155,14 +155,14 @@ def list_runs(
         "status": record.get("status", ""),
         "duration_ms": record.get("ms"),
         "log": relpath,
-        "available": bool(relpath) and (config.activity_root / relpath).is_file(),
+        "available": bool(relpath) and (ctx.config.activity_root / relpath).is_file(),
       }
     )
   runs.reverse()
   return runs[: max(0, limit)]
 
 
-def read_run_log(config: Config, dirname: str, filename: str) -> str:
+def read_run_log(ctx: HarborCtx, dirname: str, filename: str) -> str:
   """The text of one run file, named the way the index names it.
 
   Both parts come from a client, so both are validated as single, known-shape
@@ -176,8 +176,8 @@ def read_run_log(config: Config, dirname: str, filename: str) -> str:
       raise ValueError(f"No activity for {dirname!r}") from None
   if not FILENAME_RE.fullmatch(filename):
     raise ValueError(f"No run log named {filename!r}")
-  path = (config.activity_root / dirname / filename).resolve()
-  root = config.activity_root.resolve()
+  path = (ctx.config.activity_root / dirname / filename).resolve()
+  root = ctx.config.activity_root.resolve()
   if not path.is_relative_to(root) or not path.is_file():
     raise ValueError(f"No run log at {dirname}/{filename}")
   return path.read_text()

@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import cached_property
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -12,8 +13,9 @@ from filelock import FileLock, Timeout
 from harbor.lib.apps import AppID
 from harbor.lib.config import Config
 from harbor.lib.crypto import crypto_from_config
-from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
+from harbor.lib.docker import load_harbor_run_unit_status
 from harbor.lib.happ import scan_happs
+from harbor.lib.logtab import LogTab
 from harbor.lib.observations import AppObservation, RunState, collect_observations
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore, HarborStore
@@ -23,6 +25,9 @@ logger = logging.getLogger("harbor")
 # Long enough to ride out another harbor finishing a normal command, short
 # enough that a stale lockfile does not look like a hang.
 LOCK_TIMEOUT = 5.0
+
+ACTIVITY_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10mb
+ACTIVITY_LOG_HISTORY = 2000  # records
 
 
 def lock_timeout() -> float:
@@ -114,18 +119,17 @@ class StagedAppPaths:
 class HarborCtx:
   def __init__(self, config: Config):
     self.config = config
-    self._docker_status: dict[str, tuple[HarborRunUnitStatus, ...]] | None = None
-    self._harbordb: HarborStore | None = None
-    self._observations: dict[str, AppObservation] | None = None
     # FileLock will not create the parent. One FileLock per path so a nested
     # acquire in this process is reentrant rather than self-deadlocking.
     self.config.lock_root.mkdir(parents=True, exist_ok=True)
     self._harbor_lock = FileLock(self.config.harbor_lockfile_path)
     self._app_locks: dict[str, FileLock] = {}
 
-  def invalidate_containers(self) -> None:
-    """Drop cached docker ps. Call after this process starts or stops containers."""
-    self._docker_status = None
+    self.activity_log = LogTab(
+      config.activity_log,
+      auto_compact_size_bytes=ACTIVITY_LOG_MAX_BYTES,
+      auto_compact_history=ACTIVITY_LOG_HISTORY,
+    )
 
   def _app_filelock(self, app: AppID | str) -> FileLock:
     key = str(app)
@@ -177,10 +181,9 @@ class HarborCtx:
       with self.harbor_lock(by):
         yield
 
+  @cached_property
   def harbor_db(self) -> HarborStore:
-    if self._harbordb is None:
-      self._harbordb = HarborStore.from_config(self.config)
-    return self._harbordb
+    return HarborStore.from_config(self.config)
 
   def run_path(self, app: AppID | str) -> Path:
     app_id = str(app)
@@ -314,11 +317,6 @@ class HarborCtx:
 
     return found[0]
 
-  def docker_container_statuses(self) -> dict[str, tuple[HarborRunUnitStatus, ...]]:
-    if self._docker_status is None:
-      self._docker_status = load_harbor_run_unit_status()
-    return self._docker_status
-
   def _observed_app_ids(self) -> set[str]:
     """Collect every app_id that has left a trace: a bundle dir, a run folder,
     a config logtab, a container, or a harbordb entry.
@@ -326,8 +324,8 @@ class HarborCtx:
     ids = set(self.known_bundles())
     if self.config.run_root.is_dir():
       ids |= {path.name for path in self.config.run_root.iterdir() if path.is_dir()}
-    ids |= set(self.docker_container_statuses())
-    ids |= set(self.harbor_db().app_ids())
+    ids |= set(load_harbor_run_unit_status())
+    ids |= set(self.harbor_db.app_ids())
     ids |= self.config.app_config_ids()
     return ids
 
@@ -357,10 +355,9 @@ class HarborCtx:
       run_path=paths.run_path,
       run_dir_exists=paths.run_path.is_dir(),
       compose_exists=paths.compose_path.is_file(),
-      containers=self.docker_container_statuses().get(resolved, ()),
+      containers=load_harbor_run_unit_status().get(resolved, ()),
     )
 
   def observations(self) -> tuple[AppObservation, ...]:
-    if self._observations is None:
-      self._observations = collect_observations(self)
-    return tuple(self._observations[key] for key in sorted(self._observations))
+    collected = collect_observations(self)
+    return tuple(collected[key] for key in sorted(collected))

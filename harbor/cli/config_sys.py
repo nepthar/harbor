@@ -66,7 +66,7 @@ def register(subparsers) -> None:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   with ctx.harbor_lock("config-sys"):
-    db = ctx.harbor_db()
+    db = ctx.harbor_db
     changed = False
 
     if args.stdin_key is not None:

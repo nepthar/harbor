@@ -291,7 +291,7 @@ class JobRunner:
       return None
     try:
       return activity.record_run(
-        ctx.config,
+        ctx,
         verb,
         args,
         app_id=self._record_app(ctx, args),

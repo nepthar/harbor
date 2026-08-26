@@ -53,7 +53,7 @@ def _duration(ms: int | None) -> str:
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   app = _resolve(args.app_id, ctx)
-  runs = activity.list_runs(ctx.config, app=app, limit=max(args.last, args.show or 0))
+  runs = activity.list_runs(ctx, app=app, limit=max(args.last, args.show or 0))
 
   if not runs:
     where = f" for {app}" if app else ""
@@ -70,7 +70,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
         f"its index record above is all that remains"
       )
     dirname, _, filename = entry["log"].partition("/")
-    conn.out(activity.read_run_log(ctx.config, dirname, filename).rstrip("\n"))
+    conn.out(activity.read_run_log(ctx, dirname, filename).rstrip("\n"))
     return
 
   for index, entry in enumerate(runs, start=1):

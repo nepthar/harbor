@@ -21,6 +21,7 @@ from harbor.lib.config import (
   RouteProviderKind,
   load_config_file,
 )
+from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle.routes import assigned_routes, preflight_app_routes
 from harbor.lib.manifest import ConfigError, Manifest, _validate_routes
 from harbor.lib.routes import (
@@ -415,12 +416,38 @@ env = { HOST = "${happ.host}" }
     )
 
 
-class _RouteDB:
-  def get_secret(self, name):
-    return "test-password"
+def _config(tmp_path: Path, route_providers: dict) -> Config:
+  return Config(
+    config_path=tmp_path / "config.toml",
+    harbor_root=tmp_path,
+    volume_roots={},
+    apps_root=tmp_path / "apps",
+    run_root=tmp_path / "run",
+    snapshot_root=tmp_path / "snapshots",
+    master_key="",
+    master_keyfile=tmp_path / "master.key",
+    port_base=41000,
+    harbor_address="192.168.1.10",
+    default_route_provider="web",
+    route_providers={
+      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
+        kind="noop", domain=PLACEHOLDER_DOMAIN
+      ),
+      **route_providers,
+    },
+  )
 
-  def get_token(self, name):
-    return None, None
+
+def _ctx(
+  tmp_path: Path,
+  route_providers: dict,
+  *,
+  secrets: dict[str, str] | None = None,
+) -> HarborCtx:
+  ctx = HarborCtx(_config(tmp_path, route_providers))
+  for name, value in (secrets or {}).items():
+    ctx.harbor_db.set_secret(name, value)
+  return ctx
 
 
 # ── provider dispatch ──────────────────────────────────────────────────────
@@ -433,7 +460,7 @@ def test_every_config_kind_has_a_provider():
   assert set(get_args(RouteProviderKind)) == set(PROVIDERS)
 
 
-def test_provider_must_implement_from_config():
+def test_provider_must_implement_from_config(tmp_path):
   class Halfway(RouteProvider):
     KIND = "halfway"
 
@@ -441,8 +468,7 @@ def test_provider_must_implement_from_config():
     Halfway.from_config(
       "web",
       RouteProviderEntry(kind="noop", domain="home.example"),
-      _pangolin_config(PANGOLIN_ARGS),
-      _RouteDB(),
+      HarborCtx(_config(tmp_path, {})),
     )
 
 
@@ -475,23 +501,10 @@ def _npm_provider():
   )
 
 
-def test_documented_route_provider_config_constructs():
-  config = Config(
-    config_path=Path("/tmp/config.toml"),
-    harbor_root=Path("/tmp"),
-    volume_roots={},
-    apps_root=Path("/tmp/apps"),
-    run_root=Path("/tmp/run"),
-    snapshot_root=Path("/tmp/snapshots"),
-    master_key="",
-    master_keyfile=Path("/tmp/master.key"),
-    port_base=41000,
-    harbor_address="192.168.1.10",
-    default_route_provider="web",
-    route_providers={
-      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
-        kind="noop", domain=PLACEHOLDER_DOMAIN
-      ),
+def test_documented_route_provider_config_constructs(tmp_path):
+  ctx = _ctx(
+    tmp_path,
+    {
       "web": RouteProviderEntry(
         kind="nginx_proxy_manager",
         domain="home.example",
@@ -502,9 +515,10 @@ def test_documented_route_provider_config_constructs():
         },
       ),
     },
+    secrets={"npm.password": "test-password"},
   )
 
-  provider = get_route_provider(_RouteDB(), config, "web")
+  provider = get_route_provider(ctx, "web")
 
   assert isinstance(provider, NginxProxyManagerRouteProvider)
   assert provider.email == "admin@example.com"
@@ -657,25 +671,14 @@ def _pangolin_provider(
   return provider
 
 
-def _pangolin_config(args: dict[str, str]):
-  return Config(
-    config_path=Path("/tmp/config.toml"),
-    harbor_root=Path("/tmp"),
-    volume_roots={},
-    apps_root=Path("/tmp/apps"),
-    run_root=Path("/tmp/run"),
-    snapshot_root=Path("/tmp/snapshots"),
-    master_key="",
-    master_keyfile=Path("/tmp/master.key"),
-    port_base=41000,
-    harbor_address="192.168.1.10",
-    default_route_provider="web",
-    route_providers={
-      NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
-        kind="noop", domain=PLACEHOLDER_DOMAIN
-      ),
-      "web": RouteProviderEntry(kind="pangolin", domain="home.example", args=args),
-    },
+def _pangolin_ctx(tmp_path: Path, args: dict[str, str]):
+  secrets = {}
+  if secret := args.get("api_key_secret"):
+    secrets[secret] = "test-key"
+  return _ctx(
+    tmp_path,
+    {"web": RouteProviderEntry(kind="pangolin", domain="home.example", args=args)},
+    secrets=secrets,
   )
 
 
@@ -687,8 +690,8 @@ PANGOLIN_ARGS = {
 }
 
 
-def test_pangolin_config_constructs():
-  provider = get_route_provider(_RouteDB(), _pangolin_config(PANGOLIN_ARGS), "web")
+def test_pangolin_config_constructs(tmp_path):
+  provider = get_route_provider(_pangolin_ctx(tmp_path, PANGOLIN_ARGS), "web")
 
   assert isinstance(provider, PangolinRouteProvider)
   assert provider.org_id == "acme"
@@ -698,9 +701,9 @@ def test_pangolin_config_constructs():
   assert provider.shared_policy is None
 
 
-def test_pangolin_config_passes_shared_policy():
+def test_pangolin_config_passes_shared_policy(tmp_path):
   args = {**PANGOLIN_ARGS, "shared_policy": POLICY}
-  provider = get_route_provider(_RouteDB(), _pangolin_config(args), "web")
+  provider = get_route_provider(_pangolin_ctx(tmp_path, args), "web")
   assert provider.shared_policy == POLICY
 
 
@@ -709,22 +712,21 @@ def test_pangolin_empty_shared_policy_is_unset():
   assert provider.shared_policy is None
 
 
-def test_pangolin_config_tags_can_carry_different_shared_policies():
-  config = _pangolin_config(PANGOLIN_ARGS)
-  config.route_providers["closed"] = RouteProviderEntry(
+def test_pangolin_config_tags_can_carry_different_shared_policies(tmp_path):
+  ctx = _pangolin_ctx(tmp_path, PANGOLIN_ARGS)
+  ctx.config.route_providers["closed"] = RouteProviderEntry(
     kind="pangolin",
     domain="home.example",
     args={**PANGOLIN_ARGS, "shared_policy": POLICY},
   )
-  config.route_providers["open"] = RouteProviderEntry(
+  ctx.config.route_providers["open"] = RouteProviderEntry(
     kind="pangolin",
     domain="open.example",
     args={**PANGOLIN_ARGS, "shared_policy": "open-policy-slug"},
   )
-  db = _RouteDB()
 
-  closed = get_route_provider(db, config, "closed")
-  opened = get_route_provider(db, config, "open")
+  closed = get_route_provider(ctx, "closed")
+  opened = get_route_provider(ctx, "open")
 
   assert closed.shared_policy == POLICY
   assert opened.shared_policy == "open-policy-slug"
@@ -899,23 +901,25 @@ def test_pangolin_https_endpoint_keeps_case_and_drops_trailing_slash():
   assert provider.endpoint == "HTTPS://Pangolin.Example:3003"
 
 
-def test_pangolin_config_refuses_plaintext_endpoint():
+def test_pangolin_config_refuses_plaintext_endpoint(tmp_path):
   # The refusal has to survive the config path, not just direct construction.
-  config = _pangolin_config({**PANGOLIN_ARGS, "endpoint": "http://pangolin.example"})
+  ctx = _pangolin_ctx(
+    tmp_path, {**PANGOLIN_ARGS, "endpoint": "http://pangolin.example"}
+  )
   with pytest.raises(RouteProviderError, match="is not https"):
-    get_route_provider(_RouteDB(), config, "web")
+    get_route_provider(ctx, "web")
 
 
-def test_pangolin_config_does_not_touch_the_network():
+def test_pangolin_config_does_not_touch_the_network(tmp_path):
   """Construction stays offline; the site lookup waits until a route needs it."""
-  provider = get_route_provider(_RouteDB(), _pangolin_config(PANGOLIN_ARGS), "web")
+  provider = get_route_provider(_pangolin_ctx(tmp_path, PANGOLIN_ARGS), "web")
   assert provider._resolved_site_id is None
 
 
-def test_pangolin_config_reports_missing_args():
+def test_pangolin_config_reports_missing_args(tmp_path):
   args = {k: v for k, v in PANGOLIN_ARGS.items() if k != "org_id"}
   with pytest.raises(RouteProviderError, match="org_id"):
-    get_route_provider(_RouteDB(), _pangolin_config(args), "web")
+    get_route_provider(_pangolin_ctx(tmp_path, args), "web")
 
 
 def test_pangolin_register_creates_resource_and_target():

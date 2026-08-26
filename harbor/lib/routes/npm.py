@@ -1,14 +1,20 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from time import time
+from typing import TYPE_CHECKING
 
 import requests
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import Config, RouteProviderEntry
+from harbor.lib.config import RouteProviderEntry
 from harbor.lib.store import HarborStore
 
 from .base import RouteProvider, RouteProviderError, refuse_foreign_route
+
+if TYPE_CHECKING:
+  from harbor.lib.harbor import HarborCtx
 
 logger = logging.getLogger("harbor.routes")
 
@@ -36,16 +42,16 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     cls,
     tag: str,
     conf: RouteProviderEntry,
-    config: Config,
-    harbor_db: HarborStore,
-  ) -> "NginxProxyManagerRouteProvider":
+    ctx: HarborCtx,
+  ) -> NginxProxyManagerRouteProvider:
     args = cls._args(tag, conf)
+    harbor_db = ctx.harbor_db
     password = cls._secret(harbor_db, args.pop("password_secret"))
     token, token_expire = harbor_db.get_token(cls._TOKEN_KEY)
     return cls(
       password=password,
       harbor_domain=conf.domain,
-      harbor_address=config.harbor_address,
+      harbor_address=ctx.config.harbor_address,
       harbor_db=harbor_db,
       token=token,
       token_expire=token_expire,

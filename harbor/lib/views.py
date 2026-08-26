@@ -221,7 +221,7 @@ def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
   Fetch records the full github: spec; the catalog only needs the publisher.
   Anything else -- a path, a missing record, a spec we cannot read -- is local.
   """
-  record = ctx.harbor_db().get_app_source(app_id)
+  record = ctx.harbor_db.get_app_source(app_id)
   if record is None:
     return "local"
   spec = record["source"]
@@ -325,7 +325,7 @@ def activity_view(
   `app` takes a full app id (or "harbor" for app-less runs); resolving a stem
   is the caller's business, since a removed app's records outlive its bundle.
   """
-  return activity.list_runs(ctx.config, app=app, limit=limit)
+  return activity.list_runs(ctx, app=app, limit=limit)
 
 
 def activity_log_view(ctx: HarborCtx, dirname: str, filename: str) -> dict[str, Any]:
@@ -333,7 +333,7 @@ def activity_log_view(ctx: HarborCtx, dirname: str, filename: str) -> dict[str, 
   return {
     "app_id": None if dirname == activity.HARBOR_DIR else dirname,
     "file": f"{dirname}/{filename}",
-    "text": activity.read_run_log(ctx.config, dirname, filename),
+    "text": activity.read_run_log(ctx, dirname, filename),
   }
 
 

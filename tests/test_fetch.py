@@ -560,7 +560,7 @@ def test_fetch_installs_a_happ(github, ctx, harbor_env):
   assert "alpine:latest" in conn.text
   assert f"nepthar/harbor@{SHA[:8]}" in conn.text
   assert "Installed hello-world" in conn.text
-  record = ctx.harbor_db().get_app_source("hello-world")
+  record = ctx.harbor_db.get_app_source("hello-world")
   assert record == {
     "source": TARGET,
     "current": format_current("0.1.0", SHA),
@@ -817,7 +817,7 @@ def test_fetch_app_id_replaces_the_catalog_when_main_moves(github, ctx, harbor_e
   assert f" - {format_current('0.1.0', SHA)}" in conn.text
   assert f" + {format_current('0.2.0', NEW_SHA)}" in conn.text
   assert "snapshot" not in conn.text.lower()
-  record = ctx.harbor_db().get_app_source("hello-world")
+  record = ctx.harbor_db.get_app_source("hello-world")
   assert record == {
     "source": TARGET,
     "current": format_current("0.2.0", NEW_SHA),
@@ -847,7 +847,7 @@ def test_fetch_app_id_does_not_touch_the_run_dir(github, ctx, harbor_env):
 def test_a_pinned_fetch_does_not_follow_main(github, ctx, harbor_env):
   github.hello_world()
   fetch(ctx, FakeConn(), f"{TARGET}@{SHA}")
-  record = ctx.harbor_db().get_app_source("hello-world")
+  record = ctx.harbor_db.get_app_source("hello-world")
   assert record["source"] == f"{TARGET}@{SHA}"
 
   github.sha = NEW_SHA
@@ -857,7 +857,7 @@ def test_a_pinned_fetch_does_not_follow_main(github, ctx, harbor_env):
 
   assert f"pinned at {format_current('0.1.0', SHA)}" in conn.text
   assert len(github.requests) == before
-  assert ctx.harbor_db().get_app_source("hello-world")["current"] == format_current(
+  assert ctx.harbor_db.get_app_source("hello-world")["current"] == format_current(
     "0.1.0", SHA
   )
 
@@ -872,7 +872,7 @@ def test_fetch_app_id_at_sha_pins_without_redownloading(github, ctx, harbor_env)
 
   assert f"Pinned hello-world at {format_current('0.1.0', SHA)}" in conn.text
   assert not any("/git/trees/" in path for path in github.requests[before:])
-  assert ctx.harbor_db().get_app_source("hello-world")["source"] == f"{TARGET}@{SHA}"
+  assert ctx.harbor_db.get_app_source("hello-world")["source"] == f"{TARGET}@{SHA}"
 
 
 def test_fetch_app_id_at_sha_moves_a_pin(github, ctx, harbor_env):
@@ -884,7 +884,7 @@ def test_fetch_app_id_at_sha_moves_a_pin(github, ctx, harbor_env):
   fetch(ctx, conn, f"hello-world@{NEW_SHA}")
 
   assert "Updated hello-world" in conn.text
-  record = ctx.harbor_db().get_app_source("hello-world")
+  record = ctx.harbor_db.get_app_source("hello-world")
   assert record == {
     "source": f"{TARGET}@{NEW_SHA}",
     "current": format_current("0.2.0", NEW_SHA),
@@ -1072,7 +1072,7 @@ def test_fetch_job_installs_and_records_its_source(github, api_client, ctx, harb
   assert "Installed hello-world" in job["output"]
   installed = harbor_env.root / "apps" / "hello-world.happ"
   assert (installed / "manifest.toml").read_bytes() == MANIFEST
-  assert ctx.harbor_db().get_app_source("hello-world") == {
+  assert ctx.harbor_db.get_app_source("hello-world") == {
     "source": TARGET,
     "current": format_current("0.1.0", SHA),
   }

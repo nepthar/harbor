@@ -70,7 +70,7 @@ def start(
   try:
     preflight_app_routes(run_data, ctx)
   except RouteProviderError as e:
-    record_app_action("start-failed", app, ctx.config)
+    record_app_action("start-failed", app, ctx)
     raise ValueError(str(e)) from e
 
   # The binds only become links here, and only for as long as the app runs.
@@ -87,19 +87,18 @@ def start(
       env=run_data.config_env(),
     )
   except DockerError as e:
-    record_app_action("start-failed", app, ctx.config)
+    record_app_action("start-failed", app, ctx)
     raise ValueError(str(e)) from e
 
   try:
     register_app_routes(run_data, ctx)
   except RouteProviderError as e:
-    record_app_action("start-failed", app, ctx.config)
+    record_app_action("start-failed", app, ctx)
     raise ValueError(
       f"{e}. Containers may still be running; run `harbor stop {app}` to stop them."
     ) from e
 
-  record_app_action("started", app, ctx.config)
-  ctx.invalidate_containers()
+  record_app_action("started", app, ctx)
   return result
 
 
@@ -215,8 +214,7 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
     # Nothing is mounting them now, and leaving them behind is how a stopped
     # app keeps looking like it is still bound to somebody's data.
     unlink_host_volumes(state.run_path)
-    record_app_action("stopped", app_id, ctx.config)
-    ctx.invalidate_containers()
+    record_app_action("stopped", app_id, ctx)
   except DockerError as e:
-    record_app_action("stop-failed", app_id, ctx.config)
+    record_app_action("stop-failed", app_id, ctx)
     raise ValueError(str(e)) from e

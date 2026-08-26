@@ -126,7 +126,7 @@ def test_catalog_groups_a_second_app_source(harbor_env, client):
 
 
 def test_catalog_names_a_github_origin(harbor_env, client):
-  ctx().harbor_db().set_app_source(
+  ctx().harbor_db.set_app_source(
     "ports-demo",
     source="github:nepthar/harbor/main/examples/ports-demo.happ",
     current="0.1.0@" + "a" * 40,

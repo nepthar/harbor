@@ -1,5 +1,8 @@
-from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG, Config
-from harbor.lib.store import HarborStore
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from harbor.lib.config import NONE_ROUTE_PROVIDER_TAG
 
 from .base import (
   NoopRouteProvider,
@@ -9,6 +12,9 @@ from .base import (
 )
 from .npm import NginxProxyManagerRouteProvider
 from .pangolin import PangolinRouteProvider
+
+if TYPE_CHECKING:
+  from harbor.lib.harbor import HarborCtx
 
 __all__ = [
   "NginxProxyManagerRouteProvider",
@@ -32,9 +38,7 @@ PROVIDERS: dict[str, type[RouteProvider]] = {
 }
 
 
-def get_route_provider(
-  harbor_db: HarborStore, config: Config, tag: str
-) -> RouteProvider:
+def get_route_provider(ctx: HarborCtx, tag: str) -> RouteProvider:
   """Build the route provider for ``tag``.
 
   A thin dispatcher: it resolves the tag to a config block and hands that block
@@ -42,11 +46,11 @@ def get_route_provider(
   ``args`` is that provider's business, not this function's.
   """
   if tag == NONE_ROUTE_PROVIDER_TAG:
-    return NoopRouteProvider(domain=config.provider_domain(tag))
+    return NoopRouteProvider(domain=ctx.config.provider_domain(tag))
 
-  conf = config.route_providers.get(tag)
+  conf = ctx.config.route_providers.get(tag)
   if conf is None:
-    known = ", ".join(sorted(config.route_providers))
+    known = ", ".join(sorted(ctx.config.route_providers))
     raise RouteProviderError(
       f"No route provider tagged {tag!r}; known tags: {known}. "
       f"Add [route_provider.{tag}] to config.toml or pick an existing tag"
@@ -59,4 +63,4 @@ def get_route_provider(
       f"route_provider.{tag}: unknown kind {conf.kind!r}; expected one of {expected}"
     )
 
-  return provider.from_config(tag, conf, config, harbor_db)
+  return provider.from_config(tag, conf, ctx)

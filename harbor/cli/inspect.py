@@ -50,7 +50,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
         compact=False,
         notes=notes,
         state_line=_state_line(ctx.run_state(app)),
-        last_action=read_last_app_action(app, ctx.config) or "-",
+        last_action=read_last_app_action(app, ctx) or "-",
         show_logs=True,
       )
     )

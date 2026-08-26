@@ -280,13 +280,13 @@ def _restore_extracted(
   except Exception as e:
     # The run dir and volumes are already the snapshot's; only the generated
     # half is missing, which is what re-staging rebuilds.
-    record_app_action("restore-failed", app, ctx.config)
+    record_app_action("restore-failed", app, ctx)
     raise ValueError(
       f"App {app} was restored from {plan.snapshot_path}, but its compose.yml "
       f"and routes could not be rebuilt; fix the problem below and run "
       f"`harbor stage {app}`.\n{e}"
     ) from e
 
-  record_app_action(f"restored - {plan.snapshot_path.name}", app, ctx.config)
+  record_app_action(f"restored - {plan.snapshot_path.name}", app, ctx)
   logger.info("restored %s from %s", app, plan.snapshot_path)
   return run_data

@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from harbor.lib.apps import AppID
-from harbor.lib.config import Config, RouteProviderEntry
+from harbor.lib.config import RouteProviderEntry
 from harbor.lib.store import HarborStore
+
+if TYPE_CHECKING:
+  from harbor.lib.harbor import HarborCtx
 
 logger = logging.getLogger("harbor.routes")
 
@@ -30,9 +36,8 @@ class RouteProvider:
     cls,
     tag: str,
     conf: RouteProviderEntry,
-    config: Config,
-    harbor_db: HarborStore,
-  ) -> "RouteProvider":
+    ctx: HarborCtx,
+  ) -> RouteProvider:
     """Build this provider from its ``[route_provider.<tag>]`` block.
 
     Each provider reads whatever it needs -- its own ``args``, the harbor-wide
@@ -110,9 +115,8 @@ class NoopRouteProvider(RouteProvider):
     cls,
     tag: str,
     conf: RouteProviderEntry,
-    config: Config,
-    harbor_db: HarborStore,
-  ) -> "NoopRouteProvider":
+    ctx: HarborCtx,
+  ) -> NoopRouteProvider:
     return cls(domain=conf.domain)
 
   def __init__(self, domain: str = ""):

@@ -72,7 +72,7 @@ def _provider(ctx: HarborCtx, conn, tag: str | None):
     raise SystemExit(1) from e
 
   try:
-    provider = get_route_provider(ctx.harbor_db(), ctx.config, resolved)
+    provider = get_route_provider(ctx, resolved)
   except RouteProviderError as e:
     conn.err(f"Error: {e}")
     raise SystemExit(1) from e

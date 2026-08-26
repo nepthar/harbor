@@ -20,7 +20,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
     catalog = ctx.app_catalog()
     staged = ctx.staged_app_ids()
     # One read of the activity log for every app, rather than one per row.
-    actions = read_app_actions(ctx.config)
+    actions = read_app_actions(ctx)
     origins = {app_id: ctx.staged_origin(app_id) for app_id in staged}
 
     # An id carried by two app sources gets a row per source, which is what

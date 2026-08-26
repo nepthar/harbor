@@ -12,11 +12,9 @@ from .logtab import LogTab
 
 logger = logging.getLogger("harbor.store")
 
-# These constants have been chosen arbitrarily and can be adjusted if use cases
-# come up that require more.
-MAX_NAME_LEN = 256
-MAX_VALUE_LEN = 512
 PORT_RANGE_SIZE = 1000
+
+STORE_MAX_BYTES = 1 * 1024 * 1024  # 10mb
 
 
 class ConfigStore(Protocol):
@@ -38,7 +36,7 @@ class JsonLogtabStore(ConfigStore):
 
   def __init__(self, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    self._table = LogTab(path)
+    self._table = LogTab(path, auto_compact_size_bytes=STORE_MAX_BYTES)
 
   def write(self, key: str, value: Any) -> None:
     self._table.write(key, json.dumps(value, separators=(",", ":")))
@@ -119,10 +117,6 @@ class HarborStore:
 
   # Secrets - Long-lived secrets like API keys or passwords
   def set_secret(self, name: str, value: str) -> None:
-    if len(name) > MAX_NAME_LEN:
-      raise ValueError(f"Name too long for secret {name!r}")
-    if len(value) > MAX_VALUE_LEN:
-      raise ValueError(f"Value too long for secret {name!r}")
     self._store.write(f"system/secrets/{name}", self._crypto.encrypt(value))
 
   def get_secret(self, name: str) -> str | None:
@@ -183,10 +177,6 @@ class AppStore:
     self._crypto = crypto
 
   def set_config(self, name: str, secret: bool, value: str) -> None:
-    if len(name) > MAX_NAME_LEN:
-      raise ValueError(f"Name too long for config {name!r}")
-    if len(value) > MAX_VALUE_LEN:
-      raise ValueError(f"Value too long for config {name!r}")
     stored = self._crypto.encrypt(value) if secret else value
     self._store.write(f"config/{name}", {"secret": secret, "value": stored})
 

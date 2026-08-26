@@ -99,7 +99,7 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
   if not app_subdomain:
     raise ValueError(f"App {stack.app} declares routes but has no [app].subdomain")
 
-  hdb = ctx.harbor_db()
+  hdb = ctx.harbor_db
   hdb.clear_routes(stack.app)
   for route_name, route in stack.routes.items():
     if route.needs_allocation:
@@ -319,7 +319,7 @@ def _relabel_routes(stack: AppStack, app_subdomain: str, ctx: HarborCtx) -> None
   Ports stay as they are; only the DNS label changes. Compose is rewritten
   so `${routes.*}` URLs match before the next start.
   """
-  hdb = ctx.harbor_db()
+  hdb = ctx.harbor_db
   for name, entry in hdb.list_routes(stack.app).items():
     route = stack.routes.get(name)
     if route is None:
@@ -456,9 +456,9 @@ def stage(
   try:
     run_data, dropped = materialize(stack, ctx)
   except Exception:
-    record_app_action("stage-failed", app, ctx.config)
+    record_app_action("stage-failed", app, ctx)
     raise
 
   store.set_meta("staged_at", LogTab.ts())
-  record_app_action("staged", app, ctx.config)
+  record_app_action("staged", app, ctx)
   return StageSuccess(stack, run_data, dropped)
