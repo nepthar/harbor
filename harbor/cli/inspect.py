@@ -7,7 +7,6 @@ from harbor.lib.harbor import HarborCtx
 from harbor.lib.observations import RunState
 from harbor.lib.receipt import capability_receipt
 from harbor.lib.run_layout import load_run_data
-from harbor.lib.stack import AppStack
 
 
 def register(subparsers) -> None:
@@ -33,19 +32,33 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
   app = ctx.resolve_app(args.app)
   with ctx.locked(f"inspect {app}", app):
-    # Report what is installed under run/, never the catalog entry under apps/.
-    # Pass a path to a .happ to inspect a bundle that is not staged yet.
-    stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
-    run_data = load_run_data(stack, ctx)
-    notes = ()
-    if ctx.manifest_stale(app):
-      notes = (
-        f"manifest has changed, `harbor stage {app}` may be required to reflect changes",
+    # Report what is installed under run/. An app that is not installed has
+    # no manifest there, so fall back to the bundle it would be installed
+    # from -- saying nothing at all is the one useless answer.
+    staged = ctx.staged_stack(app)
+    stack = staged or ctx.bundle_stack(app)
+    if stack is None:
+      raise ValueError(
+        f"No manifest for {app}: it is neither installed nor in a catalog. "
+        f"Pass a path to a .happ to inspect one directly."
       )
+
+    notes: tuple[str, ...] = ()
+    if staged is None:
+      notes = (
+        f"{app} is not installed; this is the manifest it would be installed "
+        f"from. Install it with `harbor install {app}`",
+      )
+    elif ctx.manifest_stale(app):
+      notes = (
+        f"manifest has changed, `harbor install {app}` may be required to "
+        f"reflect changes",
+      )
+
     conn.out(
       capability_receipt(
         stack,
-        run_data,
+        load_run_data(stack, ctx) if staged is not None else None,
         ctx,
         compact=False,
         notes=notes,

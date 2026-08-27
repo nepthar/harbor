@@ -6,7 +6,15 @@ from harbor.lib.lifecycle.restore import (
   restore_plan,
   snapshot_names,
 )
-from harbor.lib.lifecycle.rm import RemovalPlan, removal_plan, rm
+from harbor.lib.lifecycle.rm import (
+  PURGE,
+  RESET,
+  UNINSTALL,
+  RemovalMode,
+  RemovalPlan,
+  removal_plan,
+  rm,
+)
 from harbor.lib.lifecycle.routes import (
   assigned_routes,
   preflight_app_routes,
@@ -45,6 +53,10 @@ __all__ = [
   "preflight_app_routes",
   "recovery_lines",
   "register_app_routes",
+  "PURGE",
+  "RESET",
+  "UNINSTALL",
+  "RemovalMode",
   "removal_plan",
   "resolve_snapshot_app",
   "restore",

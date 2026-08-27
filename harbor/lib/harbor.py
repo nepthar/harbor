@@ -14,9 +14,14 @@ from harbor.lib.apps import AppID
 from harbor.lib.config import Config
 from harbor.lib.crypto import crypto_from_config
 from harbor.lib.docker import load_harbor_run_unit_status
-from harbor.lib.happ import scan_happs
+from harbor.lib.happ import load_happ, scan_happs
 from harbor.lib.logtab import LogTab
-from harbor.lib.observations import AppObservation, RunState, collect_observations
+from harbor.lib.observations import (
+  AppObservation,
+  RunState,
+  app_state,
+  collect_observations,
+)
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore, HarborStore
 
@@ -222,6 +227,38 @@ class HarborCtx:
       return None
     try:
       return AppStack.from_file(paths.manifest_path, paths.app_id)
+    except ValueError:
+      return None
+
+  def app_state(self, app: AppID | str) -> str:
+    """Where one app stands, from the filesystem alone.
+
+    The same answer `AppObservation.state` gives, without the `docker ps`
+    that building a full observation costs -- for callers listing a catalog,
+    where paying a subprocess per entry would be the whole render.
+    """
+    app_id = str(app)
+    return app_state(
+      run_dir_exists=self.staged_paths(app_id).run_path.is_dir(),
+      config_exists=self.config.app_config_path(app_id).is_file(),
+      volumes_exist=any(
+        (root / app_id).is_dir() for root in self.config.volume_roots.values()
+      ),
+    )
+
+  def bundle_stack(self, app: AppID | str) -> "AppStack | None":
+    """The catalog bundle's stack, or None when there is no single bundle.
+
+    What an app *would* look like installed. Callers reporting on an app
+    that is not staged -- `ps` and `inspect` on an uninstalled app, `config`
+    before a first install -- read the schema from here instead.
+    """
+    try:
+      bundle = self.bundle_path(app)
+    except ValueError:
+      return None
+    try:
+      return load_happ(bundle).app_stack()
     except ValueError:
       return None
 

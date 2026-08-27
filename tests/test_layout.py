@@ -53,7 +53,7 @@ volumes = {{ }}
 def test_stage_copies_the_happ_into_the_run_dir(harbor_env):
   """What is installed is a fact on disk, not a pointer to something else."""
   app_id = "ports-demo"
-  staged = harbor_env.run("stage", app_id)
+  staged = harbor_env.run("install", app_id)
   assert staged.returncode == 0, staged.stderr
 
   run_dir = harbor_env.run_root / app_id
@@ -69,14 +69,14 @@ def test_stage_copies_the_happ_into_the_run_dir(harbor_env):
 
 def test_editing_the_catalog_then_restaging_recopies(harbor_env):
   app_id = "ports-demo"
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   catalog = harbor_env.root / "apps" / f"{app_id}.happ" / "manifest.toml"
   catalog.write_text(
     catalog.read_text().replace('version      = "0.1.0"', 'version = "9"')
   )
 
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert (
     'version = "9"'
     in (harbor_env.run_root / app_id / "happ" / "manifest.toml").read_text()
@@ -86,25 +86,25 @@ def test_editing_the_catalog_then_restaging_recopies(harbor_env):
 def test_editing_the_run_copy_is_lost_on_the_next_stage(harbor_env):
   """The run copy is harbor's output, never its input: apps/ is the source."""
   app_id = "ports-demo"
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   copied = harbor_env.run_root / app_id / "happ" / "manifest.toml"
   copied.write_text(copied.read_text() + "\n# hand edit\n")
   (harbor_env.run_root / app_id / "happ" / "stowaway.txt").write_text("hi")
 
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert "# hand edit" not in copied.read_text()
   assert not (harbor_env.run_root / app_id / "happ" / "stowaway.txt").exists()
 
 
 def test_stage_preserves_config_and_volume_contents(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
 
   payload = harbor_env.volumes_root / "data" / BASIC / "config" / "state.txt"
   payload.write_text("precious")
 
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
 
   got = harbor_env.run("config", BASIC, "--get", "admin_user")
   assert got.stdout.strip() == "alice"
@@ -117,7 +117,7 @@ def test_stage_by_path_links_it_into_the_catalog(harbor_env):
   elsewhere.parent.mkdir()
   (harbor_env.root / "apps" / f"{app_id}.happ").rename(elsewhere)
 
-  staged = harbor_env.run("stage", str(elsewhere))
+  staged = harbor_env.run("install", str(elsewhere))
   assert staged.returncode == 0, staged.stderr
 
   entry = harbor_env.root / "apps" / f"{app_id}.happ"
@@ -136,7 +136,7 @@ def test_stage_by_path_refuses_a_conflicting_catalog_entry(harbor_env):
   )
   (harbor_env.root / "apps" / "scratch.happ").rename(other)
 
-  refused = harbor_env.run("stage", str(other))
+  refused = harbor_env.run("install", str(other))
   assert refused.returncode == 1
   assert "already in the catalog" in refused.stderr
 
@@ -145,7 +145,7 @@ def test_stage_refuses_while_containers_are_running(harbor_env):
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
 
-  refused = harbor_env.run("stage", app_id)
+  refused = harbor_env.run("install", app_id)
   assert refused.returncode == 1
   assert f"harbor stop {app_id}" in refused.stderr
 
@@ -156,11 +156,11 @@ def test_stage_refuses_when_config_is_gone_but_data_remains(harbor_env):
   Fresh `auto` secrets against data that expects the old ones produce an app
   that fails to authenticate for reasons nothing in the error explains.
   """
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   (harbor_env.volumes_root / "data" / BASIC / "config" / "db").write_text("rows")
   harbor_env.app_logtab(BASIC).unlink()
 
-  refused = harbor_env.run("stage", BASIC)
+  refused = harbor_env.run("install", BASIC)
   assert refused.returncode == 1
   assert "volume data but no config" in refused.stderr
   assert f"harbor rm {BASIC}" in refused.stderr
@@ -168,13 +168,13 @@ def test_stage_refuses_when_config_is_gone_but_data_remains(harbor_env):
 
 def test_restaging_after_a_deleted_run_dir_reuses_config(harbor_env):
   """Config lives in config/, so wiping the run dir does not lose secrets."""
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   minted = harbor_env.run(
     "config", BASIC, "--get", "admin_pass", "--show-secret"
   ).stdout.strip()
   shutil.rmtree(harbor_env.run_root / BASIC)
 
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   again = harbor_env.run(
     "config", BASIC, "--get", "admin_pass", "--show-secret"
   ).stdout.strip()
@@ -186,7 +186,7 @@ def test_restaging_after_a_deleted_run_dir_reuses_config(harbor_env):
 
 def test_app_links_are_relative_and_managed_links_are_absolute(harbor_env):
   """Relative app links survive a moved run dir; managed roots may be elsewhere."""
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   volumes = harbor_env.run_root / BASIC / "volumes"
 
   app_link = volumes / "app" / "bin"
@@ -204,7 +204,7 @@ def test_app_links_are_relative_and_managed_links_are_absolute(harbor_env):
 
 
 def test_app_volumes_are_mounted_read_only(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   mounts = _compose(harbor_env, BASIC)["services"]["main"]["volumes"]
 
   assert "./volumes/app/bin:/myapp/bin:ro" in mounts
@@ -220,7 +220,7 @@ def test_readonly_false_on_an_app_volume_is_a_manifest_error(harbor_env):
     _volumes_manifest('assets = { kind = "app", readonly = false }'),
   )
 
-  refused = harbor_env.run("stage", "bad-app-volume")
+  refused = harbor_env.run("install", "bad-app-volume")
   assert refused.returncode == 1
   assert "app volumes are always mounted read-only" in refused.stderr
   assert "assets" in refused.stderr
@@ -234,12 +234,12 @@ def test_a_dropped_volume_keeps_its_data_and_is_reported(harbor_env):
     app_id,
     _volumes_manifest('one = { kind = "data" }\ntwo = { kind = "data" }'),
   )
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   payload = harbor_env.volumes_root / "data" / app_id / "two" / "keep.txt"
   payload.write_text("still here")
 
   _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
-  restaged = harbor_env.run("stage", app_id)
+  restaged = harbor_env.run("install", app_id)
   assert restaged.returncode == 0, restaged.stderr
 
   assert not (harbor_env.run_root / app_id / "volumes" / "data" / "two").exists()
@@ -250,14 +250,14 @@ def test_a_dropped_volume_keeps_its_data_and_is_reported(harbor_env):
 def test_an_added_volume_is_created_empty(harbor_env):
   app_id = "vol-churn"
   _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   _write_happ(
     harbor_env,
     app_id,
     _volumes_manifest('one = { kind = "data" }\ntwo = { kind = "data" }'),
   )
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   added = harbor_env.volumes_root / "data" / app_id / "two"
   assert added.is_dir()
@@ -268,10 +268,10 @@ def test_changing_a_volumes_kind_is_refused(harbor_env):
   """The bytes live under the old kind's root; moving them silently is worse."""
   app_id = "vol-churn"
   _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "bulk" }'))
-  refused = harbor_env.run("stage", app_id)
+  refused = harbor_env.run("install", app_id)
   assert refused.returncode == 1
   assert "changed kind from data to bulk" in refused.stderr
   assert (harbor_env.run_root / app_id / "volumes" / "data" / "one").is_symlink()
@@ -281,13 +281,13 @@ def test_changing_a_volumes_kind_is_refused(harbor_env):
 
 
 def test_config_round_trips_through_config_dir(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
 
   logtab = harbor_env.app_logtab(BASIC).read_text()
   assert "config/admin_user" in logtab
   assert "meta/origin" in logtab
-  assert "meta/staged_at" in logtab
+  assert "meta/installed_at" in logtab
 
   # ...and nothing about this app is left in the central db.
   assert BASIC not in harbor_env.read_db().get("apps", {})
@@ -307,14 +307,14 @@ def test_restaging_does_not_regenerate_an_existing_auto_secret(harbor_env):
   `admin_pass` is `{ secret = true, default = "auto" }`, so it is minted on the
   first stage and must survive every one after it.
   """
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   first = harbor_env.run(
     "config", BASIC, "--get", "admin_pass", "--show-secret"
   ).stdout.strip()
   assert first
 
-  assert harbor_env.run("stage", BASIC).returncode == 0
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
 
   again = harbor_env.run(
     "config", BASIC, "--get", "admin_pass", "--show-secret"
@@ -331,7 +331,7 @@ def _docker_calls(harbor_env) -> list[dict]:
 
 def _staged_for_dev(harbor_env) -> Path:
   """Stage BASIC with its required config set, and return the source bundle."""
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
   return harbor_env.root / "apps" / f"{BASIC}.happ"
 
@@ -395,12 +395,12 @@ def test_dev_leaves_the_staged_happ_copy_alone(harbor_env):
 def test_dev_refuses_an_app_that_is_not_staged(harbor_env):
   refused = harbor_env.run("dev", BASIC)
   assert refused.returncode == 1
-  assert "not staged" in refused.stderr
-  assert f"harbor stage {BASIC}" in refused.stderr
+  assert "not installed" in refused.stderr
+  assert f"harbor install {BASIC}" in refused.stderr
 
 
 def test_dev_refuses_unset_config_like_start_does(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
 
   refused = harbor_env.run("dev", BASIC)
   assert refused.returncode == 1
@@ -423,7 +423,7 @@ def test_dev_refuses_a_markdown_happ(harbor_env):
     'echo "hello"\n'
     "```\n"
   )
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   refused = harbor_env.run("dev", app_id)
   assert refused.returncode == 1
@@ -442,7 +442,7 @@ def test_dev_refuses_a_markdown_happ_with_nothing_to_mount(harbor_env):
     'volumes = { state = "/state" }\n'
     "```\n"
   )
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   refused = harbor_env.run("dev", app_id)
   assert refused.returncode == 1
@@ -453,7 +453,7 @@ def test_dev_with_no_app_volumes_is_just_an_interactive_run(harbor_env):
   """A folder app with nothing to mount still runs: it is `compose up` here."""
   app_id = "no-app-volumes"
   _write_happ(harbor_env, app_id, _volumes_manifest('one = { kind = "data" }'))
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   result = harbor_env.run("dev", app_id)
   assert result.returncode == 0, result.stderr
@@ -466,7 +466,7 @@ def test_dev_with_no_app_volumes_is_just_an_interactive_run(harbor_env):
 
 def test_dev_lists_every_route_and_where_to_reach_it(harbor_env):
   app_id = "ports-demo"
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   result = harbor_env.run("dev", app_id)
   assert result.returncode == 0, result.stderr
@@ -483,7 +483,7 @@ def test_dev_lists_every_route_and_where_to_reach_it(harbor_env):
 
 def test_dev_routes_publishes_for_the_length_of_the_run(harbor_env):
   app_id = "ports-demo"
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
 
   result = harbor_env.run("dev", app_id, "--routes")
   assert result.returncode == 0, result.stderr
@@ -509,7 +509,7 @@ def test_dev_reports_a_manifest_edited_since_staging(harbor_env):
   declined = harbor_env.run("dev", BASIC, input="n\n")
   assert declined.returncode == 0, declined.stderr
   assert "manifest has changed since it was staged" in declined.stdout
-  assert f"harbor stage {BASIC}" in declined.stdout
+  assert f"harbor install {BASIC}" in declined.stdout
   assert "Nothing started." in declined.stdout
   assert ["compose", "up"] not in [c["args"] for c in _docker_calls(harbor_env)]
 
@@ -526,7 +526,7 @@ def test_dev_does_not_ask_when_the_manifest_still_matches(harbor_env):
   assert "Continue anyway" not in result.stdout
   # Nothing to act on, so the receipt does not mention staging at all.
   assert "Note:" not in result.stdout
-  assert f"harbor stage {BASIC}" not in result.stdout
+  assert f"harbor install {BASIC}" not in result.stdout
 
 
 def test_dev_receipt_notes_staging_only_when_the_manifest_drifted(harbor_env):
@@ -538,8 +538,8 @@ def test_dev_receipt_notes_staging_only_when_the_manifest_drifted(harbor_env):
   assert result.returncode == 0, result.stderr
   assert "Note:" in result.stdout
   assert (
-    f"manifest has changed, `harbor stage {BASIC}` may be required to reflect "
-    f"changes" in result.stdout
+    f"manifest has changed, `harbor install {BASIC}` may be required to "
+    f"reflect changes" in result.stdout
   )
 
 

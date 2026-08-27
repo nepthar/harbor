@@ -65,7 +65,7 @@ def start(
     raise ValueError("\n".join(recovery_lines(app, run_data.start_blockers)))
 
   if not paths.compose_path.is_file():
-    raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
+    raise ValueError(f"App {app} is not installed; run `harbor install {app}` first")
 
   try:
     preflight_app_routes(run_data, ctx)
@@ -123,7 +123,9 @@ def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
   """Stream ``docker compose logs`` for a staged app."""
   state = ctx.run_state(app_id)
   if not state.compose_exists:
-    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
+    raise ValueError(
+      f"App {app_id} is not installed; run `harbor install {app_id}` first"
+    )
 
   docker_run_command(
     ["compose", "logs", *(extra_args or [])],
@@ -148,7 +150,9 @@ def run_command(
   """
   state = ctx.run_state(app_id)
   if not state.compose_exists:
-    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
+    raise ValueError(
+      f"App {app_id} is not installed; run `harbor install {app_id}` first"
+    )
 
   stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
   entry = stack.commands.get(cmd_name)
@@ -196,7 +200,9 @@ def stop(app_id: AppID, ctx: HarborCtx) -> None:
   if not state.compose_exists:
     if state.containers:
       raise ValueError(container_recovery_message(app_id, ctx))
-    raise ValueError(f"App {app_id} is not staged; run `harbor stage {app_id}` first")
+    raise ValueError(
+      f"App {app_id} is not installed; run `harbor install {app_id}` first"
+    )
 
   try:
     unregister_app_routes(app_id, ctx)

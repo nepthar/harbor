@@ -87,11 +87,11 @@ def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
 
   # A catalog entry alone is not an installation, and nothing is staged to
   # have drifted from.
-  assert entry()["installed"] is False
+  assert entry()["state"] == "available"
   assert entry()["manifest_stale"] is False
 
-  assert submit(client, jobs, "stage", {"app": APP})["state"] == "done"
-  assert entry()["installed"] is True
+  assert submit(client, jobs, "install", {"app": APP})["state"] == "done"
+  assert entry()["state"] == "installed"
   assert entry()["manifest_stale"] is False
 
   # Editing the bundle leaves the staged copy behind: that is the drift the
@@ -102,7 +102,7 @@ def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
   )
   assert entry()["manifest_stale"] is True
 
-  assert submit(client, jobs, "stage", {"app": APP})["state"] == "done"
+  assert submit(client, jobs, "install", {"app": APP})["state"] == "done"
   assert entry()["manifest_stale"] is False
 
 
@@ -166,7 +166,7 @@ def test_catalog_keeps_a_broken_bundle(harbor_env, client):
     "description": "",
     "source": "local",
     "catalog": "apps",
-    "installed": False,
+    "state": "available",
     "configured": None,
     "manifest": "not toml",
     "manifest_stale": False,
@@ -194,14 +194,14 @@ def test_apps_lists_only_installed(harbor_env, client):
   # Every fixture is in the catalog; none is installed until it is staged.
   assert client.get("/apps").json()["apps"] == []
 
-  harbor_env.run("stage", "basic-features")
+  harbor_env.run("install", "basic-features")
   apps = client.get("/apps").json()["apps"]
   assert [app["app_id"] for app in apps] == [APP]
 
   app = apps[0]
   assert app["display_name"] == "Basic Features"
   assert app["status"] == "stopped"
-  assert app["staged"] is True
+  assert app["state"] == "installed"
   assert app["volume_count"] == 3
   assert app["containers"] == {"running": 0, "total": 0}
   # admin_user has no default and was never set, so the app cannot start yet.
@@ -219,7 +219,7 @@ def test_apps_reflects_running_containers(harbor_env, client):
 
 
 def test_app_detail(harbor_env, client):
-  harbor_env.run("stage", "basic-features")
+  harbor_env.run("install", "basic-features")
   response = client.get(f"/apps/{APP}")
   assert response.status_code == 200
 
@@ -300,7 +300,7 @@ def test_stop_runs_as_a_job(harbor_env, client, jobs):
 
 
 def test_failed_job_carries_the_error(harbor_env, client, jobs):
-  harbor_env.run("stage", "basic-features")
+  harbor_env.run("install", "basic-features")
 
   job = submit(client, jobs, "start", {"app": "basic-features"})
   assert job["state"] == "failed"
@@ -309,12 +309,12 @@ def test_failed_job_carries_the_error(harbor_env, client, jobs):
 
 
 def test_jobs_are_listed_newest_first(harbor_env, client, jobs):
-  harbor_env.run("stage", "basic-features")
-  submit(client, jobs, "stage", {"app": "basic-features"})
+  harbor_env.run("install", "basic-features")
+  submit(client, jobs, "install", {"app": "basic-features"})
   submit(client, jobs, "stop", {"app": "basic-features"})
 
   listed = client.get("/jobs").json()["jobs"]
-  assert [job["verb"] for job in listed] == ["stop", "stage"]
+  assert [job["verb"] for job in listed] == ["stop", "install"]
 
 
 def test_unknown_job_is_404(harbor_env, client):
@@ -322,24 +322,24 @@ def test_unknown_job_is_404(harbor_env, client):
 
 
 def test_a_job_files_activity_that_the_api_serves(harbor_env, client, jobs):
-  job = submit(client, jobs, "stage", {"app": "basic-features"})
+  job = submit(client, jobs, "install", {"app": "basic-features"})
   assert job["state"] == "done"
   # The finished job points at its own output file...
-  assert job["log"] and job["log"].endswith(f".{APP}.stage.log")
+  assert job["log"] and job["log"].endswith(f".{APP}.install.log")
 
   runs = client.get("/activity").json()["activity"]
-  assert runs[0]["verb"] == "stage"
+  assert runs[0]["verb"] == "install"
   assert runs[0]["app_id"] == APP
   assert runs[0]["status"] == "ok"
   assert runs[0]["log"] == job["log"]
 
   body = client.get(f"/activity/{job['log']}").json()
   assert body["app_id"] == APP
-  assert f"Staged {APP}" in body["text"]
+  assert f"Installed {APP}" in body["text"]
 
 
 def test_a_failed_job_still_files_activity_with_its_error(harbor_env, client, jobs):
-  harbor_env.run("stage", "basic-features")
+  harbor_env.run("install", "basic-features")
   job = submit(client, jobs, "start", {"app": "basic-features"})
   assert job["state"] == "failed"
 
@@ -357,7 +357,7 @@ def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
   from harbor.jobs import JOBS, Job
 
   class LiveJob(Job):
-    name = "stage"
+    name = "install"
     required_args = ("app",)
 
     def init(self, ctx, kwargs):
@@ -369,12 +369,12 @@ def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
       assert len(running) == 1
       assert running[0]["log"]
       text = (ctx.config.activity_root / running[0]["log"]).read_text()
-      assert "# harbor stage" in text
+      assert "# harbor install" in text
       assert "live line" in text
       logging.getLogger("harbor").info("done")
 
-  monkeypatch.setitem(JOBS, "stage", LiveJob)
-  job = jobs.submit("stage", {"app": "basic-features"}, ctx())
+  monkeypatch.setitem(JOBS, "install", LiveJob)
+  job = jobs.submit("install", {"app": "basic-features"}, ctx())
   jobs.run_pending()
   finished = jobs.get(job["id"])
   assert finished is not None
@@ -490,7 +490,7 @@ def test_snapshots_lists_archives_newest_first(harbor_env, client):
 
 
 def test_restore_verb(harbor_env, client, jobs):
-  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  assert harbor_env.run("install", "ports-demo").returncode == 0
   taken = harbor_env.run("snapshot", "ports-demo", "--label", "back")
   assert taken.returncode == 0, taken.stderr
   name = Path(taken.stdout.split("written to ")[1].strip()).name.removesuffix(".tar.gz")
@@ -588,7 +588,7 @@ def test_verbs_take_ids_of_installed_apps_and_nothing_else(harbor_env, client, a
   binds, which image it runs -- and that is root. `harbor stage <path>` stays
   a CLI-only capability.
   """
-  response = client.post("/jobs", json={"verb": "stage", "args": {"app": app}})
+  response = client.post("/jobs", json={"verb": "install", "args": {"app": app}})
   assert response.status_code == 400
   assert "No app found" in response.json()["error"]
 
@@ -692,7 +692,7 @@ def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
     'config = { kind = "data", desc = "persistent app data" }', ""
   )
   manifest.write_text(text.replace('config = "/myapp/config", ', ""))
-  assert harbor_env.run("stage", APP).returncode == 0
+  assert harbor_env.run("install", APP).returncode == 0
 
   volumes = {v["name"]: v for v in client.get("/volumes").json()["volumes"]}
   assert volumes["config"]["declared"] is False, "data left behind, flagged"
@@ -703,7 +703,7 @@ def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
 
 
 def test_app_view_carries_what_a_detail_page_needs(harbor_env, client):
-  assert harbor_env.run("stage", APP).returncode == 0
+  assert harbor_env.run("install", APP).returncode == 0
   body = client.get(f"/apps/{APP}").json()
 
   unit = body["units"][0]
@@ -725,7 +725,7 @@ def test_app_view_never_leaks_a_secret_through_the_environment(harbor_env, clien
 
 
 def test_setting_config_through_the_api(harbor_env, client):
-  assert harbor_env.run("stage", APP).returncode == 0
+  assert harbor_env.run("install", APP).returncode == 0
 
   updated = client.post(f"/apps/{APP}/config", json={"set": {"admin_user": "alice"}})
   assert updated.status_code == 200, updated.text
@@ -737,7 +737,7 @@ def test_setting_config_through_the_api(harbor_env, client):
 
 def test_binding_a_host_volume_through_the_api(harbor_env, client):
   (harbor_env.root / "external-data").mkdir()
-  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  assert harbor_env.run("install", "host-volumes").returncode == 0
 
   bound = client.post("/apps/host-volumes/config", json={"bind": {"hostvol1": "media"}})
   assert bound.status_code == 200, bound.text
@@ -746,7 +746,7 @@ def test_binding_a_host_volume_through_the_api(harbor_env, client):
 
 
 def test_config_changes_are_refused_with_a_reason(harbor_env, client):
-  assert harbor_env.run("stage", APP).returncode == 0
+  assert harbor_env.run("install", APP).returncode == 0
 
   for payload, expected in (
     ({"set": {"nope": "x"}}, "No config nope"),
@@ -756,3 +756,31 @@ def test_config_changes_are_refused_with_a_reason(harbor_env, client):
     refused = client.post(f"/apps/{APP}/config", json=payload)
     assert refused.status_code == 400, refused.text
     assert expected in refused.json()["error"]
+
+
+def test_apps_and_catalog_agree_on_state(harbor_env, client, jobs):
+  """One vocabulary across both views: no `staged`/`installed` booleans."""
+
+  def catalog_entry():
+    catalogs = client.get("/catalog").json()["catalogs"]
+    return {app["app_id"]: app for app in catalogs[0]["apps"]}[APP]
+
+  assert catalog_entry()["state"] == "available"
+  assert client.get("/apps").json()["apps"] == []
+
+  assert submit(client, jobs, "install", {"app": APP})["state"] == "done"
+  app = client.get("/apps").json()["apps"][0]
+  assert app["state"] == "installed"
+  assert "staged" not in app
+  assert catalog_entry()["state"] == "installed"
+  # `status` is about containers and stays its own axis.
+  assert app["status"] == "stopped"
+
+  harbor_env.run("uninstall", APP, "-y")
+  app = client.get("/apps").json()["apps"][0]
+  assert app["state"] == "uninstalled"
+  assert catalog_entry()["state"] == "uninstalled"
+
+  harbor_env.run("uninstall", "--purge", APP, "-y")
+  assert client.get("/apps").json()["apps"] == []
+  assert catalog_entry()["state"] == "available"

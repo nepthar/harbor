@@ -36,7 +36,7 @@ main = { port = "8443", scheme = "https" }
 Use harbor to fetch and start the app:
 ```
 $ harbor fetch github:nepthar/harbor/main/apps/unifi-network-application.happ
-$ harbor stage unifi-network-application
+$ harbor install unifi-network-application
 $ harbor start unifi-network-application
 ```
 

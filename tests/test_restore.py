@@ -52,7 +52,7 @@ def _mounts(args: list[str]) -> list[str]:
 
 def test_snapshot_copies_data_volumes_in_a_container(harbor_env):
   """The copy harbor cannot do itself: `cp -a` over root-owned volume files."""
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   volume = harbor_env.volumes_root / "data" / BASIC / "config"
   (volume / "db.txt").write_text("v1")
   # cp -a must not follow this: dereferencing a symlink inside a volume is how
@@ -81,7 +81,7 @@ def test_snapshot_copies_data_volumes_in_a_container(harbor_env):
 
 
 def test_restore_brings_a_data_volume_back(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   volume = harbor_env.volumes_root / "data" / BASIC / "config"
   (volume / "db.txt").write_text("v1")
   (volume / "current").symlink_to("db.txt")
@@ -293,7 +293,7 @@ def test_snapshot_stops_and_restarts_a_running_app(harbor_env):
 def test_a_volumeless_snapshot_is_cleaned_up_without_a_container(harbor_env):
   """Nothing in it is root-owned, so paying for a container would only make
   cleanup fail whenever docker is down."""
-  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  assert harbor_env.run("install", "ports-demo").returncode == 0
   taken = harbor_env.run("snapshot", "ports-demo", "--label", "bare")
   assert taken.returncode == 0, taken.stderr
 

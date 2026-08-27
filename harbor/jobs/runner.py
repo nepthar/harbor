@@ -22,10 +22,10 @@ from typing import Any
 
 from harbor.jobs.cmd import CmdJob
 from harbor.jobs.fetch import FetchJob
+from harbor.jobs.install import InstallJob
 from harbor.jobs.job import DONE, FAILED, Job
 from harbor.jobs.restore import RestoreJob
 from harbor.jobs.snapshot import SnapshotJob
-from harbor.jobs.stage import StageJob
 from harbor.jobs.start import StartJob
 from harbor.jobs.stop import StopJob
 from harbor.lib.harbor import HarborCtx
@@ -48,7 +48,7 @@ MAX_HISTORY = 200
 JOBS: dict[str, type[Job]] = {
   "start": StartJob,
   "stop": StopJob,
-  "stage": StageJob,
+  "install": InstallJob,
   "snapshot": SnapshotJob,
   "restore": RestoreJob,
   "cmd": CmdJob,

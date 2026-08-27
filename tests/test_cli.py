@@ -173,7 +173,7 @@ def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
 
 
 def test_inspect_shows_config_status(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
 
   before = harbor_env.run("inspect", BASIC)
   assert before.returncode == 0, before.stderr
@@ -188,7 +188,7 @@ def test_inspect_shows_config_status(harbor_env):
 
 
 def test_inspect_notes_when_the_source_manifest_has_drifted(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   source = harbor_env.root / "apps" / f"{BASIC}.happ" / "manifest.toml"
   source.write_text(source.read_text() + "\n# edited after staging\n")
 
@@ -196,8 +196,8 @@ def test_inspect_notes_when_the_source_manifest_has_drifted(harbor_env):
   assert inspected.returncode == 0, inspected.stderr
   assert "Note:" in inspected.stdout
   assert (
-    f"manifest has changed, `harbor stage {BASIC}` may be required to reflect "
-    f"changes" in inspected.stdout
+    f"manifest has changed, `harbor install {BASIC}` may be required to "
+    f"reflect changes" in inspected.stdout
   )
 
 
@@ -305,9 +305,9 @@ cmd = "echo pong"
 
   not_staged = harbor_env.run("cmd", "cmd-demo")
   assert not_staged.returncode == 1
-  assert "not staged" in not_staged.stderr
+  assert "not installed" in not_staged.stderr
 
-  assert harbor_env.run("stage", "cmd-demo").returncode == 0
+  assert harbor_env.run("install", "cmd-demo").returncode == 0
   one_off = harbor_env.run("cmd", "cmd-demo", "ping", "extra")
   assert one_off.returncode == 0, one_off.stderr
   calls = [
@@ -453,7 +453,7 @@ def test_removed_app_bundle_remains_runnable_from_the_staged_copy(harbor_env):
   restarted = harbor_env.run("start", app_id)
   assert restarted.returncode == 0, restarted.stderr
 
-  restaged = harbor_env.run("stage", app_id)
+  restaged = harbor_env.run("install", app_id)
   assert restaged.returncode == 1
   assert "No app found" in restaged.stderr
 
@@ -481,7 +481,7 @@ def test_config_before_staging_reads_the_bundle(harbor_env):
   early = harbor_env.run("config", BASIC, "--set", "admin_user=alice")
   assert early.returncode == 0, early.stderr
 
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   kept = harbor_env.run("config", BASIC, "--get", "admin_user")
   assert kept.stdout.strip() == "alice"
 
@@ -504,7 +504,7 @@ def test_binding_before_staging_applies_at_the_first_start(harbor_env):
 def test_config_of_a_staged_app_reads_the_run_copy(harbor_env):
   """Not the source, which may have moved on since: the run copy is what the
   app will actually start with."""
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
 
   manifest = harbor_env.root / "apps" / f"{BASIC}.happ" / "manifest.toml"
   manifest.write_text(
@@ -529,11 +529,11 @@ def test_assigning_a_route_still_needs_staging(harbor_env):
   """A provider needs the allocated host port, which only staging hands out."""
   too_early = harbor_env.run("config", "routes-demo", "--route", "main=web")
   assert too_early.returncode == 1
-  assert "harbor stage routes-demo" in too_early.stderr
+  assert "harbor install routes-demo" in too_early.stderr
 
 
 def test_config_set_secret(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
 
   missing = harbor_env.run("config", BASIC, "--set", "admin_user")
@@ -593,7 +593,7 @@ def test_config_set_subdomain_overrides_the_manifest(harbor_env):
 
 
 def test_config_set_subdomain_rejects_a_dotted_name(harbor_env):
-  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  assert harbor_env.run("install", "ports-demo").returncode == 0
   result = harbor_env.run("config", "ports-demo", "--set", "subdomain=foo.bar")
   assert result.returncode == 1
   assert "foo.bar" in result.stderr
@@ -720,7 +720,7 @@ def test_host_links_belong_to_the_run_not_the_stage(harbor_env):
   host_root = harbor_env.run_root / app_id / "volumes" / "host"
   link = host_root / "hostvol1"
 
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert not host_root.exists(), "staging has no business linking somebody's data"
 
   bound = harbor_env.run("config", app_id, "--bind", "hostvol1=media")
@@ -745,7 +745,7 @@ def test_restaging_leaves_the_binds_alone(harbor_env):
   assert harbor_env.run("start", app_id, "--bind", "hostvol1=media").returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
 
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert harbor_env.run("start", app_id).returncode == 0
   link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
   assert link.resolve() == host_path
@@ -782,7 +782,7 @@ def test_start_replaces_whatever_is_in_the_host_directory(harbor_env):
   app_id = "host-volumes"
   host_path = harbor_env.root / "external-data"
   host_path.mkdir()
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--bind", "hostvol1=media").returncode == 0
 
   link = harbor_env.run_root / app_id / "volumes" / "host" / "hostvol1"
@@ -836,7 +836,7 @@ def test_missing_host_volume_path_blocks_stage(harbor_env):
   assert harbor_env.run("stop", app_id).returncode == 0
 
   shutil.rmtree(host_path)
-  blocked = harbor_env.run("stage", app_id)
+  blocked = harbor_env.run("install", app_id)
   assert blocked.returncode == 1
   assert "path does not exist" in blocked.stderr
   assert str(host_path) in blocked.stderr
@@ -863,7 +863,7 @@ def test_require_mount_refuses_unmounted_path(harbor_env):
   host_path = harbor_env.root / "external-data"
   host_path.mkdir()
 
-  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  assert harbor_env.run("install", "host-volumes").returncode == 0
   refused = harbor_env.run("config", "host-volumes", "--bind", "hostvol1=nfs")
   assert refused.returncode == 1
   assert "not mounted" in refused.stderr
@@ -876,7 +876,7 @@ def test_require_mount_blocks_stage_when_unmounted(harbor_env):
   with open(harbor_env.config, "a") as f:
     f.write('\n[host_volume.rootfs]\npath = "/"\nrequire_mount = true\n')
 
-  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  assert harbor_env.run("install", "host-volumes").returncode == 0
   assert (
     harbor_env.run("config", "host-volumes", "--bind", "hostvol1=rootfs").returncode
     == 0
@@ -889,7 +889,7 @@ def test_require_mount_blocks_stage_when_unmounted(harbor_env):
   )
   (harbor_env.root / "external-data").mkdir(exist_ok=True)
 
-  blocked = harbor_env.run("stage", "host-volumes")
+  blocked = harbor_env.run("install", "host-volumes")
   assert blocked.returncode == 1
   assert "not mounted" in blocked.stderr
 
@@ -900,7 +900,7 @@ def test_readonly_host_volume_refuses_writable_app_volume(harbor_env):
     f.write('\n[host_volume.ro_media]\npath = "ro-data"\nreadonly = true\n')
   (harbor_env.root / "ro-data").mkdir()
 
-  assert harbor_env.run("stage", "host-volumes").returncode == 0
+  assert harbor_env.run("install", "host-volumes").returncode == 0
   refused = harbor_env.run("config", "host-volumes", "--bind", "hostvol1=ro_media")
   assert refused.returncode == 1
   assert "readonly" in refused.stderr
@@ -995,7 +995,7 @@ cmd = ["true"]
 
 
 def test_ps_reports_config_readiness_and_volume_count(harbor_env):
-  assert harbor_env.run("stage", BASIC).returncode == 0
+  assert harbor_env.run("install", BASIC).returncode == 0
   row = _ps_row(harbor_env.run("ps").stdout, BASIC)
   assert row[1:4] == ["-", "missing", "3"]
 
@@ -1027,7 +1027,7 @@ def test_an_unmet_bind_is_reported_as_missing_config(harbor_env):
   app_id = "host-volumes"
   host_path = harbor_env.root / "external-data"
   host_path.mkdir()
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--bind", "hostvol1=media").returncode == 0
   assert harbor_env.run("start", app_id).returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
@@ -1403,3 +1403,196 @@ def test_activity_filters_by_app_stem(harbor_env):
   result = harbor_env.run("activity", "ports-demo")
   assert "ports-demo" in result.stdout
   assert "routes-demo" not in result.stdout
+
+
+def test_uninstall_keeps_data_and_configuration(harbor_env):
+  started = harbor_env.run("start", BASIC, "--set", "admin_user=alice")
+  assert started.returncode == 0, started.stderr
+  data = harbor_env.volumes_root / "data" / BASIC / "config"
+  (data / "app.db").write_text("rows")
+
+  removed = harbor_env.run("uninstall", BASIC, "-y")
+  assert removed.returncode == 0, removed.stderr
+
+  # The installation goes...
+  assert not (harbor_env.run_root / BASIC).exists()
+  # ...and everything that would have to be set up again stays.
+  assert (data / "app.db").read_text() == "rows"
+  assert "config/admin_user" in harbor_env.app_logtab(BASIC).read_text()
+
+
+def test_uninstall_and_reset_keep_an_app_route_allocation(harbor_env):
+  app_id = "ports-demo"
+  assert harbor_env.run("start", app_id).returncode == 0
+  allocated = harbor_env.read_db()["routes"][app_id]["web"]["host_port"]
+
+  assert harbor_env.run("reset", app_id, "-y").returncode == 0
+  assert harbor_env.read_db()["routes"][app_id]["web"]["host_port"] == allocated
+
+  assert harbor_env.run("uninstall", app_id, "-y").returncode == 0
+  assert harbor_env.read_db()["routes"][app_id]["web"]["host_port"] == allocated
+
+  # Only rm gives the address back.
+  assert harbor_env.run("rm", app_id, "-y").returncode == 0
+  assert app_id not in harbor_env.read_db().get("routes", {})
+
+
+def test_uninstall_then_stage_restores_the_app(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  data = harbor_env.volumes_root / "data" / BASIC / "config"
+  (data / "app.db").write_text("rows")
+  assert harbor_env.run("uninstall", BASIC, "-y").returncode == 0
+
+  staged = harbor_env.run("install", BASIC)
+  assert staged.returncode == 0, staged.stderr
+  assert (harbor_env.run_root / BASIC).is_dir()
+  # Reinstalling did not ask for the config again, and left the data alone.
+  assert (data / "app.db").read_text() == "rows"
+  assert "config/admin_user" in harbor_env.app_logtab(BASIC).read_text()
+
+
+def test_reset_clears_data_and_stages_the_app_again(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  data = harbor_env.volumes_root / "data" / BASIC / "config"
+  temp = harbor_env.volumes_root / "temp" / BASIC / "cache"
+  (data / "app.db").write_text("rows")
+  (data / "nested").mkdir()
+  (data / "nested" / "deep.txt").write_text("deeper")
+  (temp / "scratch").write_text("junk")
+
+  reset = harbor_env.run("reset", BASIC, "-y")
+  assert reset.returncode == 0, reset.stderr
+
+  # Staging rebuilt the installation and the volume directories with it, so
+  # the app is installed again with nothing in its volumes.
+  assert (harbor_env.run_root / BASIC).is_dir()
+  assert data.is_dir() and list(data.iterdir()) == []
+  assert temp.is_dir() and list(temp.iterdir()) == []
+
+  # Configuration and secrets were never touched.
+  assert "config/admin_user" in harbor_env.app_logtab(BASIC).read_text()
+
+
+def test_reset_picks_up_a_changed_app_volume(harbor_env):
+  """The reason reset re-stages: `app` volumes ship inside the bundle."""
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  staged = harbor_env.run_root / BASIC / "happ" / "bin" / "hello.sh"
+  assert "changed by the happ author" not in staged.read_text()
+
+  bundle = harbor_env.root / "apps" / f"{BASIC}.happ" / "bin" / "hello.sh"
+  bundle.write_text("#!/bin/sh\necho changed by the happ author\n")
+
+  assert harbor_env.run("reset", BASIC, "-y").returncode == 0
+  assert "changed by the happ author" in staged.read_text()
+
+
+def test_reset_refuses_before_deleting_when_the_bundle_is_gone(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  data = harbor_env.volumes_root / "data" / BASIC / "config"
+  (data / "app.db").write_text("rows")
+  shutil.rmtree(harbor_env.root / "apps" / f"{BASIC}.happ")
+
+  failed = harbor_env.run("reset", BASIC, "-y")
+  assert failed.returncode != 0
+  # Planning resolves the bundle, so the refusal costs nothing.
+  assert (data / "app.db").read_text() == "rows"
+  assert (harbor_env.run_root / BASIC).is_dir()
+
+
+def test_reset_leaves_an_app_that_starts_again(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  assert harbor_env.run("reset", BASIC, "-y").returncode == 0
+
+  # No re-stage in between: the point of keeping the volume dirs is that the
+  # compose file's bind mounts still resolve.
+  started = harbor_env.run("start", BASIC)
+  assert started.returncode == 0, started.stderr
+
+
+def test_reset_and_uninstall_record_what_they_did(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+
+  assert harbor_env.run("reset", BASIC, "-y").returncode == 0
+  assert read_last_app_action(BASIC, ctx) == "reset"
+
+  assert harbor_env.run("uninstall", BASIC, "-y").returncode == 0
+  assert read_last_app_action(BASIC, ctx) == "uninstalled"
+
+
+def test_uninstall_confirmation_says_what_it_keeps(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+
+  declined = harbor_env.run("uninstall", BASIC, input="n\n")
+  assert declined.returncode == 0, declined.stderr
+  assert "Configuration and volume data will be kept" in declined.stdout
+  assert f"harbor uninstall --purge {BASIC}" in declined.stdout
+  # Nothing irreversible is at stake, so it must not borrow rm's warning.
+  assert "take a snapshot first" not in declined.stdout
+  # Where harbor keeps an installation is not the operator's problem.
+  assert str(harbor_env.run_root) not in declined.stdout
+  assert "Nothing removed" in declined.stdout
+  assert (harbor_env.run_root / BASIC).is_dir()
+
+
+def test_ps_reports_what_an_uninstalled_app_kept(harbor_env):
+  """`ps` must not contradict what `uninstall` said it was keeping."""
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  assert harbor_env.run("uninstall", BASIC, "-y").returncode == 0
+
+  listed = harbor_env.run("ps")
+  assert listed.returncode == 0, listed.stderr
+  row = _ps_row(listed.stdout, BASIC)
+  # STATUS says where it stands, and CONFIG/VOLUMES say what survived --
+  # read from the bundle, since there is no staged manifest any more.
+  assert row[1] == "uninstalled"
+  assert row[2] == "ready"
+  assert row[3:5] == ["3", "kept"]
+
+
+def test_ps_forgets_an_app_once_it_is_purged(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  assert harbor_env.run("uninstall", "--purge", BASIC, "-y").returncode == 0
+  assert BASIC not in harbor_env.run("ps").stdout
+
+
+def test_uninstall_purge_is_rm(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  purged = harbor_env.run("uninstall", "--purge", BASIC, "-y")
+  assert purged.returncode == 0, purged.stderr
+
+  assert not (harbor_env.run_root / BASIC).exists()
+  assert not harbor_env.app_logtab(BASIC).exists()
+  assert not (harbor_env.volumes_root / "data" / BASIC).exists()
+
+
+def test_uninstall_points_at_purge(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  done = harbor_env.run("uninstall", BASIC, "-y")
+  assert "Configuration and volume data were kept" in done.stdout
+  assert f"harbor uninstall --purge {BASIC}" in done.stdout
+
+
+def test_inspect_falls_back_to_the_bundle_when_uninstalled(harbor_env):
+  assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
+  assert harbor_env.run("uninstall", BASIC, "-y").returncode == 0
+
+  inspected = harbor_env.run("inspect", BASIC)
+  assert inspected.returncode == 0, inspected.stderr
+  # Not an errno about a missing manifest.
+  assert "No such file" not in inspected.stderr
+  assert f"{BASIC} is not installed" in inspected.stdout
+  assert f"harbor install {BASIC}" in inspected.stdout
+
+
+def test_log_level_names_are_lower_case_and_padded(harbor_env):
+  """One spelling of every level, whichever entrypoint wrote the line."""
+  import logging
+
+  assert [logging.getLevelName(level) for level in (10, 20, 30, 40, 50)] == [
+    "debug",
+    "info ",
+    "warn ",
+    "error",
+    "crit ",
+  ]

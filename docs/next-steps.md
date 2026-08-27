@@ -63,6 +63,11 @@ submitted through harbord cannot answer one, and a question asked on every
 
 ## Smaller known gaps
 
+- **The removal verbs are CLI-only.** `uninstall`, `reset`, and `rm` are not
+  in the daemon's job registry, so the web UI cannot remove anything. That is
+  deliberate while the API has no authentication -- see below -- but it means
+  an operator who only uses the UI has no way to uninstall.
+
 - **No systemd unit.** `harbord` is foreground-only and dies with its shell.
 - **The web UI has no authentication.** Anything that can open `admin.sock`
   runs every verb the API exposes. Fine over an ssh tunnel; not fine on a

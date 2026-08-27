@@ -8,7 +8,7 @@ from harbor.lib.util import Conn
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "snapshot",
-    help="Capture a restore point for a staged happ (config, happ, and data volumes)",
+    help="Capture a restore point for an installed happ (config, happ, and data volumes)",
   )
   parser.add_argument(
     "app",

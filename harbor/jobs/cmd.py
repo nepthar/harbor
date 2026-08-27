@@ -30,7 +30,7 @@ class CmdJob(Job):
         raise ValueError(f"Could not parse arguments: {e}") from e
 
     if not ctx.is_staged(app):
-      raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
+      raise ValueError(f"App {app} is not installed; run `harbor install {app}` first")
     stack = AppStack.from_file(ctx.staged_paths(app).manifest_path, app)
     if kwargs["command"] not in stack.commands:
       available = ", ".join(sorted(stack.commands)) or "(none)"

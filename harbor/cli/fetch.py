@@ -19,18 +19,18 @@ from harbor.lib.util import fmt_size
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "fetch",
-    help="Install a happ from GitHub, or update one already fetched",
+    help="Fetch a happ from GitHub, or update one already fetched",
   )
   parser.add_argument(
     "target",
     metavar="TARGET",
-    help="github: URL to install, or APP[@sha] to update a fetched happ",
+    help="github: URL to fetch, or APP[@sha] to update a fetched happ",
   )
   parser.add_argument(
     "-y",
     "--yes",
     action="store_true",
-    help="Install without asking for confirmation",
+    help="Fetch without asking for confirmation",
   )
   parser.set_defaults(func=run)
 
@@ -71,12 +71,12 @@ def _install(spec: str, pin: str | None, yes: bool, ctx: HarborCtx, conn) -> Non
   )
 
   if not yes and not _confirmed(conn):
-    conn.out("Not installed.")
+    conn.out("Not fetched.")
     return
 
   result = install_target(spec, pin, ctx, at_sha=preview.sha)
-  conn.out(f"Installed {result.app_id} at {result.path}")
-  conn.out(f"Start it with: harbor start {result.app_id}")
+  conn.out(f"App {result.app_id} is now available for install, at {result.path}")
+  conn.out(f"Install it with: harbor install {result.app_id}")
 
 
 def _update(query: str, pin: str | None, ctx: HarborCtx, conn) -> None:
@@ -97,19 +97,19 @@ def _update(query: str, pin: str | None, ctx: HarborCtx, conn) -> None:
     conn.out(
       "Take a snapshot before staging and starting the new version:\n"
       f"  harbor snapshot {app}\n"
-      f"  harbor stage {app}\n"
+      f"  harbor install {app}\n"
       f"  harbor start {app}"
     )
 
 
 def _confirmed(conn) -> bool:
-  """Ask before installing.
+  """Ask before fetching.
 
   Harbor cannot vouch for a happ's author, so the operator reading the receipt
   above is the check that matters. The images it names are pulled unverified.
   """
   try:
-    answer = conn.read("\nInstall this happ? [y/N] ")
+    answer = conn.read("\nFetch this happ? [y/N] ")
   except EOFError:
     return False
   return answer.strip().lower() in ("y", "yes")

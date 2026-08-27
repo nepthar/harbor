@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import string
@@ -21,6 +22,28 @@ _GITHUB_SEGMENT_MAX_LEN = 100
 
 def now_ts() -> str:
   return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+# How harbor spells log levels: lower case, all the same width, so lines stay
+# in columns whether they land on a terminal or in a run log under var/logs.
+LOG_LEVEL_NAMES = {
+  logging.DEBUG: "debug",
+  logging.INFO: "info ",
+  logging.WARNING: "warn ",
+  logging.ERROR: "error",
+  logging.CRITICAL: "crit ",
+}
+
+
+def name_log_levels() -> None:
+  """Apply `LOG_LEVEL_NAMES` process-wide.
+
+  Called when `harbor` is imported, because the names have to be the same
+  everywhere: a run log is one file format, and an Activity writing `INFO`
+  under harbord and `info ` under the CLI would make it two.
+  """
+  for level, name in LOG_LEVEL_NAMES.items():
+    logging.addLevelName(level, name)
 
 
 def refuse_root(who: str) -> None:

@@ -38,7 +38,11 @@ GITHUB_PREFIX = "github:"
 
 
 def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
-  """Every installed app, in the shape a dashboard list wants.
+  """Every app harbor holds state for, in the shape a dashboard list wants.
+
+  Uninstalled apps are included, and say so in `state`: their data and
+  config are still here, and dropping them from the list would leave no way
+  to see -- or purge -- what was kept.
 
   Deliberately excludes volume sizes: sizing a volume walks every file under
   it, which is fine for one app and pathological for a list that a browser
@@ -47,7 +51,7 @@ def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   return [
     _summary(observation, ctx)
     for observation in ctx.observations()
-    if observation.installed
+    if observation.known
   ]
 
 
@@ -72,8 +76,8 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
   stack = _catalog_stack(entry)
   # The logtab is what makes an id more than a catalog listing, and AppStore
   # creates it on contact -- so this is a file check, never a store lookup.
-  installed = ctx.config.app_config_path(entry.app_id).is_file()
-  store = ctx.app_store(stack.app) if stack is not None and installed else None
+  has_config = ctx.config.app_config_path(entry.app_id).is_file()
+  store = ctx.app_store(stack.app) if stack is not None and has_config else None
   manifest = manifest_text(entry.path)
   return {
     "app_id": entry.app_id,
@@ -82,8 +86,8 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
     "description": stack.description if stack else "",
     "source": _catalog_origin(entry.app_id, ctx),
     "catalog": entry.source,
-    "installed": installed,
-    "configured": _catalog_configured(stack, store) if stack else None,
+    "state": ctx.app_state(entry.app_id),
+    "configured": config_status(stack, store) if stack else None,
     "manifest": manifest,
     "manifest_stale": _catalog_manifest_stale(entry, manifest, ctx),
   }
@@ -115,8 +119,8 @@ def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
     "catalog": None,
     # About the id, not the download: a conflicting id may well be installed,
     # and the card should say so rather than claim otherwise.
-    "installed": ctx.config.app_config_path(preview.app_id).is_file(),
-    "configured": _catalog_configured(stack, None),
+    "state": ctx.app_state(preview.app_id),
+    "configured": config_status(stack, None),
     "manifest": preview.manifest,
     "manifest_stale": False,
     "conflict": preview.conflict,
@@ -188,7 +192,7 @@ def _catalog_manifest_stale(entry: CatalogEntry, manifest: str, ctx: HarborCtx) 
     return False
 
 
-def _catalog_configured(stack: AppStack, store: AppStore | None) -> str:
+def config_status(stack: AppStack, store: AppStore | None) -> str:
   """ "ready" when every config key is set or will be filled, else "missing".
 
   A secret with a default is generated on stage, so it does not yellow the
@@ -407,7 +411,7 @@ def _summary(
     "display_name": stack.display_name if stack else "",
     "version": stack.version if stack else None,
     "status": observation.status,
-    "staged": observation.run_dir_exists and observation.compose_exists,
+    "state": observation.state,
     "containers": {
       "running": observation.running_count,
       "total": len(observation.containers),

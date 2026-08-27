@@ -36,7 +36,17 @@ this size. Handing over a document produces a document's worth of code.
 ## Conventions
 
 - ruff: 88 cols, **2-space indent**, double quotes, py312.
-- Comments explain *why*, and never restate the code.
+- **Comments: only what the code can't say.** Default to none. Write one only
+  when its absence would let a competent reader introduce a bug — a non-local
+  constraint (the caller holds this lock, this must run before X), surprising
+  external behavior (docker recreates a missing bind source as root), or a
+  deliberate deviation that reads as a mistake. Never to explain a design
+  choice, justify wording, record an alternative you rejected, or restate a
+  name. If the comment is longer than the code under it, it's the wrong
+  comment. Existing files are more heavily commented than I now want — do not
+  match their density.
+- **Docstrings: one line.** A second only for a non-obvious contract (what it
+  raises, what it assumes). No rationale.
 - Errors are `ValueError` / `RuntimeError` whose message names the fix.
 - Tests must never reach the real docker daemon — `tests/conftest.py` enforces
   this. Test doubles live in `tests/`, never in `harbor/`.

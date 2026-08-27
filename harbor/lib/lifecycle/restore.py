@@ -284,7 +284,7 @@ def _restore_extracted(
     raise ValueError(
       f"App {app} was restored from {plan.snapshot_path}, but its compose.yml "
       f"and routes could not be rebuilt; fix the problem below and run "
-      f"`harbor stage {app}`.\n{e}"
+      f"`harbor install {app}`.\n{e}"
     ) from e
 
   record_app_action(f"restored - {plan.snapshot_path.name}", app, ctx)

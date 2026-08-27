@@ -256,7 +256,7 @@ MONGO_TLS = ""
 
 ## Step 4. Problems with raspberry Pi
 
-When we try to run this on a raspberry pi with `harbor start unifi-network-app`, we notice it doesn't seem to be working. Checking the logs, we find that the database uses extensions that our version of arm on the raspberry pi doesn't support. No problem, we can walk back the version of mongo until we find one that works. Between each test, we call `harbor rm unifi-network-app` to clear out all data and "start fresh".
+When we try to run this on a raspberry pi with `harbor start unifi-network-app`, we notice it doesn't seem to be working. Checking the logs, we find that the database uses extensions that our version of arm on the raspberry pi doesn't support. No problem, we can walk back the version of mongo until we find one that works. Between each test, we call `harbor reset unifi-network-app` to clear out all data and "start fresh" -- it keeps our configuration and route, so we only have to set those up once.
 
 It turns out that version 8.0.11 is both > 8 and can run on the raspberry pi, so we pin it there. Since we pinned the db, let's pin the unifi-network-application to a version we can confirm works for us as well.
 
