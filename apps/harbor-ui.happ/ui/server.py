@@ -161,12 +161,12 @@ def catalog_get(
 
 
 @app.get("/logs")
-def logs(app: str = "", file: str = ""):
+def logs(file: str = ""):
   version, unreachable = harbor_version("/logs", "Activity")
   if unreachable:
     return unreachable
   try:
-    body = activity.page(app, file)
+    body = activity.page(file)
   except ApiError as e:
     return html("/logs", "Activity", error_card(e), version)
   return html("/logs", "Activity", body, version)
@@ -293,10 +293,10 @@ def proxy_job(job_id: str):
     return JSONResponse({"error": str(e)}, status_code=404)
 
 
-@app.get("/activity/{dirname}/{filename}")
-def proxy_activity_log(dirname: str, filename: str):
+@app.get("/activity/{filename}")
+def proxy_activity_log(filename: str):
   try:
-    return api(f"/activity/{quote(dirname)}/{quote(filename)}")
+    return api(f"/activity/{quote(filename)}")
   except ApiError as e:
     return JSONResponse({"error": str(e)}, status_code=404)
 

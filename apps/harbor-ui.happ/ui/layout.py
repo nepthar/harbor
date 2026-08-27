@@ -1,6 +1,7 @@
 """The shell around every page: CSS, JS, nav, and shared HTML fragments."""
 
 import html
+from urllib.parse import quote
 
 NAV = (
   ("/", "Dashboard"),
@@ -499,7 +500,9 @@ def job_card(job):
       f'<div class="error"><h2>{esc(job["verb"])} failed</h2>'
       f"<pre>{esc(job['error'])}</pre></div>"
     )
-  body = f"<pre>{esc(job['output'])}</pre>" if job["output"] else ""
+  body = ""
+  if job.get("log"):
+    body = f' <a href="/logs?file={quote(job["log"])}">View its output</a>.'
   return f'<div class="notice"><b>{esc(job["verb"])}</b> finished.{body}</div>'
 
 

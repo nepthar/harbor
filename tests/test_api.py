@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from harbor.daemon.api import API_VERSION, create_app
-from harbor.daemon.jobs import JobRunner
+from harbor.jobs import JobRunner
 from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
 
@@ -31,6 +31,14 @@ def jobs() -> JobRunner:
 @pytest.fixture
 def client(jobs: JobRunner) -> TestClient:
   return TestClient(create_app(ctx, jobs))
+
+
+def read_log(job) -> str:
+  """A finished job's output lives only in the file `log` names."""
+  assert job["log"]
+  config = load_config()
+  assert config is not None
+  return (config.activity_root / job["log"]).read_text()
 
 
 def submit(client: TestClient, jobs: JobRunner, verb: str, args: dict[str, str]):
@@ -283,7 +291,8 @@ def test_stop_runs_as_a_job(harbor_env, client, jobs):
   job = submit(client, jobs, "stop", {"app": "basic-features"})
   assert job["state"] == "done"
   assert job["error"] is None
-  assert job["output"] == f"Stopped {APP}"
+  assert "output" not in job
+  assert f"Stopped {APP}" in read_log(job)
   assert job["started_at"] and job["finished_at"]
 
   assert client.get("/apps").json()["apps"][0]["status"] == "stopped"
@@ -296,7 +305,7 @@ def test_failed_job_carries_the_error(harbor_env, client, jobs):
   job = submit(client, jobs, "start", {"app": "basic-features"})
   assert job["state"] == "failed"
   assert "admin_user is unset" in job["error"]
-  assert job["output"] == ""
+  assert "admin_user is unset" in read_log(job)
 
 
 def test_jobs_are_listed_newest_first(harbor_env, client, jobs):
@@ -316,7 +325,7 @@ def test_a_job_files_activity_that_the_api_serves(harbor_env, client, jobs):
   job = submit(client, jobs, "stage", {"app": "basic-features"})
   assert job["state"] == "done"
   # The finished job points at its own output file...
-  assert job["log"] and job["log"].startswith(f"{APP}/")
+  assert job["log"] and job["log"].endswith(f".{APP}.stage.log")
 
   runs = client.get("/activity").json()["activity"]
   assert runs[0]["verb"] == "stage"
@@ -324,8 +333,7 @@ def test_a_job_files_activity_that_the_api_serves(harbor_env, client, jobs):
   assert runs[0]["status"] == "ok"
   assert runs[0]["log"] == job["log"]
 
-  dirname, _, filename = job["log"].partition("/")
-  body = client.get(f"/activity/{dirname}/{filename}").json()
+  body = client.get(f"/activity/{job['log']}").json()
   assert body["app_id"] == APP
   assert f"Staged {APP}" in body["text"]
 
@@ -337,14 +345,49 @@ def test_a_failed_job_still_files_activity_with_its_error(harbor_env, client, jo
 
   runs = client.get("/activity").json()["activity"]
   assert runs[0]["status"] == "error"
-  dirname, _, filename = job["log"].partition("/")
-  body = client.get(f"/activity/{dirname}/{filename}").json()
+  body = client.get(f"/activity/{job['log']}").json()
   assert "admin_user is unset" in body["text"]
 
 
+def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
+  """The UI polls `job.log` while a command runs; the file must already exist
+  and already contain what has been printed."""
+  import logging
+
+  from harbor.jobs import JOBS, Job
+
+  class LiveJob(Job):
+    name = "stage"
+    required_args = ("app",)
+
+    def init(self, ctx, kwargs):
+      self.app = str(ctx.resolve_app(kwargs["app"]))
+
+    def run(self, ctx) -> None:
+      logging.getLogger("harbor").info("live line")
+      running = [job for job in jobs.list() if job["state"] == "running"]
+      assert len(running) == 1
+      assert running[0]["log"]
+      text = (ctx.config.activity_root / running[0]["log"]).read_text()
+      assert "# harbor stage" in text
+      assert "live line" in text
+      logging.getLogger("harbor").info("done")
+
+  monkeypatch.setitem(JOBS, "stage", LiveJob)
+  job = jobs.submit("stage", {"app": "basic-features"}, ctx())
+  jobs.run_pending()
+  finished = jobs.get(job["id"])
+  assert finished is not None
+  assert finished["state"] == "done"
+  body = (harbor_env.root / "var" / "logs" / finished["log"]).read_text()
+  assert "— ok" in body
+  assert "live line" in body
+  assert "done" in body
+
+
 def test_activity_log_rejects_a_bad_name(harbor_env, client):
-  assert client.get("/activity/demo.app/nope.log").status_code == 404
-  assert client.get("/activity/demo.app/..%2F..%2Fetc%2Fpasswd").status_code == 404
+  assert client.get("/activity/nope.log").status_code == 404
+  assert client.get("/activity/..%2F..%2Fetc%2Fpasswd").status_code == 404
 
 
 def _install_cmd_demo(harbor_env):
@@ -364,7 +407,7 @@ def test_cmd_verb_runs_a_manifest_command_as_a_job(harbor_env, client, jobs):
 
   job = submit(client, jobs, "cmd", {"app": "cmd-demo", "command": "ping"})
   assert job["state"] == "done", job["error"]
-  assert "ping" in job["output"]
+  assert "ping" in read_log(job)
 
   # It reached docker as an exec of the declared argv, not something the caller
   # supplied.
@@ -401,11 +444,13 @@ def test_cmd_verb_requires_a_command_argument(harbor_env, client):
   assert "command" in response.json()["error"]
 
 
-def test_cmd_verb_reports_an_unknown_command(harbor_env, client, jobs):
+def test_cmd_verb_reports_an_unknown_command(harbor_env, client):
   harbor_env.run("start", "basic-features", "--set", "admin_user=root")
-  job = submit(client, jobs, "cmd", {"app": "basic-features", "command": "nope"})
-  assert job["state"] == "failed"
-  assert "nope" in job["error"]
+  response = client.post(
+    "/jobs", json={"verb": "cmd", "args": {"app": "basic-features", "command": "nope"}}
+  )
+  assert response.status_code == 400
+  assert "nope" in response.json()["error"]
 
 
 def test_snapshots_empty_when_none_taken(harbor_env, client):
@@ -451,7 +496,7 @@ def test_restore_verb(harbor_env, client, jobs):
   name = Path(taken.stdout.split("written to ")[1].strip()).name.removesuffix(".tar.gz")
   job = submit(client, jobs, "restore", {"app": "ports-demo", "snapshot": name})
   assert job["state"] == "done", job["error"]
-  assert "Restored" in job["output"]
+  assert "Restored" in read_log(job)
 
 
 def test_restore_unknown_snapshot_is_refused(harbor_env, client):

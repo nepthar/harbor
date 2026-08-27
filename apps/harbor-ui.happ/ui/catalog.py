@@ -329,7 +329,15 @@ def update_applied_note(job):
   if not job or job.get("state") != "done" or job.get("verb") != "fetch":
     return ""
   target = (job.get("args") or {}).get("target") or ""
-  if target.startswith("github:") or "Updated " not in (job.get("output") or ""):
+  if target.startswith("github:") or not job.get("log"):
+    return ""
+  # The job carries no output; its run log says whether anything was updated
+  # (as opposed to already being at the pinned sha).
+  try:
+    text = api(f"/activity/{quote(job['log'])}").get("text") or ""
+  except ApiError:
+    return ""
+  if "Updated " not in text:
     return ""
   return (
     '<div class="notice">The catalog copy is updated. To run it: stop the '

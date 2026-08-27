@@ -303,8 +303,7 @@ _CMD_SCRIPT = """
   }
 
   function activityUrl(log) {
-    var parts = log.split("/");
-    return "/activity/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts.slice(1).join("/"));
+    return "/activity/" + encodeURIComponent(log);
   }
 
   function pullLog(log) {

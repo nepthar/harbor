@@ -1,6 +1,7 @@
 """CLI commands take a harbor lock, and app commands take an app lock first.
 
-`logs` / `cmd` / `activity` / `decrypt` take neither: they stream or read.
+`logs` / `activity` / `decrypt` take neither: they stream or read.
+`cmd` holds the app lock while the command runs, not the harbor lock.
 `init` runs before there is a config to lock.
 
 Most of these run in-process -- `filelock` blocks a second acquire from the
@@ -105,6 +106,53 @@ def test_a_second_harbor_process_waits_on_the_first(harbor_env):
 
   assert result.returncode == 1
   assert "Another process has locked harbor" in result.stderr
+
+
+def test_cmd_does_not_hold_the_harbor_lock(harbor_env):
+  """A long-running command must not lock other apps out of harbor."""
+  _stage_cmd_demo(harbor_env)
+
+  with FileLock(harbor_env.harbor_lockfile_path):
+    ran = harbor_env.run("cmd", "cmd-demo", "ping")
+    blocked = harbor_env.run("ps")
+
+  assert ran.returncode == 0, ran.stderr
+  assert "locked harbor" not in ran.stderr
+  assert blocked.returncode == 1
+  assert "Another process has locked harbor" in blocked.stderr
+
+
+def test_cmd_holds_the_app_lock(harbor_env):
+  """The same app cannot be started while a command is running; others can."""
+  _stage_cmd_demo(harbor_env)
+  assert harbor_env.run("stage", "routes-demo").returncode == 0
+  lock = FileLock(harbor_env.app_lockfile_path("cmd-demo"))
+  with lock:
+    blocked = harbor_env.run("cmd", "cmd-demo", "ping")
+    other = harbor_env.run("start", "routes-demo")
+
+  assert blocked.returncode == 1
+  assert "locked app cmd-demo" in blocked.stderr
+  assert other.returncode == 0, other.stderr
+
+
+def _stage_cmd_demo(harbor_env):
+  app = harbor_env.root / "apps" / "cmd-demo.happ"
+  app.mkdir()
+  (app / "manifest.toml").write_text(
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine:latest"
+cmd = ["/bin/sh", "-c", "sleep infinity"]
+
+[commands.ping]
+cmd = "echo pong"
+"""
+  )
+  assert harbor_env.run("stage", "cmd-demo").returncode == 0
 
 
 def test_logs_does_not_hold_the_harbor_lock(harbor_env):

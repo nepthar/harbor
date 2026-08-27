@@ -69,8 +69,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
         f"The output of that run ({entry['log']}) has been pruned; "
         f"its index record above is all that remains"
       )
-    dirname, _, filename = entry["log"].partition("/")
-    conn.out(activity.read_run_log(ctx, dirname, filename).rstrip("\n"))
+    conn.out(activity.read_run_log(ctx, entry["log"]).rstrip("\n"))
     return
 
   for index, entry in enumerate(runs, start=1):

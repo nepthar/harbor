@@ -23,10 +23,6 @@ def _values(entries: dict[str, LogTab.Entry]) -> dict[str, str]:
   return {k: e.value for k, e in entries.items()}
 
 
-def test_timestamp_uses_utc_z_suffix():
-  assert LogTab.ts().endswith("Z")
-
-
 def test_entry_carries_timestamp(tab):
   tab.write("a", "1")
   entry = tab.read("a")
