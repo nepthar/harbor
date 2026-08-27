@@ -59,15 +59,7 @@ class VolumeEntry(BaseModel):
 
 
 class ConfigEntry(BaseModel):
-  """A per-installation config value declared in [config] or [adv_config].
-  If a value is secret, it will be encrypted at rest.
-  Every field is optional, so an entry may be declared with no options: `my_var = {}`.
-
-  The two sections take identical entries and land in the same flat namespace;
-  the section is the whole difference. [adv_config] marks a value as advanced,
-  a hint to the user interface that it would be "noise" listed alongside the
-  values an operator is expected to set.
-  """
+  """A per-installation config value declared in [config] or [adv_config]."""
 
   model_config = ConfigDict(extra="forbid")
 
@@ -111,18 +103,7 @@ def _port_number(value: str, text: str) -> int:
 
 
 class RouteEntry(BaseModel):
-  """A named port a run unit exposes, declared in [run.<unit>.routes].
-
-  port    — "[host:]container[/proto]"; omit the host side so harbor assigns
-            the lowest free port at/above port_base. Pin a host port only when
-            absolutely necessary (see PortSpec).
-  private — when true, staging does not auto-assign a route provider; the
-            operator may still publish it later with `harbor config --route`.
-            Default false: auto-assign to default_route_provider on first stage.
-  scheme  — "http" (default) or "https": what the app listens with (how a
-            reverse proxy should dial the backend).
-  desc    — optional human description shown in config/status output.
-  """
+  """A named port a run unit exposes, declared in [run.<unit>.routes]."""
 
   model_config = ConfigDict(extra="forbid")
   port: str
@@ -190,11 +171,7 @@ class CommandEntry(BaseModel):
   desc: str = ""
 
   def argv(self) -> list[str]:
-    """Base argv for `docker compose exec`, ready for operator args to append.
-
-    A string `cmd` runs under `/bin/sh -c` with `"$@"` so extra args reach the
-    script; a list is already an argv and args append directly.
-    """
+    """Base argv for `docker compose exec`, ready for operator args to append."""
     if isinstance(self.cmd, str):
       return ["/bin/sh", "-c", f'{self.cmd} "$@"', "_"]
     return list(self.cmd)
@@ -220,12 +197,7 @@ class Manifest(BaseModel):
 
 
 def parse_manifest(data: bytes, app: AppID, source: Path) -> Manifest:
-  """Load manifest TOML and check that it is a valid manifest for `app`.
-
-  The only way to get a `Manifest`; `AppStack` is the only caller. Every
-  failure -- unreadable bytes, bad TOML, schema violations, cross-section
-  inconsistencies -- comes back as one `ConfigError` naming `source`.
-  """
+  """Load manifest TOML and check that it is a valid manifest for `app`."""
   try:
     manifest = Manifest.model_validate(tomllib.loads(data.decode()))
   except UnicodeDecodeError as e:
@@ -300,12 +272,7 @@ def _validate_commands(manifest: Manifest) -> list[str]:
 
 
 def _validate_env_refs(manifest: Manifest) -> list[str]:
-  """Every `${…}` in [run.*.env] must name a key in the flat substitution map.
-
-  Known keys: declared [config] and [adv_config] names, `routes.<name>` for
-  each route, and the fixed `happ.*` keys. Plain unknown identifiers (no dot)
-  are left alone for compose; dotted unknowns are refused.
-  """
+  """Every `${…}` in [run.*.env] must name a key in the flat substitution map."""
   known = set(manifest.config) | set(manifest.adv_config)
   known.update(
     f"{ROUTE_KEY_PREFIX}{name}"
@@ -328,10 +295,7 @@ def _validate_env_refs(manifest: Manifest) -> list[str]:
 
 
 def _validate_volumes(manifest: Manifest) -> list[str]:
-  """`app` volumes are the happ's own files: input, never state.
-
-  A harbor app is read only, so trying to set it false is refused.
-  """
+  """`app` volumes are the happ's own files: input, never state."""
   errors: list[str] = []
   for name, volume in manifest.volumes.items():
     if (

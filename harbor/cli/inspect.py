@@ -32,9 +32,6 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
   app = ctx.resolve_app(args.app)
   with ctx.locked(f"inspect {app}", app):
-    # Report what is installed under run/. An app that is not installed has
-    # no manifest there, so fall back to the bundle it would be installed
-    # from -- saying nothing at all is the one useless answer.
     staged = ctx.staged_stack(app)
     stack = staged or ctx.bundle_stack(app)
     if stack is None:

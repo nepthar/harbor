@@ -7,12 +7,7 @@ from layout import error_card, esc, fmt_size, job_card, kv_table
 
 
 def status_cell(app):
-  """Containers, unless there is no installation for them to belong to.
-
-  An uninstalled app has no containers, and calling that "stopped" would
-  contradict the list's own state column -- and what `harbor uninstall`
-  told the operator it kept.
-  """
+  """Containers, unless there is no installation for them to belong to."""
   if app.get("state") == "uninstalled":
     return (
       '<span class="pill"><span class="dot exited"></span>uninstalled</span>'
@@ -229,13 +224,8 @@ def routes_section(app):
 
 
 def commands_section(app):
-  """A Run button per manifest `[commands]` entry. Opens a modal that posts
-  a `cmd` job and tails its activity file until the job ends or the modal
-  closes.
-
-  Disabled until the app is installed, because a command runs inside the app's
-  own container -- there is nothing to run it in otherwise, and the job would
-  come back failed with exactly that message.
+  """A Run button per manifest `[commands]` entry, opening a modal that posts
+  a `cmd` job and tails its activity file.
   """
   commands = app.get("commands") or []
   if not commands:

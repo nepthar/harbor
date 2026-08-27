@@ -114,13 +114,8 @@ def _dispatch(args: argparse.Namespace, conn: Conn) -> None:
 def run(argv: list[str] | None = None, conn: Conn | None = None) -> int:
   """Execute one harbor command and return its exit code.
 
-  Separate from `main` so the test suite can call it in-process. Every exit
-  path in the CLI is a `SystemExit` (argparse's own, plus the commands that
-  raise it directly), so catching it here is what turns a command into a
-  code rather than a dead interpreter.
-
-  Logging is (re)configured per call against the *current* `sys.stderr`, so a
-  caller that redirects the stream sees warnings as well as `conn` output.
+  Logging is reconfigured per call against the current `sys.stderr`, so a
+  caller that redirects the stream still sees warnings.
   """
   logging.basicConfig(
     level=logging.WARNING,
@@ -138,8 +133,7 @@ def run(argv: list[str] | None = None, conn: Conn | None = None) -> int:
 
 
 def main() -> None:
-  # Harbor commands are short-lived and allocate little that cycles; skipping
-  # collection is worth ~10ms of a 120ms invocation. Deliberately not at import
-  # time -- `run` is called in-process by the tests, which do need a collector.
+  # Not at import time: `run` is called in-process by the tests, which do
+  # need a collector.
   gc.disable()
   raise SystemExit(run())

@@ -34,9 +34,7 @@ def register(subparsers) -> None:
 
 
 def _resolve(query: str | None, ctx: HarborCtx) -> str | None:
-  """Full id for a stem, or the query as given: a removed app's runs are
-  still on record, and refusing to list them would hide exactly the history
-  an operator goes looking for after an `rm`."""
+  """Full id for a stem, or the query as given."""
   if not query or query == activity.HARBOR_DIR:
     return query
   try:

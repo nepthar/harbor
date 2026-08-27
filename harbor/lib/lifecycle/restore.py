@@ -41,9 +41,8 @@ class RestorePlan:
   config_path: Path
   # (path inside the snapshot, path it is copied back over)
   data_volumes: tuple[tuple[Path, Path], ...]
-  # True when the target is the app's newest pre-restore snapshot, i.e. this
-  # restore is undoing the last one. No new pre-restore snapshot is taken then,
-  # or every undo would mint another snapshot and chase its own tail.
+  # No new pre-restore snapshot is taken when undoing the last restore, or every
+  # undo would mint another and chase its own tail.
   is_latest_pre_restore: bool = False
 
 
@@ -74,11 +73,7 @@ def snapshotted_app_ids(ctx: HarborCtx) -> list[AppID]:
 
 
 def resolve_snapshot_app(ctx: HarborCtx, query: str) -> AppID:
-  """Resolve an app id against snapshots/, not the catalog or run/.
-
-  Restoring an app that was removed outright is the whole point, so the id has
-  to stay resolvable when nothing but its snapshots is left.
-  """
+  """Resolve an app id against snapshots/, not the catalog or run/."""
   ids = snapshotted_app_ids(ctx)
 
   if query in ids:
@@ -143,9 +138,8 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
       )
     data_volumes.append((snapshot_path / "volumes" / "data" / name, data_root / name))
 
-  # The only current-state assumption restore keeps: clobbering files and data
-  # volumes out from under live containers is how a restore becomes a corrupt
-  # half-state.
+  # Clobbering files and data volumes out from under live containers is how a
+  # restore becomes a corrupt half-state.
   try:
     running_count = ctx.run_state(app).running_count
   except ValueError:
@@ -172,12 +166,7 @@ def restore_plan(app: AppID, snapshot_name: str, ctx: HarborCtx) -> RestorePlan:
 
 
 def _rebuild_run_dir(plan: RestorePlan) -> None:
-  """Drop the live run dir and rebuild it from the snapshot.
-
-  A snapshot holds the happ and the config; `materialize` generates the rest.
-  Snapshots taken before compose.yml was dropped from the format still carry
-  one; it is ignored. Config is restored beside the run dir, not inside it.
-  """
+  """Drop the live run dir and rebuild it from the snapshot."""
   if plan.run_path.exists():
     shutil.rmtree(plan.run_path)
   plan.run_path.mkdir(parents=True, mode=0o700)
@@ -222,16 +211,7 @@ def _restore_data_volumes(plan: RestorePlan, ctx: HarborCtx) -> None:
 def restore(
   plan: RestorePlan, ctx: HarborCtx, *, snapshot_first: bool = True
 ) -> AppRunData:
-  """Replace an app's run dir, config, and data volumes with a snapshot's.
-
-  When ``snapshot_first`` is true and a live run dir exists, a snapshot labeled
-  ``pre-restore`` is taken first. If that fails, restore does not start.
-  Restoring the newest pre-restore snapshot skips this — that restore is an
-  undo, and snapshotting there would mint a new pre-restore on every undo.
-
-  There is no scratch-and-swap: the pre-restore snapshot is the undo, so a
-  failure partway leaves a broken run dir that another restore repairs.
-  """
+  """Replace an app's run dir, config, and data volumes with a snapshot's."""
   archive = plan.snapshot_path.with_name(
     f"{plan.snapshot_path.name}{SNAPSHOT_TAR_SUFFIX}"
   )

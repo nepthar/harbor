@@ -20,13 +20,7 @@ logger = logging.getLogger("harbor.routes")
 
 
 class NginxProxyManagerRouteProvider(RouteProvider):
-  """Register harbor app routes as proxy hosts in Nginx Proxy Manager.
-
-  Auth follows NPM's token flow: log in with email/password to obtain a bearer
-  token, then send it as ``Authorization: Bearer <token>``. The token (and its
-  expiry) are cached in the harbordb ``system`` section so we only re-login when
-  it is missing or expired.
-  """
+  """Register harbor app routes as proxy hosts in Nginx Proxy Manager."""
 
   KIND = "nginx_proxy_manager"
   REQUIRED_ARGS = ("endpoint", "email", "password_secret")
@@ -192,11 +186,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
     domain: str,
     scheme: str = "http",
   ):
-    """Create (or update) a proxy host pointing domain -> harbor_address:port.
-
-    Idempotent: if a proxy host already serves this domain we update it in
-    place so re-running ``start_app`` does not create duplicates.
-    """
+    """Create (or update) a proxy host pointing domain -> harbor_address:port."""
     domain_name = self._domain_name(subdomain, domain)
     cert_id = self._wildcard_certificate_id()
     if cert_id is None:
@@ -253,11 +243,7 @@ class NginxProxyManagerRouteProvider(RouteProvider):
       self._request("DELETE", f"/api/nginx/proxy-hosts/{existing['id']}")
 
   def _harbor_proxy_hosts(self) -> list[tuple[str, dict]]:
-    """Yield (subdomain, host) for single-label hosts under the harbor domain.
-
-    Only ``<label>.<harbor_domain>`` counts — multi-label names like
-    ``qbt.arr.<domain>`` are other systems' routes and are ignored.
-    """
+    """Yield (subdomain, host) for single-label hosts under the harbor domain."""
     suffix = f".{self.harbor_domain}"
     out: list[tuple[str, dict]] = []
     for host in self._request("GET", "/api/nginx/proxy-hosts") or []:

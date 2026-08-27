@@ -47,6 +47,9 @@ this size. Handing over a document produces a document's worth of code.
   match their density.
 - **Docstrings: one line.** A second only for a non-obvious contract (what it
   raises, what it assumes). No rationale.
+- **Module docstrings** may run to a short paragraph when they orient a reader
+  to something the file's contents don't show — what this module owns, and what
+  it deliberately doesn't. Not a design record, not history.
 - Errors are `ValueError` / `RuntimeError` whose message names the fix.
 - Tests must never reach the real docker daemon — `tests/conftest.py` enforces
   this. Test doubles live in `tests/`, never in `harbor/`.

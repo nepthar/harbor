@@ -15,25 +15,15 @@ from harbor.lib.lifecycle._common import (
 from harbor.lib.lifecycle.run import stop
 from harbor.lib.lifecycle.stage import stage
 
-# An app's state lives in three trees that come apart cleanly: the
-# installation under `run/`, its data under the volume roots, and its config
-# (with secrets, routes and host ports) under `config/`. A removal takes one
-# of three combinations of them.
-#
-# These are combinations rather than three free switches on purpose. Deleting
-# config while keeping data regenerates an app's secrets against a database
-# initialised with the old ones, and it comes back as an app that no longer
-# starts. PURGE takes both together, so nothing can end up mismatched.
+# Deleting config while keeping data regenerates an app's secrets against a
+# database initialised with the old ones, and it comes back as an app that no
+# longer starts. PURGE takes both together, so nothing can end up mismatched.
 RemovalMode = Literal["uninstall", "reset", "purge"]
 
 # The installation. Data and config stay.
 UNINSTALL: RemovalMode = "uninstall"
-# The data, and the installation with it -- then staged again from the
-# bundle. Config, secrets, routes and host ports stay, so the app comes back
-# at the same address with the same settings and nothing in its volumes.
-# Re-staging is what makes this useful while developing a happ: `app`-kind
-# volumes are shipped inside the bundle, so a reset picks up whatever the
-# happ says now rather than what it said when the app was first installed.
+# The data, and the installation with it, then installed again from the bundle.
+# `app`-kind volumes ship inside the bundle, so a reset picks up a changed happ.
 RESET: RemovalMode = "reset"
 # All three, and the routes and host ports with them.
 PURGE: RemovalMode = "purge"
@@ -47,11 +37,7 @@ _ACTIONS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class RemovalPlan:
-  """What a removal will delete, and what it deliberately will not.
-
-  A `None` or empty field is a tree this removal keeps. `host_paths` is
-  always kept -- it is carried so a confirmation can say so out loud.
-  """
+  """What a removal will delete, and what it deliberately will not."""
 
   app_id: AppID
   mode: RemovalMode
@@ -60,9 +46,8 @@ class RemovalPlan:
   volume_paths: tuple[Path, ...]
   host_paths: tuple[Path, ...]
   stop_first: bool
-  # The bundle to stage again once the deleting is done, for a reset. It is
-  # resolved while planning so an app whose catalog entry is gone or
-  # ambiguous fails here, with everything still on disk, rather than after.
+  # Resolved while planning, so an app whose catalog entry is gone or ambiguous
+  # fails with everything still on disk.
   restage_from: Path | None
 
   @property
@@ -103,17 +88,7 @@ def removal_plan(app_id: AppID, ctx: HarborCtx, *, mode: RemovalMode) -> Removal
 
 
 def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
-  """Carry out `plan`: stop the app, delete the trees it names, and -- for a
-  reset -- stage it again from the bundle.
-
-  The catalog entry always survives, and so do host-volume contents: a
-  removal takes what harbor put under its own root, never the app itself or
-  data the operator pointed it at.
-
-  TODO(docs/run-layout.md §8): capture a snapshot and verify its checksum
-  before the first byte is deleted. Until then this is unrecoverable and the
-  CLI says so.
-  """
+  """Carry out `plan`, and for a reset install the app again afterwards."""
   app_id = plan.app_id
   if plan.stop_first:
     logger.info("Stopping %s", app_id)
@@ -133,15 +108,11 @@ def rm(plan: RemovalPlan, ctx: HarborCtx) -> None:
       logger.info("removed volume %s", path)
 
   if plan.purges:
-    # Routes and host-port allocations were issued to the config that named
-    # them, so they go together. An uninstall or a reset keeps the app's
-    # address, which is the point of both.
     ctx.harbor_db.purge_app(app_id)
 
   if plan.restage_from is not None:
-    # Staging rebuilds the run dir from the bundle and recreates the volume
-    # directories the compose file binds to -- which is why a reset can
-    # delete them outright, and why it picks up a happ that has changed.
+    # Staging recreates the volume directories the compose file binds to, which is
+    # why a reset can delete them outright.
     logger.info("Staging %s from %s", app_id, plan.restage_from)
     stage(app_id, plan.restage_from, ctx)
 

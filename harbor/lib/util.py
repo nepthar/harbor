@@ -36,24 +36,13 @@ LOG_LEVEL_NAMES = {
 
 
 def name_log_levels() -> None:
-  """Apply `LOG_LEVEL_NAMES` process-wide.
-
-  Called when `harbor` is imported, because the names have to be the same
-  everywhere: a run log is one file format, and an Activity writing `INFO`
-  under harbord and `info ` under the CLI would make it two.
-  """
+  """Apply `LOG_LEVEL_NAMES` process-wide."""
   for level, name in LOG_LEVEL_NAMES.items():
     logging.addLevelName(level, name)
 
 
 def refuse_root(who: str) -> None:
-  """Refuse to keep going when the effective uid is 0.
-
-  Harbor creates the harbor root, run dirs and config files as whoever runs it,
-  so running once as root leaves files the real owner cannot rewrite. Nothing
-  here needs the privilege: root-owned volume files are handled by a throwaway
-  container (see lifecycle/rootfs.py), not by this process.
-  """
+  """Refuse to keep going when the effective uid is 0."""
   if os.geteuid() == 0:
     raise RuntimeError(
       f"{who} refuses to run as root: it would leave root-owned files in the "
@@ -100,17 +89,7 @@ PUBLIC_ROUTE_SCHEME = "https"
 
 
 class EnvTemplate(string.Template):
-  """`[run.<unit>.env]` placeholders against a flat substitution keyspace.
-
-  Keys may contain a single dot so that `routes.main` and `happ.domain` are
-  ordinary map keys, not nested namespaces. The default `Template` pattern
-  stops at the first dot, which would make those placeholders invalid and
-  leave them unsubstituted — hence the custom `idpattern`.
-
-  At compose time the map holds: declared [config] names (rewritten to
-  `${__HARBOR_CONFIG__…}` so secrets stay out of compose.yml), every
-  `routes.<name>` URL, and the fixed `happ.*` keys.
-  """
+  """`[run.<unit>.env]` placeholders against a flat substitution keyspace."""
 
   idpattern = r"(?a:[_a-z][_a-z0-9-]*(?:\.[_a-z0-9-]+)?)"
 

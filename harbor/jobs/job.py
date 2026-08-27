@@ -1,21 +1,9 @@
 """A harbor verb the daemon can be asked for over the wire.
 
-A Job is the adapter between a request -- a verb name and a flat dict of
-string arguments -- and the work itself. ``init`` parses those strings
-against a live context and refuses anything it cannot use. ``run`` does the
-work, by calling the same ``harbor.lib`` functions the CLI calls. Everything
-else here is the wire: an id, a state a poller can read, and the argument
-checking that lets the API reject a bad request before anything happens.
-
-The recording is not this module's job. ``execute`` wraps ``run`` in an
-``Activity``, which owns the log file, the output capture and the index row;
-see ``harbor.lib.activity``. Code that wants a run recorded but has no wire
-to answer to -- the CLI -- uses ``Activity`` directly and skips all of this.
-
-A job that needs another verb's work calls the lifecycle functions directly,
-the way ``SnapshotJob`` calls ``stop`` and ``start``. Never submit to the
-runner from inside ``run``: the queue is serial, so a parent waiting on its
-own child waits forever.
+A Job adapts a request -- a verb name and a flat dict of string arguments --
+to the work itself. The recording is not this module's job: `execute` wraps
+`run` in an `Activity`, which owns the log file and the index row. Code that
+wants a run recorded but has no wire to answer to uses `Activity` directly.
 """
 
 from __future__ import annotations
@@ -45,8 +33,6 @@ class Job:
   description: str
   required_args: tuple[str, ...] = ()
   optional_args: tuple[str, ...] = ()
-  # Resolved app id, when the job is about one. Set in ``init`` so the log
-  # files under that app; unknown ids still file under ``harbor/``.
   app: str | None = None
 
   def __init__(self) -> None:
@@ -92,12 +78,7 @@ class Job:
     return job
 
   def execute(self, ctx: HarborCtx, *, echo: TextIO | None = None) -> None:
-    """Run the work as one recorded Activity, then re-raise anything it hit.
-
-    ``echo`` is passed straight through: a caller with a terminal sees the
-    same bytes the log file gets. The daemon leaves it unset -- the UI polls
-    ``self.log`` instead.
-    """
+    """Run the work as one recorded Activity, then re-raise anything it hit."""
     self.state = RUNNING
     self.started_at = _now()
     activity = Activity(ctx, self.name, app=self.app, args=self.args, echo=echo)
@@ -116,11 +97,10 @@ class Job:
       self.finished_at = _now()
 
   def init(self, ctx: HarborCtx, kwargs: dict[str, str]) -> None:
-    """Parse arguments that already passed ``required_args`` / ``optional_args``.
+    """Parse arguments that already passed `required_args` / `optional_args`.
 
-    Raise ``ValueError`` if they are not usable: an app that does not
-    resolve, a snapshot that is not there, a config value that cannot be
-    read. ``execute`` will not run, and no log is written, if this raises.
+    Raises ValueError if they are unusable; `execute` then never runs and no
+    log is written.
     """
 
   def run(self, ctx: HarborCtx) -> None:

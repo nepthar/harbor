@@ -25,12 +25,7 @@ from harbor.lib.stack import AppStack
 
 @dataclass(frozen=True)
 class DevPlan:
-  """A validated foreground run of a staged app against its source bundle.
-
-  An app with no `kind = "app"` volumes still needs that source to exist -- it
-  just has nothing to mount from it, which leaves a dev run as an interactive
-  `compose up`, so `mounts` is simply empty.
-  """
+  """A validated foreground run of a staged app against its source bundle."""
 
   app_id: AppID
   run_path: Path
@@ -39,9 +34,8 @@ class DevPlan:
   mounts: dict[str, Path]
   stack: AppStack
   run_data: AppRunData
-  # The source manifest has been edited since this app was staged, so the
-  # compose.yml about to run was generated from something else. Only the
-  # caller can say whether that matters for the run it wants.
+  # The compose.yml about to run was generated from a manifest that has since
+  # changed.
   manifest_stale: bool
   # route name -> public URL, for the routes this run will publish. Empty
   # unless `--routes` asked for it; a dev run is unpublished by default.
@@ -49,11 +43,7 @@ class DevPlan:
 
 
 def _dev_source(app: AppID, ctx: HarborCtx) -> Path:
-  """The `.happ` folder the staged app came from.
-
-  Resolved, so a catalog entry that is a symlink into a working tree names the
-  directory the operator actually edits rather than the link harbor followed.
-  """
+  """The `.happ` folder the staged app came from."""
   origin = ctx.staged_origin(app)
   if origin is None:
     raise ValueError(
@@ -126,13 +116,7 @@ def dev_plan(app: AppID, ctx: HarborCtx, *, publish_routes: bool = False) -> Dev
 
 @contextmanager
 def source_volume_links(plan: DevPlan) -> Iterator[None]:
-  """Point `volumes/app/*` at the source bundle, then put them back.
-
-  What goes back is read off each link beforehand rather than recomputed, so
-  restoring cannot drift from what `stage` built. A dev run that dies without
-  running this (a kill -9, a lost terminal) leaves the links pointing at the
-  source; `harbor install` rebuilds them.
-  """
+  """Point `volumes/app/*` at the source bundle, then put them back."""
   saved: list[tuple[Path, Path, Path]] = []
   for name, target in plan.mounts.items():
     link = plan.run_path / plan.stack.volumes[name].run_rel_path
@@ -179,20 +163,7 @@ def _compose_down(plan: DevPlan) -> None:
 
 
 def dev(plan: DevPlan, ctx: HarborCtx) -> int:
-  """Run the stack in this terminal with its happ mounted from source.
-
-  Returns the exit code of `docker compose up`. The run copy under `happ/` is
-  untouched -- only the `app` volume links move, and only while the stack is
-  up -- so the app runs against the same config, volumes and host ports a
-  normal `harbor start` would give it.
-
-  Routes are published only when the plan says so, and only for as long as the
-  run lasts: a foreground run ends whenever its terminal does, and provider
-  state that outlives it is worse than never having published at all. Unlike
-  `start`, registration happens *before* the stack is up -- there is no "after"
-  in a blocking run -- so the proxy points at a port that answers a moment
-  later.
-  """
+  """Run the stack in this terminal with its happ mounted from source."""
   app = plan.app_id
   if plan.published:
     try:

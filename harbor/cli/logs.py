@@ -23,8 +23,7 @@ def register(subparsers) -> None:
     nargs=argparse.REMAINDER,
     help="Extra args after -- passed to docker compose logs",
   )
-  # `logs -f` streams until interrupted. No lock: watching logs must not
-  # shut other commands out, and this command changes no harbor state.
+  # No lock: `logs -f` streams until interrupted and must not shut out writers.
   parser.set_defaults(func=run)
 
 

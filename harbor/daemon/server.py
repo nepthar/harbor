@@ -49,19 +49,13 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def _claim_socket_path(path: Path) -> None:
-  """Make `path` free to bind, or refuse and say who has it.
-
-  A socket file left by a killed harbord is removed; one that still answers is
-  another harbord, and taking it over would silently steal its traffic.
-  """
+  """Make `path` free to bind, or refuse and say who has it."""
   if len(str(path).encode()) > MAX_SOCKET_PATH:
     raise RuntimeError(
       f"Socket path is {len(str(path).encode())} bytes, over the "
       f"{MAX_SOCKET_PATH}-byte limit the OS allows: {path}\n"
       f"Pass --socket with a shorter path, or move the harbor root."
     )
-  # Only tighten a directory harbord created. A `--socket` pointed into an
-  # existing shared directory is the operator's to set up, not ours to chmod.
   if not path.parent.exists():
     path.parent.mkdir(parents=True)
     path.parent.chmod(0o750)
@@ -126,8 +120,6 @@ def serve(
   socket_path = socket_path or config.admin_socket_path
 
   def ctx_factory() -> HarborCtx:
-    # Config is re-read per request rather than held: harbor's state is the
-    # filesystem, and nothing should survive a `harbor config` edit.
     loaded = load_config(**config_args)
     if loaded is None:
       raise RuntimeError("Harbor is not initialized; run `harbor init` first")
@@ -207,7 +199,5 @@ def main() -> None:
   except KeyboardInterrupt:
     pass
   except (ValueError, RuntimeError, OSError) as error:
-    # OSError covers the socket itself: a path harbord cannot write, a
-    # directory it cannot create, a bind the kernel refuses.
     print(f"Error: {error}", file=sys.stderr)
     raise SystemExit(1) from error

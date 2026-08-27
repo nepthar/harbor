@@ -1,15 +1,8 @@
 """The admin API's routes.
 
-Reads do not take the harbor lock. They walk the filesystem the same way
-`harbor ps` does, and the worst a concurrent write can do is show a listing
-that was true a moment ago. Writes go through `JobRunner`, which does lock.
-
+Reads do not take the harbor lock; writes go through `JobRunner`, which does.
 Every handler is a plain `def`: `harbor.lib` blocks, and FastAPI runs a
-non-async endpoint in a threadpool, which is what a blocking call wants.
-
-Errors have one shape, `{"error": "..."}`, whether they come from harbor, from
-a route that does not exist, or from pydantic rejecting a body. A client that
-has to branch on two error shapes will get one of them wrong.
+non-async endpoint in a threadpool. Errors have one shape, `{"error": "..."}`.
 """
 
 from __future__ import annotations
@@ -54,12 +47,7 @@ CtxFactory = Callable[[], HarborCtx]
 
 
 class HostVolumeBody(BaseModel):
-  """A `[host_volume]` entry, as the UI declares one.
-
-  `path` is a host path, which is the one kind of argument the rest of this
-  API refuses to take. That is deliberate here: declaring where apps may bind
-  is the point of the endpoint, and it cannot be done without naming a path.
-  """
+  """A `[host_volume]` entry, as the UI declares one."""
 
   model_config = ConfigDict(extra="forbid")
 
@@ -73,13 +61,7 @@ class NewHostVolume(HostVolumeBody):
 
 
 class ConfigChange(BaseModel):
-  """One `harbor config <app>` invocation, as the UI sends it.
-
-  Every value names something the manifest or config.toml already declares --
-  a config key, a host_volume tag, a route provider tag. Nothing here takes a
-  path, which is what keeps this endpoint inside the rule the rest of the API
-  follows.
-  """
+  """One `harbor config <app>` invocation, as the UI sends it."""
 
   model_config = ConfigDict(extra="forbid")
 
@@ -89,13 +71,7 @@ class ConfigChange(BaseModel):
 
 
 class FetchTarget(BaseModel):
-  """A github: target to look at, as the UI sends it.
-
-  A URL, which the rest of this API refuses to take -- see the note above
-  `JOBS` in `harbor.jobs`. It is allowed here because looking is not
-  installing: the preview downloads to a scratch directory, reads the manifest,
-  and throws the copy away. Nothing it fetches survives the request.
-  """
+  """A github: target to look at, as the UI sends it."""
 
   model_config = ConfigDict(extra="forbid")
 
@@ -111,12 +87,7 @@ class CheckApp(BaseModel):
 
 
 class JobSubmission(BaseModel):
-  """What `POST /jobs` accepts.
-
-  Shape only. Whether the verb exists, whether its arguments are the ones it
-  declares, and whether the app is installed are harbor questions, and
-  `JobRunner.submit` answers them against a live context (via `Job.init`).
-  """
+  """What `POST /jobs` accepts. Shape only; `JobRunner.submit` validates."""
 
   model_config = ConfigDict(extra="forbid")
 
@@ -125,8 +96,7 @@ class JobSubmission(BaseModel):
 
 
 def _ctx(request: Request) -> HarborCtx:
-  """A context per request. Harbor's state is the filesystem, and a request is
-  the daemon's equivalent of an invocation -- nothing is carried between."""
+  """A context per request."""
   return request.app.state.ctx_factory()
 
 
@@ -139,8 +109,7 @@ Jobs = Annotated[JobRunner, Depends(_runner)]
 
 
 def _bundle_stack(app: AppID, ctx: HarborCtx) -> AppStack:
-  """The schema for an app that is not staged yet, so it can be configured
-  before its first install -- the same fallback `harbor config` makes."""
+  """The schema for an app that is not installed yet."""
   return load_happ(ctx.bundle_path(app)).app_stack()
 
 
@@ -165,11 +134,7 @@ def _assign_route(
 
 
 def _ctx_again(ctx: HarborCtx) -> HarborCtx:
-  """A context reading config.toml as it is *after* an edit.
-
-  The request's own context loaded the file before the write, and every
-  attribute on it is from that read.
-  """
+  """A context reading config.toml as it is *after* an edit."""
   return HarborCtx(load_config_file(ctx.config.config_path))
 
 
@@ -188,8 +153,6 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.exception_handler(RequestValidationError)
   def _bad_body(request: Request, exc: RequestValidationError) -> JSONResponse:
-    # 400 rather than FastAPI's 422: a malformed body is a bad request, and one
-    # status for "you sent something wrong" is easier to consume than two.
     problems = "; ".join(
       f"{'.'.join(str(p) for p in error['loc'] if p != 'body') or 'body'}: "
       f"{error['msg']}"
@@ -212,12 +175,7 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.post("/catalog/preview", tags=["catalog"])
   def preview_fetch(body: FetchTarget, ctx: Ctx) -> dict:
-    """Read what a github: target holds, without installing any of it.
-
-    Inline rather than as a job: it commits nothing, so there is no state for
-    a caller to poll for. It does spend a GitHub round trip, which is why the
-    UI asks for it once per target rather than on every render.
-    """
+    """Read what a github: target holds, without installing any of it."""
     try:
       return views.fetch_preview_view(body.target, ctx)
     except (ValueError, RuntimeError) as e:
@@ -225,11 +183,7 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.post("/catalog/check", tags=["catalog"])
   def check_catalog_update(body: CheckApp, ctx: Ctx) -> dict:
-    """Compare a fetched happ to the commit its source currently points at.
-
-    Inline rather than as a job: it commits nothing, same as preview. The UI
-    asks once when the operator opens that happ, not on every catalog render.
-    """
+    """Compare a fetched happ to the commit its source currently points at."""
     try:
       return views.fetch_update_view(ctx.resolve_app(body.app), ctx)
     except (ValueError, RuntimeError) as e:
@@ -248,12 +202,7 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.post("/apps/{app_id}/config", tags=["apps"])
   def change_app_config(app_id: str, body: ConfigChange, ctx: Ctx) -> dict:
-    """Set config values, host-volume binds and route assignments.
-
-    Inline rather than as a job: the writes are local and quick. Assigning a
-    route is the exception -- it calls out to the provider -- and is the first
-    thing that would want moving if a slow proxy starts holding requests open.
-    """
+    """Set config values, host-volume binds and route assignments."""
     try:
       resolved = ctx.resolve_app(app_id)
       with ctx.locked(f"config {resolved}", resolved):
@@ -283,9 +232,6 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.post("/host-volumes", status_code=201, tags=["host volumes"])
   def create_host_volume(body: NewHostVolume, ctx: Ctx) -> dict:
-    # Config edits are milliseconds, so they answer inline rather than as a
-    # job. They still take the harbor lock, so one running behind a snapshot
-    # waits and then fails naming the holder.
     try:
       with ctx.harbor_lock(f"host-volume add {body.tag}"):
         add_host_volume(
@@ -329,7 +275,7 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.get("/activity", tags=["activity"])
   def list_activity(ctx: Ctx, app: str | None = None, limit: int = 20) -> dict:
-    """Recorded unattended runs -- what the jobs history forgets, kept."""
+    """Recorded unattended runs."""
     try:
       return {"activity": views.activity_view(ctx, app=app, limit=limit)}
     except ValueError as e:

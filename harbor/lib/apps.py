@@ -42,11 +42,7 @@ def read_last_app_action(app_id: AppID, ctx: HarborCtx) -> str | None:
 
 
 def read_app_actions(ctx: HarborCtx) -> dict[str, tuple[datetime, str]]:
-  """Last recorded action for every app, in one pass over the activity log.
-
-  All apps share one log, so callers reporting on many of them should read it
-  once rather than per app. Keys are bare app ids.
-  """
+  """Last recorded action for every app, in one pass over the activity log."""
   actions: dict[str, tuple[datetime, str]] = {}
   for key, entry in ctx.activity_log.scan(prefix="apps/", suffix="/status").items():
     app_id = key.removeprefix("apps/").removesuffix("/status")

@@ -54,11 +54,7 @@ class AppVolume:
 
   @property
   def run_rel_path(self) -> str:
-    """Where the run dir links this volume, relative to the compose file.
-
-    Typed by kind so that "which volumes are durable" is a path glob rather
-    than a manifest lookup (docs/run-layout.md L3).
-    """
+    """Where the run dir links this volume, relative to the compose file."""
     return f"./volumes/{self.kind}/{self.name}"
 
 
@@ -115,14 +111,7 @@ class AppCommand:
 
 @dataclass(frozen=True)
 class AppStack:
-  """An immutable, installation-independent app definition.
-
-  It is built only from a semantically valid manifest and app bundle. Host
-  configuration such as config values, volume binds, allocated ports and
-  the harbor domain belongs to :class:`AppRunData`.
-
-  TODO: [cron] is accepted by the manifest but not resolved here yet.
-  """
+  """An immutable, installation-independent app definition."""
 
   app: AppID
   manifest: Manifest
@@ -139,23 +128,12 @@ class AppStack:
 
   @classmethod
   def from_file(cls, manifest_path: Path, app_id: AppID) -> "AppStack":
-    """Build from a manifest.toml on disk.
-
-    For an installed app that is ``run/<id>/happ/manifest.toml`` (via
-    ``HarborCtx.manifest_path``), never the catalog entry under ``apps/``. The
-    id is explicit because the path does not always carry it (the run copy has
-    neither the id nor a flavor suffix); ``happ.load_happ`` derives it for
-    catalog bundles.
-    """
+    """Build from a manifest.toml on disk."""
     try:
       data = manifest_path.read_bytes()
     except OSError as e:
       raise ConfigError(f"cannot read manifest {manifest_path}: {e}") from e
     return cls.from_bytes(data, app_id, manifest_path)
-
-  # `[app]` metadata is the manifest's to state and nobody else's to restate.
-  # Anything derived -- run units, routes, resolved volumes -- is built once
-  # in `_build`; anything verbatim is read straight through from here.
 
   @property
   def version(self) -> str:

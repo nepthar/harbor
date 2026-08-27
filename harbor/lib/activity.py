@@ -1,25 +1,10 @@
 """Harbor's own activity output: what an unattended run printed, kept on disk.
 
-There are two log streams and this module owns exactly one of them. Container
-runtime logs belong to dockerd -- `harbor logs` streams them through `docker
-compose logs`, and copying them here would mean owning rotation and disk-full
-for every chatty app. What dockerd cannot keep is what *harbor* did: a job's
-`compose run --rm` container is deleted the moment it exits, so harbor's
-capture is the only record of what a job or a cron run produced.
-
-Each run leaves one plain file under `$harbor/var/logs/`, named
-`{timestamp}.{app_id}.{verb}.log` (the app id is omitted for runs that
-belong to no app). Readable with harbor gone -- same no-lock-in rule as
-the rest of the tree. The structured index is `activity.logtab`, which
-already records per-app status: a run adds an `apps/<app_id>/run` record
-whose value carries verb, outcome, duration and the file's name. Runs that
-belong to no app (`fetch`) index under `harbor/`.
-
-`Activity` is the context manager that ties the two together: it opens the
-file, points harbor's logging and streamed subprocess output at it, and
-files the index row on the way out. Everything that records a run goes
-through it -- `harbor.jobs` wraps it, and any code with a block of work
-worth remembering can use it directly.
+This module owns one of two log streams. Container runtime logs belong to
+dockerd and reach the operator through `harbor logs`; what dockerd cannot keep
+is what *harbor* did, since a job's `compose run --rm` container is deleted the
+moment it exits. Each run leaves a plain file under `$harbor/var/logs/` and a
+row in `activity.logtab`.
 """
 
 from __future__ import annotations
@@ -45,9 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("harbor.activity")
 
-# Output files kept. The logtab index outlives the files -- jobs are not
-# the audit trail, the activity log is -- so pruning loses the text of an
-# old run, never the fact of it.
+# Output files kept. The logtab index outlives them.
 KEEP_RUNS = 50
 
 # Index key for runs that name no app. Distinct from `apps/harbor/run`,
@@ -122,12 +105,7 @@ def begin_run(
   app_id: AppID | None,
   started: datetime,
 ) -> str:
-  """Create the run file so a live job can tee into it. Not indexed yet.
-
-  Returns the path relative to the activity root. Output is appended to this
-  file as it happens; `finish_run` appends the closing trailer and adds the
-  index row.
-  """
+  """Create the run file so a live job can tee into it. Not indexed yet."""
   relpath = _new_relpath(ctx, app_id, started, verb)
   path = ctx.config.activity_root / relpath
   path.write_text(_run_header(verb, app_id, started, args))
@@ -171,12 +149,7 @@ def record_run(
   finished: datetime,
   output: str,
 ) -> str:
-  """Write one run's output file and its index record; returns the file's
-  path relative to the activity root.
-
-  The file is written first: an index record pointing at a file that never
-  made it would be a lie, while a file the index missed is merely unlisted.
-  """
+  """Write one run's output file and index record; returns its relative path."""
   relpath = begin_run(ctx, verb, args, app_id=app_id, started=started)
   if output:
     text = output if output.endswith("\n") else output + "\n"
@@ -196,13 +169,7 @@ def record_run(
 
 @contextmanager
 def _capture_harbor_logging(stream: io.TextIOBase) -> Iterator[None]:
-  """Tee `harbor.*` log records into `stream` for the duration.
-
-  Progress that library code writes through `logging` -- container steps,
-  route-provider chatter -- has to land in the run log, not only on this
-  process's stderr. The logger is opened up to INFO while the block runs;
-  runs are serial, so the widening never spans two of them.
-  """
+  """Tee `harbor.*` log records into `stream` for the duration."""
   handler = logging.StreamHandler(stream)
   handler.setLevel(logging.INFO)
   # UTC with a Z, like the header and trailer lines around it.
@@ -224,11 +191,7 @@ def _capture_harbor_logging(stream: io.TextIOBase) -> Iterator[None]:
 
 
 class _Sink(io.TextIOBase):
-  """The run's log file, flushed per write so a reader can tail it mid-run.
-
-  `echo` is the attended case: the same bytes also go to the operator's
-  terminal.
-  """
+  """The run's log file, flushed per write so a reader can tail it mid-run."""
 
   def __init__(self, log: io.TextIOBase, echo: TextIO | None = None) -> None:
     self._log = log
@@ -251,25 +214,13 @@ class _Sink(io.TextIOBase):
 class Activity:
   """One recorded run of harbor's own work.
 
-      with Activity(ctx, "refresh", app=app) as act:
-        stop(app, ctx)
-        stage(app, bundle, ctx)
-        start(app, bundle, ctx)
-
   Inside the block, `harbor.*` log records and streamed docker output land in
-  the run's file under `$harbor/var/logs` as they happen, so a reader tailing
-  that file sees progress. `echo` copies the same bytes to a second stream --
-  a terminal, when the caller has one. On the way out the file gets its
-  closing trailer and the run is indexed, whether the block returned or
-  raised; the exception is recorded and then propagates.
+  the run's file under `$harbor/var/logs`; `echo` copies them to a second
+  stream. The exception from a failed block is recorded, then propagates.
 
-  The block is the unit of recording, so keep it to the work itself: resolve
-  and validate arguments *before* entering. A run that could never have
-  started leaves no log to explain, which is the point.
-
-  One block is one row in the activity index, so do not nest them. Work that
-  belongs to a larger action is a function the block calls, not a block of
-  its own.
+  Resolve and validate arguments before entering: a run that could never have
+  started should leave no log. Do not nest blocks -- one block is one row in
+  the activity index.
   """
 
   def __init__(
@@ -350,12 +301,7 @@ class Activity:
     env: dict[str, str] | None = None,
     cwd: str | os.PathLike[str] | None = None,
   ) -> Any:
-    """Run `cmd`. JSON out is captured and parsed; anything else is streamed.
-
-    Streamed output goes to the run log (and the echo stream, when there is
-    one) as the child writes, so a reader tailing the log sees progress. A
-    non-zero exit is a `RuntimeError` naming the command.
-    """
+    """Run `cmd`. JSON out is captured and parsed; anything else is streamed."""
     if self._sink is None:
       raise RuntimeError(f"{self.verb} activity is not running")
     run_env = {**os.environ, **env} if env else None
@@ -428,11 +374,7 @@ def _prune(directory: Path) -> None:
 def list_runs(
   ctx: HarborCtx, *, app: str | None = None, limit: int = 20
 ) -> list[dict[str, Any]]:
-  """Recorded runs, newest first. `app` narrows to one app's (full) id.
-
-  Read from the index, not the directory: the index remembers runs whose
-  output file has since been pruned, and `available` says which is which.
-  """
+  """Recorded runs, newest first. `app` narrows to one app's (full) id."""
   key = _index_key(AppID(app)) if app and app != HARBOR_DIR else None
   runs: list[dict[str, Any]] = []
   for record_key, entry in ctx.activity_log.history(suffix="/run"):
@@ -462,12 +404,7 @@ def list_runs(
 
 
 def read_run_log(ctx: HarborCtx, filename: str) -> str:
-  """The text of one run file, named the way the index names it.
-
-  The name comes from a client, so it is validated as a single, known-shape
-  path segment before any filesystem contact -- this is the one place the
-  admin API's no-paths rule meets a request that has to name a file.
-  """
+  """The text of one run file, named the way the index names it."""
   if not FILENAME_RE.fullmatch(filename):
     raise ValueError(f"No run log named {filename!r}")
   path = (ctx.config.activity_root / filename).resolve()

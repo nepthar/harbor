@@ -19,10 +19,7 @@ SNAPSHOT_STAMP = "%Y-%m-%d_%H-%MZ"
 
 
 def split_snapshot_name(name: str) -> tuple[str | None, str]:
-  """ISO timestamp and label encoded in a snapshot folder name.
-
-  `2026-08-25_23-19Z` has no label. `2026-08-25_23-19Z_pre-restore` does.
-  """
+  """ISO timestamp and label encoded in a snapshot folder name."""
   date, sep, rest = name.partition("_")
   if not sep:
     return None, ""
@@ -68,11 +65,7 @@ def snapshot_archive(root: Path, app: AppID, name: str) -> Path:
 
 
 def _tar_create(folder: Path, archive: Path) -> None:
-  """Archive `folder` into `archive`, with the *host* owning the archive file.
-
-  The container only writes the compressed stream to stdout; this process opens
-  the destination, so the archive belongs to the operator and not to root.
-  """
+  """Archive `folder` into `archive`, with the *host* owning the archive file."""
   folder = folder.resolve()
   parent = shlex.quote(str(folder.parent))
   script = f"tar -czf - -C {parent} {shlex.quote(folder.name)}"
@@ -92,13 +85,7 @@ def _tar_extract(archive: Path, dest_parent: Path) -> None:
 
 
 def remove_snapshot_dir(folder: Path) -> None:
-  """Delete an uncompressed snapshot folder.
-
-  Only its volume tree can hold root-owned files -- the manifest, config and
-  happ copy were written by this process. A snapshot of an app with no data
-  volumes is therefore ours to delete, and paying for a container to do it
-  would make cleanup fail whenever docker is down.
-  """
+  """Delete an uncompressed snapshot folder."""
   if not folder.exists():
     return
   folder = folder.resolve()
@@ -120,9 +107,8 @@ def extract_snapshot(archive: Path) -> Path:
   try:
     _tar_extract(archive, archive.parent)
   except Exception:
-    # Cleanup must not speak over the failure it is cleaning up after: when
-    # docker is the thing that broke, removal fails too, and its message would
-    # replace the only one that says what actually went wrong.
+    # Cleanup must not speak over the failure it is cleaning up after: when docker
+    # is what broke, removal fails too and replaces the useful message.
     try:
       remove_snapshot_dir(folder)
     except Exception as cleanup_error:
@@ -138,7 +124,7 @@ def snapshot(
   ctx: HarborCtx,
   label: str = "",
 ) -> Path:
-  """Copy a stopped app's happ, config, and data volumes into an archive.
+  """Copy an app's volumes and run state into a snapshot archive.
 
   Assumes the caller holds the app lock and the app is stopped.
   """
@@ -210,11 +196,9 @@ def snapshot(
       encoding="utf-8",
     )
 
-    # Config is harbor-owned; copy2 keeps mode and mtime. Secrets stay Fernet
-    # ciphertext — we never decrypt on this path.
-    #
-    # compose.yml is not captured: its host ports are a photograph of harbordb,
-    # which moves on. `restore` regenerates it from the happ below.
+    # Secrets stay Fernet ciphertext; we never decrypt on this path. compose.yml is
+    # not captured: its host ports are a photograph of harbordb, and `restore`
+    # regenerates it from the happ below.
     shutil.copy2(ctx.config.app_config_path(app), staging / "config.logtab")
     shutil.copytree(paths.happ_path, staging / "happ")
 

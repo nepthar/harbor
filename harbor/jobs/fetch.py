@@ -18,15 +18,7 @@ class FetchJob(Job):
   optional_args = ("yes",)
 
   def init(self, ctx: HarborCtx, kwargs: dict[str, str]) -> None:
-    """`harbor fetch <target>`, with the prompt replaced by an explicit `yes`.
-
-    The CLI asks before a first install, because harbor cannot vouch for a
-    happ's author and the receipt is the only check there is. A job cannot be
-    asked anything, so the caller has to have decided already -- a client
-    that wants the operator to see what they are approving shows them the
-    preview first. An update carries no prompt in the CLI either, so it
-    needs no `yes` here.
-    """
+    """`harbor fetch <target>`, with the prompt replaced by an explicit `yes`."""
     self.target = kwargs["target"]
     spec, pin = split_pin(self.target)
     self.spec = spec

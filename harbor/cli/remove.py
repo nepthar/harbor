@@ -1,10 +1,6 @@
-"""The three removal verbs, which differ only in how much they take.
-
-An app's state lives in three trees -- the installation under `run/`, its
-data under the volume roots, and its config (secrets, routes, host ports)
-under `config/`. `uninstall` takes the first, `reset` takes the second, and
-`rm` takes all three. See `harbor.lib.lifecycle.rm` for why those are the
-combinations on offer and not six switches.
+"""The three removal verbs, which differ only in how much they take: an
+app's installation under `run/`, its data under the volume roots, and its
+config under `config/`.
 """
 
 from __future__ import annotations
@@ -46,8 +42,6 @@ def register(subparsers) -> None:
   _add_yes(reset)
   reset.set_defaults(func=_run(RESET))
 
-  # The old name for `uninstall --purge`, kept because it is the one in
-  # every existing note and script.
   remove = subparsers.add_parser(
     "rm",
     help="Alias for `uninstall --purge`",
@@ -94,12 +88,7 @@ def _done(plan: RemovalPlan) -> str:
 
 
 def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn: Conn) -> bool:
-  """Say what the operator is deciding, and nothing else.
-
-  Which directories harbor keeps an app in is its own business: paths appear
-  here only for data it is about to destroy, where seeing exactly what is at
-  stake is the point of asking at all.
-  """
+  """Say what the operator is deciding, and nothing else."""
   if plan.mode == RESET:
     _describe_reset(plan, conn)
   elif plan.purges:
@@ -121,7 +110,7 @@ _ASKED = {UNINSTALL: "Uninstall", RESET: "Reset", PURGE: "Remove"}
 
 
 def _describe_purge(plan: RemovalPlan, ctx: HarborCtx, conn: Conn) -> None:
-  """The destructive one, so it names the data going away."""
+  """Describe a purge, naming the data it destroys."""
   volumes = _volume_lines(plan)
   if plan.volume_paths:
     conn.out(f"Removing {plan.app_id} deletes its data volumes:")
@@ -134,23 +123,14 @@ def _describe_purge(plan: RemovalPlan, ctx: HarborCtx, conn: Conn) -> None:
       f"allocations. It has no data volumes on disk."
     )
 
-  # Host volumes are the operator's own directories, so saying they survive
-  # is worth the line -- everything else harbor removes is harbor's.
   for path in plan.host_paths:
     conn.out(f"The host volume at {path} is left alone.")
 
-  # No snapshot is taken yet (docs/run-layout.md §8), so say plainly that
-  # there is nothing to roll back to rather than implying a safety net that
-  # is not there.
   conn.out("If you want this data back, take a snapshot first.")
 
 
 def _describe_reset(plan: RemovalPlan, conn: Conn) -> None:
-  """A reset is not really a removal, so it does not read like one.
-
-  What the operator is deciding is whether to lose the data; the run dir
-  going and coming back is a mechanism, not a consequence.
-  """
+  """Describe a reset: what data goes, and that the app is installed again."""
   conn.out(
     f"Resetting {plan.app_id} will preserve configuration and routing, "
     f"but will remove the following volumes:"
@@ -162,8 +142,7 @@ def _describe_reset(plan: RemovalPlan, conn: Conn) -> None:
 
 
 def _volume_lines(plan: RemovalPlan) -> list[str]:
-  """One line per volume, rather than per volume root, which is how the
-  manifest names them and how the operator thinks about them."""
+  """One line per volume, which is how the manifest names them."""
   lines: list[str] = []
   for path in plan.volume_paths:
     volumes = sorted(p for p in path.iterdir() if p.is_dir()) if path.is_dir() else []

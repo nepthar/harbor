@@ -37,12 +37,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
 
 
 def _confirmed(plan: DevPlan, conn: Conn) -> bool:
-  """A dev run against a manifest the operator has already moved past.
-
-  Their edit may be exactly the thing they want to test, or it may be
-  unrelated to the source files they came here to iterate on, so this reports
-  it and lets them choose rather than deciding for them.
-  """
+  """Ask before a dev run against a manifest the operator has already moved past."""
   conn.out(
     f"{plan.app_id}'s manifest has changed since it was staged:\n"
     f"  source: {plan.source / 'manifest.toml'}\n"
@@ -76,8 +71,6 @@ def _receipt(plan: DevPlan, ctx: HarborCtx) -> str:
   ):
     rows.append(("Routes:" if i == 0 else "", line))
 
-  # compose.yml came from the staged manifest, so an edited source manifest is
-  # not in this run. Silent when they match: there is nothing to act on.
   if plan.manifest_stale:
     rows.append(
       (

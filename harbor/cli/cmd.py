@@ -24,8 +24,6 @@ def register(subparsers) -> None:
     nargs=argparse.REMAINDER,
     help="Arguments forwarded to the command",
   )
-  # Listing is a short read. Running holds the app lock so stage/start/stop
-  # of this app wait; the harbor lock is left free so other apps can proceed.
   parser.set_defaults(func=run)
 
 

@@ -23,12 +23,7 @@ from harbor.lib.stack import AppStack
 
 
 def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
-  """Turn start blockers into what is wrong and how to fix it.
-
-  Naming the problem matters as much as the remedy: several issues share the
-  same fix, so listing fixes alone produced repeated lines that never said
-  which value or volume was at fault.
-  """
+  """Turn start blockers into what is wrong and how to fix it."""
   lines = [f"{app_id} cannot start:"]
   for issue in issues:
     lines.append(f"  - {issue.problem}")
@@ -45,13 +40,7 @@ def start(
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
 ) -> StageSuccess:
-  """Stage if needed, then bring the app up and register assigned routes.
-
-  `--set` re-stages, because config values are inputs to what staging
-  generates. `--bind` re-stages only to record the bind against a validated
-  manifest -- the links themselves are built here, from whatever binds are on
-  file.
-  """
+  """Stage if needed, then bring the app up and register assigned routes."""
   paths = ctx.staged_paths(app)
 
   if sets or binds or not ctx.is_staged(app):
@@ -73,9 +62,8 @@ def start(
     record_app_action("start-failed", app, ctx)
     raise ValueError(str(e)) from e
 
-  # The binds only become links here, and only for as long as the app runs.
-  # Rebuilt from scratch every time, so a bind recorded since the last start --
-  # or since the last stage, which does not touch these -- takes effect now.
+  # Rebuilt from scratch every start, so a bind recorded since the last one --
+  # staging does not touch these -- takes effect now.
   link_host_volumes(stack, run_data)
 
   try:
@@ -103,14 +91,7 @@ def start(
 
 
 def _compose_env(app_id: AppID, ctx: HarborCtx) -> dict[str, str]:
-  """The config environment compose.yml interpolates `${__HARBOR_CONFIG__*}` from.
-
-  Every compose invocation needs it, not just `up`: without it compose warns
-  about each unset variable and renders them blank, so `down` and `logs` would
-  be reasoning about a different project definition than `up` created. Best
-  effort -- a broken or half-removed app must still be stoppable, so a stack
-  that will not parse falls back to no env rather than blocking teardown.
-  """
+  """The config environment compose.yml interpolates `${__HARBOR_CONFIG__*}` from."""
   try:
     stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
     return load_run_data(stack, ctx).config_env()
@@ -142,12 +123,7 @@ def run_command(
   args: list[str],
   ctx: HarborCtx,
 ) -> int:
-  """Run a manifest `[commands]` entry in its target unit.
-
-  If that unit is already up, ``docker compose exec`` into it. Otherwise a
-  one-off ``docker compose run --rm --no-deps`` — same service definition and
-  mounts, no sibling services started for you.
-  """
+  """Run a manifest `[commands]` entry in its target unit."""
   state = ctx.run_state(app_id)
   if not state.compose_exists:
     raise ValueError(

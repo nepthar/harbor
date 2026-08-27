@@ -23,9 +23,8 @@ VOLUME_KINDS = ("data", "temp", "bulk", "logs")
 # volumes/, config/; this is sockets, activity files, scratch, and locks.
 VAR_DIRS = ("conn", "logs", "temp", "lock")
 
-# The name of the app source backed by `apps_root`. Always present, always
-# first, and the only one harbor itself writes to (`fetch`, and the symlink
-# `stage <path>` leaves behind).
+# The app source backed by `apps_root`: always present, always first, and the
+# only one harbor itself writes to.
 DEFAULT_APP_SOURCE = "apps"
 
 # Built-in noop provider tag. Always present; operators may not redefine it.
@@ -63,11 +62,7 @@ class AppSourceEntry(BaseModel):
 
 
 class RouteProviderEntry(BaseModel):
-  """One `[route_provider.<tag>]` table.
-
-  ``args`` are kind-specific and passed through to that provider's constructor
-  (after resolving any secrets the kind requires).
-  """
+  """One `[route_provider.<tag>]` table."""
 
   model_config = ConfigDict(extra="forbid")
 
@@ -167,9 +162,8 @@ class Config:
     extra_app_sources: dict[str, Path] | None = None,
     host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
-    # Where this config was read from. Not derivable from harbor_root: an
-    # explicit --config may be named anything, and editing has to write back
-    # to the file harbor actually loaded.
+    # Not derivable from harbor_root: an explicit --config may be named anything,
+    # and editing has to write back to the file harbor actually loaded.
     self.config_path = config_path
     self.harbor_root = harbor_root
     self.volume_roots = volume_roots
@@ -214,11 +208,7 @@ class Config:
 
   @property
   def activity_root(self) -> Path:
-    """Where harbor's own run output lives: one plain file per unattended run.
-
-    Not container logs -- those belong to dockerd and `harbor logs` streams
-    them. This is what a verb printed while a job (and later, cron) ran it.
-    """
+    """Where harbor's own run output lives: one plain file per unattended run."""
     return self.var_root / "logs"
 
   def app_run_path(self, app_id: AppID) -> Path:
@@ -413,10 +403,9 @@ def _validate_config(parsed: ConfigFile) -> list[str]:
 
 
 def _resolve_app_sources(entries: Any, apps_root: Path, ep) -> dict[str, Path]:
-  """The `[[app_source]]` blocks that add app directories beyond `apps/`.
+  """Resolve the `[[app_source]]` entries; names and locations must be unique.
 
-  Names and locations must both be unique. Errors soft-fail: a typo in this
-  optional section must not stop every harbor command.
+  Errors soft-fail: a typo here must not stop every harbor command.
   """
 
   def refuse(problem: str) -> dict[str, Path]:
@@ -476,14 +465,7 @@ def load_config(
   config_path: str | Path | None = None,
   root: str | Path | None = None,
 ) -> Config | None:
-  """Find and load the harbor config.
-
-  Precedence: ``config_path`` / ``root`` arguments, then ``HARBOR_CONFIG`` /
-  ``HARBOR_ROOT`` env, then the standard locations. An explicit override must
-  point at an existing config file; if it doesn't, that's an error. With no
-  override set, fall back to the standard locations, returning None if none
-  exist.
-  """
+  """Find and load the harbor config."""
   if config_path is not None:
     path = Path(config_path).expanduser().resolve()
     if not path.is_file():

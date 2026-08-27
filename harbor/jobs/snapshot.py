@@ -18,10 +18,8 @@ class SnapshotJob(Job):
   def run(self, ctx: HarborCtx) -> None:
     """Stop if running, copy, start if we stopped.
 
-    Holds the app lock the whole time so nothing else mutates this app. The
-    harbor lock is only around stop and start, so other apps can proceed while
-    volumes copy. `snapshot()` is the copy; it assumes the app lock and a
-    stopped app.
+    Holds the app lock throughout; the harbor lock only around stop and start, so
+    other apps proceed while volumes copy.
     """
     app = self.app_id
     by = f"snapshot {app}"

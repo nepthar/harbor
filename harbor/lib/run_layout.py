@@ -65,12 +65,10 @@ class ConfigIssue:
 
   stage_blocking: bool = False
 
-  # True when staging repairs this on its own, so it is not something the
-  # operator has to act on. Route allocation is the case: `stage()` clears and
-  # reallocates every route *before* it evaluates readiness, so an unallocated
-  # route is the normal pre-start state. Counting these as blockers made
-  # `harbor ps` report CONFIG as missing for an app that needed no configuration
-  # and started fine on the very next `harbor start`.
+  # True when staging repairs this itself. `stage()` reallocates every route
+  # before evaluating readiness, so an unallocated route is the normal pre-start
+  # state; counting these as blockers made `harbor ps` report CONFIG missing for
+  # apps that needed no configuration.
   self_healing: bool = False
 
   def line(self) -> str:
@@ -79,12 +77,7 @@ class ConfigIssue:
 
 @dataclass(frozen=True)
 class VolumeLink:
-  """One entry under ``run/<id>/volumes/<kind>/``.
-
-  ``source`` is the real host path, for existence checks and receipts;
-  ``target`` is what the symlink itself contains, which is not the same thing
-  for `app` volumes -- see :func:`_volume_paths`.
-  """
+  """One entry under ``run/<id>/volumes/<kind>/``."""
 
   source: Path
   target: Path
@@ -117,9 +110,7 @@ class AssignedRoute:
 
 @dataclass(frozen=True)
 class AppRunData:
-  """The "Runtime app data" that is used to materialize and run an AppStack
-  In any other language, this would be immutable, but here we are.
-  """
+  """Runtime data used to materialize and run an AppStack."""
 
   app: AppID
   run_path: Path
@@ -127,13 +118,10 @@ class AppRunData:
   volume_links: Mapping[str, VolumeLink]
   config_values: Mapping[str, ConfigValue]
   routes: Mapping[str, AssignedRoute]
-  # URL of each route by name; what `${routes.<name>}` in [run.*.env]
-  # resolves to. Assigned non-none providers use that provider's domain;
-  # otherwise a harbor.localhost placeholder -- see `_route_urls`.
+  # URL of each route by name; what `${routes.<name>}` resolves to.
   route_urls: Mapping[str, str]
-  # Harbor-managed bind mounts every run unit gets; see `_host_mounts`. Held
-  # here rather than read at compose time so that what a host happens to have
-  # is decided once, in the one pass that is allowed to look at it.
+  # Decided once here rather than at compose time, so what a host happens to have
+  # is looked at in one pass.
   host_mounts: tuple[str, ...]
   issues: tuple[ConfigIssue, ...]
 
@@ -143,10 +131,7 @@ class AppRunData:
 
   @property
   def start_blockers(self) -> tuple[ConfigIssue, ...]:
-    """Issues the operator must resolve before the app can start.
-
-    Excludes anything staging repairs itself -- see `ConfigIssue.self_healing`.
-    """
+    """Issues the operator must resolve before the app can start."""
     return tuple(issue for issue in self.issues if not issue.self_healing)
 
   def config_env(self) -> dict[str, str]:
@@ -353,13 +338,7 @@ def _load_routes(
 
 
 def _host_mounts() -> tuple[str, ...]:
-  """Binds harbor adds to every run unit, on top of the happ's own [volumes].
-
-  At the moment, it's just the host clock if it exists.
-
-  A happ that wants something else still wins: libc reads /etc/localtime only
-  when `TZ` is unset, so `TZ = "Etc/UTC"` in a manifest overrides this.
-  """
+  """Binds harbor adds to every run unit, on top of the happ's own [volumes]."""
   if not Path(LOCALTIME_PATH).exists():
     return ()
   return (f"{LOCALTIME_PATH}:{LOCALTIME_PATH}:ro",)
@@ -370,12 +349,7 @@ def _route_urls(
   assignments: Mapping[str, str],
   config: Config,
 ) -> dict[str, str]:
-  """Where each route answers: provider domain, or harbor.localhost placeholder.
-
-  The URL is always https: TLS terminates at the reverse proxy. `route.scheme`
-  is how the proxy dials the backend, not what a browser (or `${routes.x}`)
-  should use.
-  """
+  """Where each route answers: provider domain, or harbor.localhost placeholder."""
   urls: dict[str, str] = {}
   for name, route in routes.items():
     if not route.subdomain:
@@ -413,12 +387,7 @@ def _app_domain(
 def _env_substitutions(
   stack: AppStack, run_unit: AppRunUnit, data: AppRunData
 ) -> dict[str, str]:
-  """Flat key → value map for one unit's `[run.*.env]` placeholders.
-
-  Config keys rewrite to `${__HARBOR_CONFIG__…}` so values (especially secrets)
-  stay out of compose.yml and are interpolated from the process env at up.
-  `routes.*` and `happ.*` take concrete values.
-  """
+  """Flat key → value map for one unit's `[run.*.env]` placeholders."""
   volumes = ",".join(
     _env_kvpair(name, bound.guest_path) for name, bound in run_unit.volumes.items()
   )
@@ -439,10 +408,8 @@ def _env_substitutions(
 def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
   services: dict[str, Any] = {}
   for run_name, run_unit in stack.run_units.items():
-    # The manifest validator has already checked that every dotted `${…}`
-    # names a known flat key, so the only way one survives unsubstituted is a
-    # route that was never allocated -- and `materialize` allocates before it
-    # writes.
+    # The validator has already checked every dotted `${...}`, so the only way one
+    # survives unsubstituted is a route that was never allocated.
     environment = {
       str(k): EnvTemplate(str(v)).safe_substitute(
         _env_substitutions(stack, run_unit, data)
@@ -460,19 +427,16 @@ def make_compose_dict(stack: AppStack, data: AppRunData) -> dict[str, Any]:
 
     service["restart"] = run_unit.restart or "unless-stopped"
 
-    # Rotate container logs: dockerd's default json-file driver otherwise
-    # keeps every byte a container ever printed. Deliberately not a managed
-    # key, so a manifest's own `[run.<unit>.compose] logging` (or a happ that
-    # wants the daemon default back) overrides this in the passthrough below.
+    # Rotate container logs; dockerd otherwise keeps every byte. Deliberately not a
+    # managed key, so a manifest's own `logging` overrides it below.
     service["logging"] = {
       "driver": "json-file",
       "options": {"max-size": "10m", "max-file": "3"},
     }
 
     mounts = [_mount_string(bound) for bound in run_unit.volumes.values()]
-    # Harbor's own mounts come last, and stay out of `${happ.volumes}`: that
-    # value tells a happ where the volumes it declared ended up, and it
-    # declared none of these.
+    # Harbor's own mounts stay out of `${happ.volumes}`: that value tells a happ
+    # where the volumes it declared ended up.
     mounts.extend(data.host_mounts)
     if mounts:
       service["volumes"] = mounts
@@ -539,14 +503,7 @@ def _volume_paths(
   binds: dict[str, str],
   config: Config,
 ) -> tuple[Path, Path] | None:
-  """The (host path, symlink target) for a volume, or None if unresolvable.
-
-  `app` links are relative because they point inside the run dir, so they stay
-  correct wherever that directory is restored. Managed and `host` links are
-  absolute: `volume_roots` / host_volume paths are configurable precisely so
-  they can live on another disk, which makes those links meaningful only on
-  the machine that made them.
-  """
+  """The (host path, symlink target) for a volume, or None if unresolvable."""
   match volume.kind:
     case "app":
       src = volume.src if volume.src else volume.name

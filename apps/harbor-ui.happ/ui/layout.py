@@ -339,11 +339,7 @@ def nav_active(path):
 
 
 def head_actions(path):
-  """Page-level actions that belong beside the title rather than in the body.
-
-  Only the catalog has one. It is a link, not a form: revealing the fetch bar
-  is a change of view, so it survives a refresh and can be linked to.
-  """
+  """Page-level actions that belong beside the title rather than in the body."""
   if path != "/catalog":
     return ""
   return (

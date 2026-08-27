@@ -39,12 +39,7 @@ PROVIDERS: dict[str, type[RouteProvider]] = {
 
 
 def get_route_provider(ctx: HarborCtx, tag: str) -> RouteProvider:
-  """Build the route provider for ``tag``.
-
-  A thin dispatcher: it resolves the tag to a config block and hands that block
-  to the matching provider's ``from_config``. What each kind requires of its
-  ``args`` is that provider's business, not this function's.
-  """
+  """Build the route provider for ``tag``."""
   if tag == NONE_ROUTE_PROVIDER_TAG:
     return NoopRouteProvider(domain=ctx.config.provider_domain(tag))
 

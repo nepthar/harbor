@@ -36,9 +36,7 @@ ACTIVITY_LOG_HISTORY = 2000  # records
 
 
 def lock_timeout() -> float:
-  """The acquire timeout, overridable via `HARBOR_LOCK_TIMEOUT`.
-  Read per call for testing. TODO: Better solution
-  """
+  """The acquire timeout, overridable via `HARBOR_LOCK_TIMEOUT`."""
   return float(os.environ.get("HARBOR_LOCK_TIMEOUT", LOCK_TIMEOUT))
 
 
@@ -199,11 +197,7 @@ class HarborCtx:
     return StagedAppPaths(app_id, self.config.app_run_path(app_id))
 
   def bundle_path(self, app: AppID | str) -> Path:
-    """The catalog entry `stage` copies from. Exactly one, or an error.
-
-    An id carried by two app sources is ambiguous, and harbor will not pick
-    for you: name the bundle by path instead.
-    """
+    """The catalog entry `stage` copies from. Exactly one, or an error."""
     entries = self.app_catalog().get(str(app), ())
     if len(entries) == 1:
       return entries[0].path
@@ -216,11 +210,10 @@ class HarborCtx:
     return self.staged_paths(app).exists()
 
   def staged_stack(self, app: AppID | str) -> "AppStack | None":
-    """The installed app's stack, or None when it is not staged.
+    """The installed app's stack, or None when it is not installed.
 
-    A manifest that no longer parses reads as not-staged rather than raising:
-    every caller is building a listing, and one broken app must not take the
-    whole listing down with it.
+    A manifest that no longer parses also reads as None, so one broken app cannot
+    take a whole listing down.
     """
     paths = self.staged_paths(app)
     if not paths.manifest_path.is_file():
@@ -231,12 +224,7 @@ class HarborCtx:
       return None
 
   def app_state(self, app: AppID | str) -> str:
-    """Where one app stands, from the filesystem alone.
-
-    The same answer `AppObservation.state` gives, without the `docker ps`
-    that building a full observation costs -- for callers listing a catalog,
-    where paying a subprocess per entry would be the whole render.
-    """
+    """Where one app stands, from the filesystem alone."""
     app_id = str(app)
     return app_state(
       run_dir_exists=self.staged_paths(app_id).run_path.is_dir(),
@@ -247,12 +235,7 @@ class HarborCtx:
     )
 
   def bundle_stack(self, app: AppID | str) -> "AppStack | None":
-    """The catalog bundle's stack, or None when there is no single bundle.
-
-    What an app *would* look like installed. Callers reporting on an app
-    that is not staged -- `ps` and `inspect` on an uninstalled app, `config`
-    before a first install -- read the schema from here instead.
-    """
+    """The catalog bundle's stack, or None when there is no single bundle."""
     try:
       bundle = self.bundle_path(app)
     except ValueError:
@@ -269,13 +252,7 @@ class HarborCtx:
     )
 
   def app_catalog(self) -> dict[str, tuple[CatalogEntry, ...]]:
-    """Every bundle in every app source, keyed by app id, in source order.
-
-    What counts as a bundle is `happ.could_be_happ`'s call (via `scan_happs`);
-    entries may be real directories/files or symlinks, and contents are not
-    parsed or validated here. Nothing is dropped when an id appears more than
-    once -- `bundle_path` refuses to guess, and `harbor doctor` reports it.
-    """
+    """Every bundle in every app source, keyed by app id, in source order."""
     found: dict[str, list[CatalogEntry]] = {}
     for name, source_path in self.config.app_sources.items():
       for app_id, rel_path in scan_happs(source_path):
@@ -285,23 +262,14 @@ class HarborCtx:
     return {app_id: tuple(entries) for app_id, entries in found.items()}
 
   def staged_origin(self, app: AppID | str) -> Path | None:
-    """The bundle an installed app was staged from, as `stage` recorded it.
-
-    This is what says *which* bundle is installed when several sources carry
-    the id. None when the app is not installed, or predates the record.
-    """
+    """The bundle an installed app was staged from, as `stage` recorded it."""
     if not self.config.app_config_path(app).is_file():
       return None
     origin = self.app_store(app).get_meta("origin")
     return Path(origin) if origin else None
 
   def manifest_stale(self, app: AppID | str) -> bool:
-    """Whether the source bundle's manifest no longer matches the staged copy.
-
-    Same check `dev` uses: byte compare of ``manifest.toml``. No origin, or a
-    source that is not a directory happ, is not stale -- there is nothing to
-    compare.
-    """
+    """Whether the source bundle's manifest no longer matches the staged copy."""
     paths = self.staged_paths(app)
     origin = self.staged_origin(app)
     if origin is None or not paths.manifest_path.is_file():
@@ -312,12 +280,7 @@ class HarborCtx:
     return source.read_bytes() != paths.manifest_path.read_bytes()
 
   def known_bundles(self) -> dict[str, Path]:
-    """Map app_id -> the one catalog entry harbor would use for it.
-
-    The first app source wins when an id appears in several. This is for
-    listing and diagnostics; anything that acts on a bundle goes through
-    `bundle_path`, which refuses an ambiguous id rather than picking.
-    """
+    """Map app_id -> the one catalog entry harbor would use for it."""
     return {app_id: entries[0].path for app_id, entries in self.app_catalog().items()}
 
   def staged_app_ids(self) -> set[str]:
@@ -355,9 +318,7 @@ class HarborCtx:
     return found[0]
 
   def _observed_app_ids(self) -> set[str]:
-    """Collect every app_id that has left a trace: a bundle dir, a run folder,
-    a config logtab, a container, or a harbordb entry.
-    """
+    """Every app_id that has left a trace anywhere."""
     ids = set(self.known_bundles())
     if self.config.run_root.is_dir():
       ids |= {path.name for path in self.config.run_root.iterdir() if path.is_dir()}
@@ -367,9 +328,7 @@ class HarborCtx:
     return ids
 
   def _resolve_state_id(self, app_id: str) -> str:
-    """Like ``resolve_app`` but over the wider set of ids that have run state,
-    not just loadable bundles.
-    """
+    """Like `resolve_app`, but over every id with run state."""
     query, _, version = app_id.partition("@")
     if version:
       logger.warning("resolve_app_query: version %s not supported yet", version)

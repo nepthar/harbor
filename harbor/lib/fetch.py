@@ -1,30 +1,10 @@
 """Install or update a happ by copying it out of a GitHub repository.
 
 `harbor fetch github:<user>/<repo>/<ref>/<path>/<name>.happ` downloads a happ
-folder and installs it as `apps/<app_id>.happ`. A `<name>.happ.md` target does
-the same for a single-file markdown happ. There is no archive, no packaging
-step, and nothing for a publisher to build: committing the `.happ` directory
-(or the `.happ.md` file) *is* publishing it.
-
-`harbor fetch <app_id>` re-resolves that happ's recorded source and replaces
-the catalog copy when the commit has moved. Append `@<sha>` to pin, on either
-form. A first-time github: fetch asks before installing; an update just
-applies, like `uv`.
-
-Two API calls do the work. The ref is resolved to a commit sha, then one
-recursive tree listing enumerates the folder at that sha. Every file is then
-pulled from `raw.githubusercontent.com`, which has its own CDN quota and so
-costs nothing against the API rate limit. Pinning a sha up front means a branch
-moving mid-fetch cannot mix files from two commits, and gives us an exact
-revision to report. A `.happ.md` is one blob, so it skips the listing and costs
-only the ref resolution.
-
-The listing carries each entry's mode and size, so hostile or oversized trees
-are rejected before a single byte is downloaded.
-
-Harbor makes no claim about *who* wrote a happ. What protects the operator is
-that a first-time install shows its capability receipt and asks before
-committing the files.
+folder to `apps/<app_id>.happ`; a `<name>.happ.md` target does the same for a
+single-file markdown happ. `harbor fetch <app_id>` re-resolves a happ's
+recorded source and replaces the catalog copy when the commit has moved.
+Append `@<sha>` to pin either form.
 """
 
 from __future__ import annotations
@@ -88,13 +68,7 @@ USAGE = (
 
 @dataclass(frozen=True)
 class GithubTarget:
-  """A happ inside a GitHub repository: a `.happ` directory or `.happ.md` file.
-
-  `app_id` is determined at parse time from the last path segment, same rule
-  as a local happ (see `happ.app_id_from_path`): the bundle name minus its
-  flavor suffix. The manifest's `[app].app_id`, if it declares one, is
-  cross-checked later when the downloaded bundle is parsed.
-  """
+  """A happ inside a GitHub repository: a `.happ` directory or `.happ.md` file."""
 
   user: str
   repo: str
@@ -138,13 +112,7 @@ class TreeEntry:
 
 @dataclass(frozen=True)
 class FetchedHapp:
-  """A downloaded happ waiting to be committed into `apps/`.
-
-  `root` is a throwaway parent directory; `path` is the `<app_id>.happ` folder
-  (or `<app_id>.happ.md` file) inside it. The nesting is what lets the
-  downloaded bundle be loaded by the ordinary `load_happ()` path, which takes
-  an app's id from its name.
-  """
+  """A downloaded happ waiting to be committed into `apps/`."""
 
   root: Path
   path: Path
@@ -208,11 +176,7 @@ def _check_segment(segment: str, context: str) -> None:
 
 
 def split_pin(raw: str) -> tuple[str, str | None]:
-  """Split a trailing `@<40-hex-sha>` pin from a fetch spec or app id.
-
-  Anything after `@` that is not a full sha is left in place so a later
-  classifier can reject it; a github target never uses `@`.
-  """
+  """Split a trailing `@<40-hex-sha>` pin from a fetch spec or app id."""
   head, sep, tail = raw.rpartition("@")
   if not sep or not _SHA_RE.fullmatch(tail):
     return raw, None
@@ -222,11 +186,7 @@ def split_pin(raw: str) -> tuple[str, str | None]:
 
 
 def recorded_source(spec: str, pin: str | None) -> str:
-  """The `source` string stored for a fetch: spec, plus `@sha` when pinned.
-
-  A github ref that is itself a full sha is also a pin, and is stored with
-  the same suffix so `source_is_pinned` is one check.
-  """
+  """The `source` string stored for a fetch: spec, plus `@sha` when pinned."""
   if pin:
     return f"{spec}@{pin}"
   target = parse_target(spec)
@@ -267,13 +227,7 @@ def _headers(accept: str) -> dict[str, str]:
 
 
 def _rate_limited(resp: requests.Response) -> bool:
-  """Distinguish an exhausted quota from an ordinary 403.
-
-  429 is always rate limiting. A 403 is only rate limiting when GitHub says the
-  remaining budget is zero -- it is also what a blocked or forbidden request
-  returns, and reporting that as a rate limit would send the operator chasing
-  the wrong fix.
-  """
+  """Distinguish an exhausted quota from an ordinary 403."""
   if resp.status_code == 429:
     return True
   return resp.status_code == 403 and resp.headers.get("x-ratelimit-remaining") == "0"
@@ -321,12 +275,7 @@ def _api_message(resp: requests.Response) -> str:
 
 
 def resolve_ref(target: GithubTarget) -> str:
-  """Resolve a branch, tag, or sha to the full commit sha it names.
-
-  A branch is a moving target: listing the tree and downloading the files at a
-  pinned sha keeps a fetch from straddling two commits. An already-pinned sha
-  skips the call, so pinning also costs less rate limit.
-  """
+  """Resolve a branch, tag, or sha to the full commit sha it names."""
   if _SHA_RE.fullmatch(target.ref):
     return target.ref
 
@@ -425,12 +374,7 @@ def _download(url: str, dest: Path, limit: int) -> int:
 def ensure_destination_for(
   app_id: AppID, apps_root: Path, suffix: str = HAPP_SUFFIX
 ) -> Path:
-  """Where `app_id` will install, refusing to disturb anything already there.
-
-  Both bundle flavors are checked: one id maps to one catalog entry, whatever
-  its suffix. A symlink counts even when its target is gone: `Path.exists`
-  follows the link and would miss it, then `os.replace` fails with ENOTDIR.
-  """
+  """Where `app_id` will install, refusing to disturb anything already there."""
   for flavor in (HAPP_SUFFIX, HAPP_MD_SUFFIX):
     existing = apps_root / f"{app_id}{flavor}"
     if existing.is_symlink() or existing.exists():
@@ -442,12 +386,7 @@ def ensure_destination_for(
 
 
 def _download_root(app_id: AppID, apps_root: Path) -> Path:
-  """A fresh dotted scratch dir beside the destination.
-
-  Dotted so a partially written bundle is never picked up by `known_bundles()`
-  (whose `scan_happs` only matches flavor-suffixed names), and a sibling so
-  the final move is a rename within one filesystem rather than a copy.
-  """
+  """A fresh dotted scratch dir beside the destination."""
   apps_root.mkdir(parents=True, exist_ok=True)
   root = apps_root / f".fetch-{app_id}"
   shutil.rmtree(root, ignore_errors=True)
@@ -542,11 +481,7 @@ def commit_happ(fetched: FetchedHapp, apps_root: Path) -> Path:
 
 
 def replace_happ(fetched: FetchedHapp, dest: Path) -> Path:
-  """Swap an existing catalog entry for a downloaded happ.
-
-  Same incoming/outgoing rename as staging: `os.replace` cannot overwrite a
-  non-empty directory, so the old copy moves aside first.
-  """
+  """Swap an existing catalog entry for a downloaded happ."""
   if dest.is_symlink():
     raise ValueError(
       f"Something already exists at {dest}, can't fetch {fetched.app_id} over it.\n"
@@ -585,30 +520,15 @@ def discard(fetched: FetchedHapp) -> None:
 
 
 # --- the fetch verb, above the transport -----------------------------------
-#
-# `harbor fetch` and `POST /jobs {"verb": "fetch"}` are the same operation with
-# different front doors, so the decisions -- what a target resolves to, what
-# already occupies that id, what gets recorded -- live here rather than in
-# whichever caller got there first. The CLI prints around these; the job runner
-# returns their text.
 
 
 @dataclass(frozen=True)
 class HappPreview:
-  """What a github: target holds, read without committing anything.
-
-  Everything a catalog card shows, plus what it cost to find out. `conflict`
-  is the reason an install would be refused -- the id is already in the
-  catalog -- as a message, not an exception: a caller asking "what is at this
-  URL?" wants the answer even when it cannot act on it.
-  """
+  """What a github: target holds, read without committing anything."""
 
   app_id: str
   spec: str
   sha: str
-  # The parsed manifest. Reading it is the only validation a preview does, and
-  # holding the result means a caller that wants a capability receipt does not
-  # have to re-parse text the files it came from are already gone.
   stack: AppStack
   manifest: str
   files: int
@@ -630,11 +550,7 @@ class FetchResult:
 
 @dataclass(frozen=True)
 class UpdateCheck:
-  """Whether a fetched happ's recorded source has moved, without applying it.
-
-  `available` means the commit changed. Version can stay put when only files
-  moved; the caller displays both so the operator can tell which.
-  """
+  """Whether a fetched happ's recorded source has moved, without applying it."""
 
   app_id: str
   current: str
@@ -659,13 +575,7 @@ def _conflict_message(app_id: str, ctx: HarborCtx) -> str | None:
 
 
 def refuse_existing(target: GithubTarget, ctx: HarborCtx) -> None:
-  """Refuse a target whose id is already taken, before any network call.
-
-  Both ways an id can be occupied: a file sitting where the bundle would land,
-  and an entry any app source already carries. Checked up front so a collision
-  costs no GitHub rate limit -- the whole reason this is separate from the
-  install that also calls it.
-  """
+  """Refuse a target whose id is already taken, before any network call."""
   ensure_destination_for(target.app_id, ctx.config.apps_root, target.suffix)
   conflict = _conflict_message(str(target.app_id), ctx)
   if conflict:
@@ -673,14 +583,7 @@ def refuse_existing(target: GithubTarget, ctx: HarborCtx) -> None:
 
 
 def preview_target(spec: str, pin: str | None, ctx: HarborCtx) -> HappPreview:
-  """Download a github: target, read it, and throw the copy away.
-
-  A preview commits nothing, so it is safe to run on a URL nobody has vetted
-  -- which is the point: the operator vets it *from* this. The bytes are
-  fetched twice when they go on to install, once here and once for real. A
-  happ is a manifest and a few small files, and the alternative is a
-  server-side staging area that outlives the request and has to be swept.
-  """
+  """Download a github: target, read it, and throw the copy away."""
   target = parse_target(spec)
   if pin:
     target = target.at_sha(pin)
@@ -704,14 +607,7 @@ def preview_target(spec: str, pin: str | None, ctx: HarborCtx) -> HappPreview:
 def install_target(
   spec: str, pin: str | None, ctx: HarborCtx, *, at_sha: str | None = None
 ) -> FetchResult:
-  """Fetch a github: target into the apps root and record where it came from.
-
-  `pin` and `at_sha` are different questions. `pin` is the operator asking to
-  stay on one commit, and is recorded; `at_sha` only says which commit to
-  download, so a caller that has already shown someone a preview installs the
-  bytes they looked at rather than whatever the branch points at now. Recording
-  `at_sha` would silently pin an install nobody asked to pin.
-  """
+  """Fetch a github: target into the apps root and record where it came from."""
   target = parse_target(spec)
   if pin or at_sha:
     target = target.at_sha(pin or at_sha or "")
@@ -742,13 +638,7 @@ def install_target(
 
 
 def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str:
-  """Re-resolve an installed happ's recorded source, replacing it if it moved.
-
-  Returns the `FetchResult` when files changed, or a message when there was
-  nothing to do -- pinned, already current, or newly pinned to what it already
-  had. Those are outcomes, not failures, and an exception would make every
-  caller catch one to print it.
-  """
+  """Re-resolve an installed happ's recorded source, replacing it if it moved."""
   record = ctx.harbor_db.get_app_source(str(app))
   if not record:
     raise ValueError(
@@ -800,12 +690,7 @@ def update_app(app: AppID, pin: str | None, ctx: HarborCtx) -> FetchResult | str
 
 
 def check_update(app: AppID, ctx: HarborCtx) -> UpdateCheck:
-  """Resolve a fetched happ's source and stop before replacing anything.
-
-  Same decisions `update_app` makes -- pinned, already current, moved -- as
-  data a viewer can show. The download is thrown away; applying is a
-  separate `update_app` call after the operator has seen the diff.
-  """
+  """Resolve a fetched happ's source and stop before replacing anything."""
   record = ctx.harbor_db.get_app_source(str(app))
   if not record:
     raise ValueError(

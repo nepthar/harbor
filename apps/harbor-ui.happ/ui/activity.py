@@ -1,9 +1,7 @@
 """The Activity page: what harbor ran unattended, and what each run printed.
 
 Container logs are docker's and stream through `harbor logs`; this page shows
-the other stream -- job (and, later, cron) output that harbord filed under
-`$harbor/var/logs`. The list is the activity index; each available run links to
-its output file.
+the other stream, filed under `$harbor/var/logs`.
 """
 
 from urllib.parse import quote

@@ -30,11 +30,7 @@ def assigned_routes(
 
 
 def preflight_app_routes(run_data: AppRunData, ctx: HarborCtx) -> None:
-  """Sanity check that assigned routes can be satisfied by their providers.
-
-  If two apps request the same subdomain on the same provider, the first app
-  started wins, and the second fails here.
-  """
+  """Sanity check that assigned routes can be satisfied by their providers."""
   routes = assigned_routes(run_data, ctx)
   if not routes:
     return
@@ -128,11 +124,7 @@ def sync_route_assignment(
   new_tag: str,
   ctx: HarborCtx,
 ) -> None:
-  """Push an assignment change to the old/new providers.
-
-  The AppStore assignment is already written by the caller; this only talks to
-  providers, which need the allocated host port from harbordb.
-  """
+  """Push an assignment change to the old/new providers."""
   hdb_routes = ctx.harbor_db.list_routes(app)
   entry = hdb_routes.get(route_name)
   if entry is None:

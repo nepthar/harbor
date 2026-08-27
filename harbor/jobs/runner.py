@@ -1,15 +1,8 @@
 """Serial execution of Jobs, for callers with no terminal.
 
-A queued job is what the daemon runs on behalf of a web client: a verb, its
-arguments, and how it ended. The queue exists because the useful verbs are
-slow -- `snapshot` copies volumes, `start` can pull images -- and an HTTP
-request that waits for them dies to a proxy timeout or a page refresh long
-before the work does.
-
-Execution is serial by construction. Each job takes the same locks the CLI
-does, so a CLI command and a queued job cannot write the same app (or
-harbor-wide state) at once. A single worker turns "harbor is busy" into a
-state a caller can see rather than a lock timeout it has to interpret.
+The queue exists because the useful verbs are slow and an HTTP request that
+waits for them dies long before the work does. Execution is serial by
+construction: each job takes the same locks the CLI does.
 """
 
 from __future__ import annotations
@@ -32,9 +25,6 @@ from harbor.lib.harbor import HarborCtx
 
 logger = logging.getLogger("harbor.jobs")
 
-# Enough to show a session's worth of activity without growing forever. The
-# runner's history is not the audit trail -- the activity log is -- so
-# forgetting old jobs loses nothing durable.
 MAX_HISTORY = 200
 
 # Every verb here but `fetch` takes ids of things that already exist -- an app
@@ -57,12 +47,7 @@ JOBS: dict[str, type[Job]] = {
 
 
 class JobRunner:
-  """Holds the job history and runs one at a time.
-
-  A worker is optional: with no thread started, `run_pending` drains the queue
-  on the calling thread, which is how the tests exercise jobs without waiting
-  on one.
-  """
+  """Holds the job history and runs one at a time."""
 
   def __init__(self, ctx_factory: Callable[[], HarborCtx]) -> None:
     self._ctx_factory = ctx_factory
@@ -100,11 +85,10 @@ class JobRunner:
       return [job.as_dict() for job in reversed(list(self._jobs.values()))]
 
   def run_pending(self) -> int:
-    """Run every queued job on this thread. Returns how many ran.
+    """Run every queued job on this thread; returns how many ran.
 
-    Only for a runner whose worker was never started: two threads draining
-    one queue would break the everything-is-serial invariant the jobs
-    (logging capture, lock ordering) are written against.
+    Only for a runner whose worker was never started -- two threads draining one
+    queue would break the serial execution jobs are written against.
     """
     if self._thread is not None:
       raise RuntimeError("JobRunner has a worker thread; it drains the queue")

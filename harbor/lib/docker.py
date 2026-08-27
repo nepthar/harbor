@@ -18,10 +18,8 @@ logger = getLogger("harbor.docker")
 
 DOCKER = "docker"
 
-# Where streamed (`json_output=False`) command output goes when the caller has
-# no terminal. Unset -- the normal CLI case -- the child inherits harbor's
-# stdio, exactly as before. A Job sets it so `compose up` output lands
-# in the run log instead of on this process's stderr.
+# Where streamed output goes when the caller has no terminal. Unset, the child
+# inherits harbor's stdio.
 _output_sink: ContextVar[TextIO | None] = ContextVar("docker_output_sink", default=None)
 
 # How much captured output a DockerError carries. The full text is in the
@@ -50,11 +48,7 @@ class HarborRunUnitStatus:
 
 @dataclass(frozen=True)
 class DockerReturn:
-  """Result of a ``docker`` invocation.
-
-  ``data`` is the parsed JSON when ``json_output`` was True; otherwise empty.
-  ``returncode`` is always the process exit status.
-  """
+  """Result of a ``docker`` invocation."""
 
   returncode: int
   data: list[dict[str, Any]]
@@ -136,23 +130,12 @@ def docker_run_command(
   check: bool = True,
   env: dict[str, str] | None = None,
 ) -> DockerReturn:
-  """Run ``docker <cmd>``.
+  """Run `docker <cmd>`.
 
-  Output handling follows one rule: **anything harbor is not itself parsing
-  belongs on the operator's terminal.** `docker compose up` can spend minutes
-  pulling an image, and swallowing that is indistinguishable from a hang.
-
-  So ``json_output`` decides both the format *and* who sees it. When True, the
-  command is asked for JSON, its output is captured, and it is parsed into
-  ``DockerReturn.data``. When False, the child inherits harbor's stdio and
-  writes straight to the terminal; ``data`` is empty.
-
-  Args:
-      cmd: arguments after ``docker`` (e.g. ``["compose", "ps"]``).
-      cwd: working directory for the command (e.g. a run path).
-      json_output: parse the output (True) or stream it to the terminal (False).
-      check: raise :class:`DockerError` on a non-zero exit.
-      env: extra environment variables merged onto ``os.environ``.
+  `json_output` decides both the format and who sees it: True captures and
+  parses into `DockerReturn.data`, False lets the child write straight to the
+  terminal, because swallowing a minutes-long `compose up` is indistinguishable
+  from a hang.
   """
   full = [DOCKER, *cmd]
   if json_output:
@@ -163,9 +146,7 @@ def docker_run_command(
 
   sink = _output_sink.get() if not json_output else None
   if sink is not None:
-    # Stream into the sink as the child writes so a job's log file can be
-    # polled while the command is still running. Merge stderr so the sink
-    # reads the way a terminal would have.
+    # Merge stderr so the sink reads the way a terminal would have.
     proc = subprocess.Popen(
       full,
       cwd=cwd,

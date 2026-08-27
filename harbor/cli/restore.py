@@ -55,8 +55,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
 
 
 def _missing_snapshot_message(app: AppID, ctx: HarborCtx) -> str:
-  # snapshot_names is oldest-first; newest-first is what the operator wants
-  # when picking which one to restore.
+  # snapshot_names is oldest-first.
   recent = list(reversed(snapshot_names(app, ctx)[-_RECENT_SNAPSHOT_LIMIT:]))
   detail = "\n".join(f"  {name}" for name in recent) if recent else "  (none)"
   return (

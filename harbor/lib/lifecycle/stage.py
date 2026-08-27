@@ -39,12 +39,7 @@ def _has_volume_data(app_id: AppID, ctx: HarborCtx) -> bool:
 
 
 def _stage_incoming(bundle: Path, run_path: Path) -> Path:
-  """Extract the happ into ``run/<id>/.happ.incoming`` (not yet live).
-
-  `load_happ` handles both bundle flavors, so a `.happ` directory is copied
-  and a `.happ.md` file is expanded into the files it embeds; the run tree is
-  always a plain directory either way.
-  """
+  """Extract the happ into ``run/<id>/.happ.incoming`` (not yet live)."""
   happ = load_happ(bundle)
   incoming = run_path / INCOMING
   outgoing = run_path / OUTGOING
@@ -120,11 +115,7 @@ def _clear_and_reallocate_ports(stack: AppStack, ctx: HarborCtx) -> None:
 
 
 def _apply_default_route_assignments(stack: AppStack, ctx: HarborCtx) -> None:
-  """Write default_route_provider for non-private routes with no assignment yet.
-
-  Same shape as config defaults: once written, it is as if the operator set it.
-  Private routes stay unassigned until `harbor config --route`.
-  """
+  """Write default_route_provider for non-private routes with no assignment yet."""
   store = ctx.app_store(stack.app)
   default = ctx.config.default_route_provider
   for route_name, route in stack.routes.items():
@@ -155,11 +146,8 @@ def _make_link(destination: Path, target: Path) -> None:
 def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
   """Point `volumes/<kind>/<name>` at the current manifest's volumes.
 
-  Note: host/ volumes are linked in at run time as they may change between stage/run
-  like configuration parameters or secrets.
-
-  Returns the names the manifest no longer declares. Their links go; their data
-  never does -- a manifest edit must not be able to delete bytes.
+  host/ volumes are linked at run time instead: they can change between install
+  and start.
   """
   volumes_root = run_data.run_path / "volumes"
   existing = _existing_volume_kinds(volumes_root)
@@ -235,9 +223,7 @@ class StagingTarget:
   """What a `stage`/`start` argument named."""
 
   app_id: AppID
-  # The bundle to stage: a `.happ` directory or a `.happ.md` file. None when
-  # the argument was a bare id, which does not say which bundle it means --
-  # `ctx.bundle_path` answers that, and only for a caller that has to stage.
+  # None when the argument was a bare id; `ctx.bundle_path` answers that.
   bundle: Path | None
   # The catalog entry created to reach the bundle, for the caller to report.
   linked_entry: Path | None
@@ -313,11 +299,7 @@ def apply_config_sets(
 
 
 def _relabel_routes(stack: AppStack, app_subdomain: str, ctx: HarborCtx) -> None:
-  """Rewrite allocated route labels to match a new app subdomain.
-
-  Ports stay as they are; only the DNS label changes. Compose is rewritten
-  so `${routes.*}` URLs match before the next start.
-  """
+  """Rewrite allocated route labels to match a new app subdomain."""
   hdb = ctx.harbor_db
   for name, entry in hdb.list_routes(stack.app).items():
     route = stack.routes.get(name)
@@ -335,11 +317,7 @@ def _relabel_routes(stack: AppStack, app_subdomain: str, ctx: HarborCtx) -> None
 
 
 def bind(stack: AppStack, volname: str, host_volume_tag: str, ctx: HarborCtx) -> None:
-  """Record a host-volume bind against the staged happ.
-
-  Recording is all it does; `start` turns the binds on file into the links
-  under `volumes/host/`.
-  """
+  """Record a host-volume bind against the staged happ."""
   app = stack.app
 
   if volname not in stack.volumes:
@@ -390,17 +368,7 @@ def stage(
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
 ) -> StageSuccess:
-  """Install `bundle` into `run/<id>/` without starting it.
-
-  `bundle` is the happ itself -- a `.happ` directory or a `.happ.md` file --
-  and is recorded as the app's origin. Which app source it happens to sit in
-  is a fact about that path, derivable when anyone needs it, so nothing here
-  carries a catalog around.
-
-  The happ copy, the volume links, the routes and compose.yml are all rebuilt
-  from the manifest every time. Config values and volume *contents* are not:
-  they belong to the installation, not the bundle (docs/run-layout.md §5).
-  """
+  """Install `bundle` into `run/<id>/` without starting it."""
   paths = ctx.staged_paths(app)
 
   try:

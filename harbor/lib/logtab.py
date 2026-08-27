@@ -12,29 +12,7 @@ logger = logging.getLogger("harbor.logtab")
 
 
 class LogTab:
-  """LogTab is a logging table which stores key-value pairs.
-  This is useful for when you wish to have a key-value store which
-  along with the entire history of changes in an auditable log.
-
-  Logtab is NOT a performant database or a clever way to optimize for writes.
-  It is a simple key-value store with a history of changes.
-
-  The format is:
-  <date>\t<operation>\t<key>\t<value>\n
-  # comments begin with a hash.
-
-  An operation is one of:
-  - set: set a value
-  - del: delete a value
-  - clr: clear all values matching a prefix
-
-  "Invalid" lines are skipped with a warning unless the LogTab is
-  initialized with strict=True.
-
-  - Records are appended with one O_APPEND write so concurrent writers cannot
-    interleave complete writes on a local POSIX filesystem.
-  - Each `read` loops through the whole file. If you're looking up lots of keys, consider calling `load` instead.
-  """
+  """An append-only key-value table that keeps every write."""
 
   @dataclass(frozen=True, slots=True)
   class Entry:
@@ -175,28 +153,19 @@ class LogTab:
     return self.load().get(key)
 
   def clear(self, prefix: str, comment: str = "") -> None:
-    """Clear all values matching the given prefix.
-    The optional comment is stored on the line, but never used by the table.
-    """
+    """Clear all values matching the given prefix."""
     LogTab.write_entry(self.path, prefix, "clr", comment)
     self._maybe_compact()
 
   def delete(self, key: str, comment: str = "") -> None:
-    """Delete a single key by exact match.
-    The optional comment is stored on the line, but never used by the table.
-    """
+    """Delete a single key by exact match."""
     if self.strict and key not in self.load():
       raise ValueError(f"Key {key} not found in logtab {self.path} for deletion")
     LogTab.write_entry(self.path, key, "del", comment)
     self._maybe_compact()
 
   def history(self, prefix: str = "", suffix: str = "") -> list[tuple[str, Entry]]:
-    """Every `set` record matching, oldest first, without collapsing by key.
-
-    `load` answers "what is the value now"; this answers "what happened", which
-    is the whole reason the table keeps its history. `del`/`clr` records are
-    skipped: they end a value's life, they are not events of their own.
-    """
+    """Every `set` record matching, oldest first, without collapsing by key."""
 
     if prefix:
       LogTab.validate_key(prefix)
@@ -212,14 +181,9 @@ class LogTab:
     return records
 
   def compact(self, history: int = 0) -> None:
-    """Rewrite this file to current state plus the last ``history`` records.
+    """Rewrite the table with only the entries still in effect.
 
-    Backfill is one ``set`` per live key whose exact key is not in that tail,
-    oldest timestamp first, then the tail in file order, then
-    ``# end compacted entries``. The live path is replaced; the previous
-    bytes are discarded. The caller must keep writers off the file.
-
-    Does nothing when the file has fewer data records than ``history``.
+    The caller must keep writers off the file.
     """
     if history < 0:
       raise ValueError(f"history must be >= 0, got {history}")
@@ -274,9 +238,7 @@ class LogTab:
     compact_path.unlink(missing_ok=True)
 
   def scan(self, prefix: str = "", suffix: str = "") -> dict[str, Entry]:
-    """Scan the table for entries matching the given prefix and suffix.
-    If no prefix or suffix is given, this is the same as load()
-    """
+    """Entries matching a prefix and suffix; both empty is `load()`."""
     if prefix:
       LogTab.validate_key(prefix)
     if suffix:

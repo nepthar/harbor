@@ -1,20 +1,9 @@
 """Editing config.toml in place.
 
-config.toml is a file the operator writes and reads: the template ships with
-more comment than content, and their own notes accumulate beside it. So edits
-go through tomlkit, which round-trips comments, ordering and whitespace. A
-tool that reformats the file every time it touches it is a tool the operator
-stops letting near it.
-
-Two rules hold for every edit here:
-
-**The lock is held.** config.toml is harbor-wide state, and two writers would
-lose one of the edits.
-
-**Nothing is committed until it loads.** The new text is written beside the
-original, parsed and validated by the same `load_config_file` every command
-uses, and only then moved into place. A rejected edit costs an error message;
-it never costs a harbor that no longer starts.
+Edits go through tomlkit, which round-trips the operator's own comments,
+ordering and whitespace. Two rules hold for every edit here: the harbor lock is
+held, and nothing is committed until the new text parses through
+`load_config_file`.
 """
 
 from __future__ import annotations
@@ -40,10 +29,7 @@ if TYPE_CHECKING:
 
 @contextmanager
 def edit_config(ctx: HarborCtx) -> Iterator[TOMLDocument]:
-  """Yield config.toml as a tomlkit document; write it back if it validates.
-
-  The harbor lock is assumed held: config.toml is harbor-wide state.
-  """
+  """Yield config.toml as a tomlkit document; write it back if it validates."""
   path = ctx.config.config_path
   document = tomlkit.parse(path.read_text())
   yield document
@@ -51,11 +37,7 @@ def edit_config(ctx: HarborCtx) -> Iterator[TOMLDocument]:
 
 
 def _commit(path: Path, text: str) -> None:
-  """Replace `path` with `text`, but only once it loads as a harbor config.
-
-  The temp file is a sibling so the rename stays on one filesystem, which is
-  what makes it atomic -- no reader ever sees a half-written config.
-  """
+  """Replace `path` with `text`, but only once it loads as a harbor config."""
   staging = path.with_name(f".{path.name}.incoming")
   staging.write_text(text)
   try:
@@ -67,12 +49,7 @@ def _commit(path: Path, text: str) -> None:
 
 
 def _host_volumes(document: TOMLDocument):
-  """The `[host_volume]` table, created on first use.
-
-  `super_table` keeps it as bare `[host_volume.<tag>]` headers rather than a
-  `[host_volume]` parent with children under it -- which is how the config
-  template writes them, and how an operator expects to find them.
-  """
+  """The `[host_volume]` table, created on first use."""
   if "host_volume" not in document:
     document["host_volume"] = tomlkit.table(is_super_table=True)
   return document["host_volume"]
@@ -89,13 +66,7 @@ def _entry(path: str, *, readonly: bool, require_mount: bool):
 
 
 def _check_path(ctx: HarborCtx, raw: str, *, require_mount: bool) -> None:
-  """Refuse a path that is not there.
-
-  A typo caught here is a typo the operator fixes now; accepted, it surfaces
-  later as an app that will not start. Resolution goes through the loader's own
-  expansion, so what is checked is exactly what harbor will bind -- including
-  `${harbor_root}` and a path taken relative to config.toml.
-  """
+  """Refuse a path that is not there."""
   resolved = _expand_path(raw, ctx.config.config_path.parent, ctx.config.harbor_root)
   if not resolved.exists():
     raise ValueError(
@@ -105,9 +76,8 @@ def _check_path(ctx: HarborCtx, raw: str, *, require_mount: bool) -> None:
   if not resolved.is_dir():
     raise ValueError(f"Host volume path is not a directory: {resolved}")
   if require_mount and not resolved.is_mount():
-    # Not an error: a share being down is exactly the condition require_mount
-    # exists to catch at start time, and the operator has to be able to
-    # configure harbor while it is down.
+    # Not an error: a share being down is what require_mount catches at start
+    # time, and harbor has to stay configurable while it is down.
     logger.warning(
       "%s is not a mount point right now; require_mount will refuse to start "
       "an app bound to it until the share is mounted",
@@ -160,9 +130,7 @@ def set_host_volume(
 
 
 def remove_host_volume(ctx: HarborCtx, tag: str) -> None:
-  """Drop an entry. Apps bound to it keep the bind on file and start failing
-  with a message naming the tag, which is `bind`'s existing story for a tag
-  that is not configured."""
+  """Drop a `[host_volume]` entry."""
   if tag not in ctx.config.host_volumes:
     known = ", ".join(sorted(ctx.config.host_volumes)) or "(none)"
     raise ValueError(f"No host volume {tag!r}; known tags: {known}")

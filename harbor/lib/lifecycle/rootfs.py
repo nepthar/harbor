@@ -1,11 +1,8 @@
 """Read and write root-owned volume files without any host privilege.
 
 Containers write their volume files as root, so the host process cannot copy,
-archive, or delete them. Harbor used to shell out to `sudo` for this, which
-needs a TTY for the password prompt and so cannot run unattended. Docker is
-already a hard requirement and its containers already run as root, so a
-throwaway container with the right binds does the same work with no host
-privilege at all.
+archive, or delete them. A throwaway container with the right binds does that
+work instead.
 """
 
 from __future__ import annotations
@@ -34,15 +31,8 @@ def run_as_root(
 ) -> None:
   """Run `sh -c script` in a throwaway container over the given host paths.
 
-  Each mount is bound at its own absolute host path, so `script` names paths
-  exactly as the host does. Mounts must therefore already be resolved, and the
-  paths inside `script` resolved the same way, or the two will not agree.
-
-  `stdout` is a file *this* process opened: the container writes a stream, the
-  host owns the result. That is how the snapshot archive stays owned by the
-  invoking user instead of root.
-
-  `what` completes "Unable to ..." in the error raised on a non-zero exit.
+  Each mount is bound at its own absolute host path, so mounts must already be
+  resolved. `what` completes "Unable to ..." in the error raised on failure.
   """
   # dict, not set: docker rejects the same path bound twice, and the argument
   # order has to be stable for a test to assert on the command.
@@ -61,15 +51,10 @@ def run_as_root(
 
   cmd = [DOCKER, "run", "--rm", *binds, ROOTFS_IMAGE, "sh", "-c", script]
 
-  # At warning level because this is the only sign of life during a step that
-  # can take minutes -- a big volume to copy, or a first-run image pull. The
-  # sudo prompt this replaced used to serve that purpose by accident.
+  # At warning level: the only sign of life during a step that can take minutes.
   logger.warning("Using a throwaway %s container to %s", ROOTFS_IMAGE, what)
   logger.debug("running as root in a container: %s", " ".join(cmd))
-  # stderr is captured rather than streamed so it can go into the error below.
-  # The cost is that a first-run image pull is silent, which alpine's few MB
-  # make tolerable; a bigger image would need the streaming treatment
-  # `docker_run_command` gives `compose up`.
+  # stderr is captured for the error below, so a first-run image pull is silent.
   result = subprocess.run(cmd, stdout=stdout, stderr=subprocess.PIPE)
 
   if result.returncode != 0:

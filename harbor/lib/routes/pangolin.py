@@ -17,24 +17,7 @@ logger = logging.getLogger("harbor.routes")
 
 
 class PangolinRouteProvider(RouteProvider):
-  """Register harbor app routes as public HTTP resources in Pangolin.
-
-  Auth is a static integration-API key sent as ``Authorization: Bearer <key>``.
-  There is no login flow and nothing to cache, so unlike NPM this provider does
-  not touch harbordb. That key goes out on every request, so the endpoint must
-  be https and a plaintext one is refused rather than downgraded to.
-
-  A harbor route becomes one Pangolin resource (the hostname, TLS and access
-  policy) plus one target under it (``harbor_address:port`` on the configured
-  site). Pangolin resources carry no free-form metadata, so ownership is
-  recorded in the resource's display name as ``harbor:<app id>``; a resource
-  whose name lacks that prefix reads as un-owned and is never replaced.
-
-  ``args.shared_policy``, if set, is the niceId of a Pangolin shared policy
-  (the slug in the policy's dashboard URL). Every route this instance
-  registers is attached to that policy. Two ``[route_provider.*]`` blocks
-  with different tags can point at different policies.
-  """
+  """Register harbor app routes as public HTTP resources in Pangolin."""
 
   KIND = "pangolin"
   REQUIRED_ARGS = ("endpoint", "org_id", "site", "api_key_secret")
@@ -89,12 +72,7 @@ class PangolinRouteProvider(RouteProvider):
 
   @staticmethod
   def _https_endpoint(endpoint: str) -> str:
-    """Refuse anything but https, rather than quietly upgrading to it.
-
-    The API key is a bearer token on every call, so a plaintext endpoint hands
-    it to anyone on the path -- and an operator who wrote http:// has a
-    Pangolin that needs fixing, not a URL harbor should rewrite behind them.
-    """
+    """Refuse anything but https, rather than quietly upgrading to it."""
     endpoint = endpoint.rstrip("/")
     if not endpoint.lower().startswith("https://"):
       raise RouteProviderError(
@@ -109,13 +87,7 @@ class PangolinRouteProvider(RouteProvider):
   def _failure(
     self, method: str, path: str, resp: requests.Response, action: str
   ) -> str:
-    """Explain a failed call, telling apart "API said no" from "not the API".
-
-    The integration API is off by default on self-hosted Pangolin and runs on
-    its own port, so `endpoint` very easily ends up pointing at the dashboard
-    instead. That answers every path with the dashboard's own HTML 404, and
-    echoing a page of markup back at the operator explains nothing.
-    """
+    """Explain a failed call, telling apart "API said no" from "not the API"."""
     try:
       body = resp.json()
     except ValueError:
@@ -151,12 +123,7 @@ class PangolinRouteProvider(RouteProvider):
     return f"Pangolin {method} {path} returned {resp.status_code}: {message}"
 
   def _request(self, method: str, path: str, action: str, **kwargs):
-    """Call the integration API and unwrap Pangolin's response envelope.
-
-    Every response is ``{data, success, error, message, status}``; callers only
-    ever want ``data``. ``action`` is the Pangolin permission the endpoint is
-    guarded by, carried so a 403 can say which one the key is missing.
-    """
+    """Call the integration API and unwrap Pangolin's response envelope."""
     if not self._api_key:
       raise RouteProviderError("A Pangolin API key is required to authenticate")
 
@@ -179,14 +146,7 @@ class PangolinRouteProvider(RouteProvider):
   # ── sites ─────────────────────────────────────────────────────────────
 
   def _site_id(self) -> int:
-    """The numeric siteId behind the configured niceId.
-
-    Targets are created against a numeric id that the dashboard never shows,
-    so config names the site the only way an operator can read it off Pangolin
-    -- the niceId in the site's URL, e.g.
-    ``.../sites/substantial-atractaspis-branchi/general``. Resolved once and
-    kept for the life of the provider.
-    """
+    """The numeric siteId behind the configured niceId."""
     if self._resolved_site_id is None:
       data = (
         self._request("GET", f"/org/{self.org_id}/site/{self.site}", "getSite") or {}
@@ -203,12 +163,7 @@ class PangolinRouteProvider(RouteProvider):
   # ── shared policies ───────────────────────────────────────────────────
 
   def _policy_id(self) -> int | None:
-    """The numeric resourcePolicyId behind the configured niceId.
-
-    Sites have a get-by-niceId on the integration API; shared policies do
-    not, so we list and match. Create-resource also has no resourcePolicyId
-    field -- the attach is a later update; see _apply_shared_policy.
-    """
+    """The numeric resourcePolicyId behind the configured niceId."""
     if not self.shared_policy:
       return None
     if self._resolved_policy_id is None:
@@ -234,14 +189,7 @@ class PangolinRouteProvider(RouteProvider):
     return self._resolved_policy_id
 
   def _apply_shared_policy(self, resource: dict) -> None:
-    """Attach the configured policy, unconditionally.
-
-    There is no cheap "already attached?" check to short-circuit on: the list
-    endpoint we get resources from does not return resourcePolicyId, so the
-    only way to read the current one is a per-resource getResource call. That
-    trades the idempotent write we would skip for a read of the same cost, so
-    just do the write.
-    """
+    """Attach the configured policy, unconditionally."""
     policy_id = self._policy_id()
     if policy_id is None:
       return
@@ -307,12 +255,7 @@ class PangolinRouteProvider(RouteProvider):
     return data.get("targets", [])
 
   def _set_target(self, resource: dict, port: int, scheme: str) -> None:
-    """Point the resource at ``harbor_address:port``, replacing any targets.
-
-    Harbor owns the whole resource, so the target set is whatever we last
-    wrote. Clearing and recreating keeps a re-registered route from stacking
-    up stale targets that Pangolin would then load-balance across.
-    """
+    """Point the resource at ``harbor_address:port``, replacing any targets."""
     rid = resource["resourceId"]
     for target in self._targets(resource):
       self._request("DELETE", f"/target/{target['targetId']}", "deleteTarget")
@@ -371,11 +314,7 @@ class PangolinRouteProvider(RouteProvider):
     domain: str,
     scheme: str = "http",
   ):
-    """Create (or update) a resource routing domain -> harbor_address:port.
-
-    Idempotent: if a resource already serves this domain we reuse it and just
-    re-point its target, so re-running ``start_app`` does not create duplicates.
-    """
+    """Create (or update) a resource routing domain -> harbor_address:port."""
     # Resolve first so a missing policy refuses before we create a resource.
     self._policy_id()
     domain_name = self._domain_name(subdomain, domain)
@@ -430,11 +369,7 @@ class PangolinRouteProvider(RouteProvider):
       )
 
   def _harbor_resources(self) -> list[tuple[str, dict]]:
-    """Yield (subdomain, resource) for single-label names under the harbor domain.
-
-    Only ``<label>.<harbor_domain>`` counts -- multi-label names like
-    ``qbt.arr.<domain>`` are other systems' routes and are ignored.
-    """
+    """Yield (subdomain, resource) for single-label names under the harbor domain."""
     suffix = f".{self.harbor_domain}"
     out: list[tuple[str, dict]] = []
     for resource in self._resources():

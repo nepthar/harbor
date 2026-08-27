@@ -29,8 +29,6 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
   conn.out(f"Snapshotting {app}...")
   by = f"snapshot {app}"
   running = 0
-  # App lock the whole time; harbor lock only around stop/start so other
-  # apps can proceed while volumes copy.
   with ctx.app_lock(app, by):
     with ctx.harbor_lock(by):
       try:

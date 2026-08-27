@@ -85,15 +85,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 
 def _config_stack(app: AppID, ctx: HarborCtx) -> AppStack:
-  """The manifest this command reads its schema from.
-
-  A staged app is read from its run copy, because that is the manifest it will
-  actually start with -- a source that has moved on since is not what is
-  installed. An app that is only in a source is read from its bundle, so
-  values and binds can be set before the first stage; `stage` keeps whatever
-  is already on file. Values themselves always come from
-  config/<app_id>.logtab, which does not depend on either.
-  """
+  """The manifest this command reads its schema from."""
   paths = ctx.staged_paths(app)
   if paths.exists():
     return AppStack.from_file(paths.manifest_path, app)

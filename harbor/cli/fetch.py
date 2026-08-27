@@ -55,12 +55,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 
 
 def _install(spec: str, pin: str | None, yes: bool, ctx: HarborCtx, conn) -> None:
-  """Show what is at the target, ask, then fetch it for real.
-
-  The preview downloads and throws away, so what the operator approves is read
-  from the actual files rather than from the URL they typed. `install_target`
-  then re-downloads at the same pinned sha.
-  """
+  """Show what is at the target, ask, then fetch it for real."""
   refuse_existing(parse_target(spec), ctx)
   preview = preview_target(spec, pin, ctx)
 
@@ -103,11 +98,7 @@ def _update(query: str, pin: str | None, ctx: HarborCtx, conn) -> None:
 
 
 def _confirmed(conn) -> bool:
-  """Ask before fetching.
-
-  Harbor cannot vouch for a happ's author, so the operator reading the receipt
-  above is the check that matters. The images it names are pulled unverified.
-  """
+  """Ask before fetching."""
   try:
     answer = conn.read("\nFetch this happ? [y/N] ")
   except EOFError:

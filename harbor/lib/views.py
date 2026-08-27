@@ -1,12 +1,9 @@
 """JSON projections of harbor state.
 
 The one rule here: **no secret ever leaves this module.** `AppRunData` carries
-resolved config values, secrets included, because compose needs them. What a
-viewer gets is the same thing `harbor inspect` prints -- a non-secret value, or
-the fact that a secret is set -- and never the secret itself.
-
-Shapes are shared by the daemon's HTTP API and the CLI's `--json` output, so
-they stay in one place rather than being re-derived per front door.
+resolved config values, secrets included, because compose needs them; what a
+viewer gets is a non-secret value or the fact that a secret is set. Shapes are
+shared by the daemon's HTTP API and the CLI's `--json` output.
 """
 
 from __future__ import annotations
@@ -38,16 +35,7 @@ GITHUB_PREFIX = "github:"
 
 
 def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
-  """Every app harbor holds state for, in the shape a dashboard list wants.
-
-  Uninstalled apps are included, and say so in `state`: their data and
-  config are still here, and dropping them from the list would leave no way
-  to see -- or purge -- what was kept.
-
-  Deliberately excludes volume sizes: sizing a volume walks every file under
-  it, which is fine for one app and pathological for a list that a browser
-  polls. `app_view` pays that cost for the app you actually opened.
-  """
+  """Every app harbor holds state for, in the shape a dashboard list wants."""
   return [
     _summary(observation, ctx)
     for observation in ctx.observations()
@@ -56,12 +44,7 @@ def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
 
 
 def catalog_view(ctx: HarborCtx) -> list[dict[str, Any]]:
-  """Every configured app source, with the happs currently in it.
-
-  Grouped here so a browser can render one table per catalog without
-  re-deriving the grouping. A bundle whose manifest does not parse still
-  appears: dropping it would hide a problem the operator needs to see.
-  """
+  """Every configured app source, with the happs currently in it."""
   catalogs: dict[str, list[dict[str, Any]]] = {
     name: [] for name in ctx.config.app_sources
   }
@@ -94,14 +77,7 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
 
 
 def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
-  """What a github: target holds, shaped like the catalog card that shows it.
-
-  Same keys `_catalog_app` produces, so one card renderer covers both a happ
-  already in a source and one being considered. The extras are what only a
-  fetch knows: the resolved commit, what it weighs, and `conflict` -- the
-  reason installing would be refused, which is a thing to display rather than
-  an error, since the operator asked what was at the URL.
-  """
+  """What a github: target holds, shaped like the catalog card that shows it."""
   spec, pin = split_pin(target)
   if not spec.startswith(GITHUB_PREFIX):
     raise ValueError(
@@ -132,12 +108,7 @@ def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
 
 
 def fetch_update_view(app_id: AppID, ctx: HarborCtx) -> dict[str, Any]:
-  """A fetched happ compared to the commit its source currently points at.
-
-  Looking, not applying: the remote copy is discarded. `diff` is the
-  catalog's manifest against the remote one, which is what the operator
-  reviews before `harbor fetch <app_id>` replaces the files.
-  """
+  """A fetched happ compared to the commit its source currently points at."""
   check = check_update(app_id, ctx)
   current_version, current_sha = parse_current(check.current)
   remote_version = remote_sha = None
@@ -173,16 +144,7 @@ def _manifest_diff(current: str, remote: str) -> str:
 
 
 def _catalog_manifest_stale(entry: CatalogEntry, manifest: str, ctx: HarborCtx) -> bool:
-  """Whether the catalog's manifest has moved on from the staged copy.
-
-  Compares the text `manifest_text` already unwrapped rather than calling
-  `HarborCtx.manifest_stale`: that one reads `manifest.toml` off the bundle
-  path, so a `.happ.md` -- where the manifest is inside a code block -- always
-  compares equal to nothing and reports fresh.
-
-  An app that is not staged has nothing to differ from, and neither does an
-  entry whose manifest could not be read.
-  """
+  """Whether the catalog's manifest has moved on from the staged copy."""
   staged = ctx.staged_paths(entry.app_id).manifest_path
   if not manifest or not staged.is_file():
     return False
@@ -193,11 +155,7 @@ def _catalog_manifest_stale(entry: CatalogEntry, manifest: str, ctx: HarborCtx) 
 
 
 def config_status(stack: AppStack, store: AppStore | None) -> str:
-  """ "ready" when every config key is set or will be filled, else "missing".
-
-  A secret with a default is generated on stage, so it does not yellow the
-  card. An unset key with no default is the operator's to supply.
-  """
+  """ "ready" when every config key is set or will be filled, else "missing"."""
   for name, cfg in stack.config.items():
     if cfg.default is not None:
       continue
@@ -208,11 +166,7 @@ def config_status(stack: AppStack, store: AppStore | None) -> str:
 
 
 def _catalog_stack(entry: CatalogEntry) -> AppStack | None:
-  """The bundle's schema, or None when the happ on disk does not parse.
-
-  Same swallow as `HarborCtx.staged_stack`: a listing must not die on one
-  broken app.
-  """
+  """The bundle's schema, or None when the happ on disk does not parse."""
   try:
     return load_happ(entry.path).app_stack()
   except (ValueError, RuntimeError):
@@ -220,11 +174,7 @@ def _catalog_stack(entry: CatalogEntry) -> AppStack | None:
 
 
 def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
-  """Where this happ was fetched from, collapsed for a table cell.
-
-  Fetch records the full github: spec; the catalog only needs the publisher.
-  Anything else -- a path, a missing record, a spec we cannot read -- is local.
-  """
+  """Where this happ was fetched from, collapsed for a table cell."""
   record = ctx.harbor_db.get_app_source(app_id)
   if record is None:
     return "local"
@@ -236,16 +186,7 @@ def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
 
 
 def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]:
-  """Every harbor-managed volume on disk, whatever declared it.
-
-  Read from the volume roots rather than from manifests, so data an app left
-  behind still shows up -- `rm` deletes the run dir and keeps the volume, and
-  that data is invisible everywhere else.
-
-  `sizes` walks every file under every volume. The cost tracks file *count*,
-  not bytes, so it is usually quick and occasionally not; the caller decides
-  when to pay it.
-  """
+  """Every harbor-managed volume on disk, whatever declared it."""
   running = {
     observation.app_id
     for observation in ctx.observations()
@@ -298,11 +239,7 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
 
 
 def snapshots_view(ctx: HarborCtx) -> list[dict[str, Any]]:
-  """Every snapshot archive, newest name first.
-
-  Names sort as timestamps, so this is recency without opening the tarball.
-  A listing that extracted each archive would make the page pay for restore.
-  """
+  """Every snapshot archive, newest name first."""
   rows = []
   for app_id in snapshotted_app_ids(ctx):
     for name in snapshot_names(app_id, ctx):
@@ -324,11 +261,7 @@ def snapshots_view(ctx: HarborCtx) -> list[dict[str, Any]]:
 def activity_view(
   ctx: HarborCtx, *, app: str | None = None, limit: int = 20
 ) -> list[dict[str, Any]]:
-  """Recorded unattended runs, newest first; see `lib/activity.py`.
-
-  `app` takes a full app id (or "harbor" for app-less runs); resolving a stem
-  is the caller's business, since a removed app's records outlive its bundle.
-  """
+  """Recorded unattended runs, newest first; see `lib/activity.py`."""
   return activity.list_runs(ctx, app=app, limit=limit)
 
 
@@ -425,22 +358,14 @@ def _summary(
 def _configured(
   observation: AppObservation, stack: AppStack | None, ctx: HarborCtx
 ) -> str | None:
-  """ "ready", "missing", or None when the app has no config store yet.
-
-  Same call `harbor ps` makes, so the dashboard and the terminal never
-  disagree about whether an app is ready to start.
-  """
+  """ "ready", "missing", or None when the app has no config store yet."""
   if not observation.config_exists or stack is None:
     return None
   return "missing" if load_run_data(stack, ctx).start_blockers else "ready"
 
 
 def _units(stack: AppStack, observation: AppObservation) -> list[dict[str, Any]]:
-  """Declared run units joined to whatever containers are actually up.
-
-  Keyed on the `harbor.run_unit` label, so a unit the manifest declares but
-  docker has never heard of shows up with a null state rather than vanishing.
-  """
+  """Declared run units joined to whatever containers are actually up."""
   containers = {c.run_unit: c for c in observation.containers}
   units = []
   for name, unit in stack.run_units.items():

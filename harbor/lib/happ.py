@@ -14,9 +14,8 @@ HAPP_SUFFIX = ".happ"
 HAPP_MD_SUFFIX = ".happ.md"
 HAPP_TAR_SUFFIX = ".happ.tar.gz"
 
-# The point of markdown files is to be frictonless to audit and understand
-# Bigger happs are supported in the standard folder format.
-# This was chosen to be about 10x as long as what I considered "reasonable"
+# Markdown happs are meant to be readable in one sitting; bigger happs use the
+# folder format.
 HAPP_MD_CUTOFF_KB = 128
 
 # Group1: lang, group2: path, group3: optional ":+x"
@@ -151,12 +150,7 @@ def could_be_happ(path: Path) -> bool:
 
 
 def scan_happs(path: Path) -> Iterator[tuple[str, Path]]:
-  """Every bundle directly under `path`: (app id, path relative to `path`).
-
-  Only entries that pass `could_be_happ` are yielded, in name order -- so a
-  `<id>.happ` folder sorts before a `<id>.happ.md` file, and a caller keeping
-  the first entry per id prefers the folder flavor.
-  """
+  """Every bundle directly under `path`: (app id, path relative to `path`)."""
   if not path.is_dir():
     return
   for entry in sorted(path.iterdir()):
@@ -171,12 +165,7 @@ def scan_happs(path: Path) -> Iterator[tuple[str, Path]]:
 
 
 def manifest_text(path: Path) -> str:
-  """A happ's `manifest.toml` as raw text, parseable or not.
-
-  Deliberately not `load_happ(...).app_stack()`: this is what a viewer shows
-  the operator, and a manifest that fails to parse is exactly when they most
-  need to read it. Returns "" when there is nothing to read at all.
-  """
+  """A happ's `manifest.toml` as raw text, parseable or not."""
   if path.is_dir():
     try:
       return (path / "manifest.toml").read_text()
@@ -222,11 +211,7 @@ def load_happ_folder(path: Path, app_id: AppID) -> HappFolder:
 
 
 def extract_md_files(content: str) -> MdFileList:
-  """Look for code blocks within the markdown file that have a happ_path attribute
-  and gather the contents. This parer is simple and only supports ``` as a marker,
-  although CommonMark technically supports several others as well as marker indentiation.
-  For now, this is fine
-  """
+  """Gather the contents of markdown code blocks that carry a happ_path attribute."""
   files = []
 
   current_path = None

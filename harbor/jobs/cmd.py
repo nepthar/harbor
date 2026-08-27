@@ -15,10 +15,7 @@ class CmdJob(Job):
   def init(self, ctx: HarborCtx, kwargs: dict[str, str]) -> None:
     """`command` names an entry the happ's manifest already declares.
 
-    Extra tokens in `args` are forwarded the same way the CLI's remainder is:
-    they cannot pick a different binary. A caller that starts from an argv
-    list must build `args` with `shlex.join`, so the split here recovers the
-    tokens exactly.
+    A caller holding an argv list must build `args` with `shlex.join`.
     """
     app = ctx.resolve_app(kwargs["app"])
     extra = []

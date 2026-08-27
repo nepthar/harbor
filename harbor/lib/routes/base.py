@@ -38,21 +38,12 @@ class RouteProvider:
     conf: RouteProviderEntry,
     ctx: HarborCtx,
   ) -> RouteProvider:
-    """Build this provider from its ``[route_provider.<tag>]`` block.
-
-    Each provider reads whatever it needs -- its own ``args``, the harbor-wide
-    address, secrets out of harbordb -- and refuses here rather than leaving
-    the dispatcher to know one kind's requirements from another's.
-    """
+    """Build this provider from its ``[route_provider.<tag>]`` block."""
     raise NotImplementedError
 
   @classmethod
   def _args(cls, tag: str, conf: RouteProviderEntry) -> dict[str, str]:
-    """A copy of the block's args, refusing if any REQUIRED_ARGS are missing.
-
-    The copy is the caller's to mutate: `from_config` pops the args it has to
-    resolve (secrets, ints) and splats the rest into the constructor.
-    """
+    """A copy of the block's args, refusing if any REQUIRED_ARGS are missing."""
     missing = [name for name in cls.REQUIRED_ARGS if not conf.args.get(name)]
     if missing:
       raise RouteProviderError(
@@ -89,11 +80,7 @@ class RouteProvider:
     raise NotImplementedError
 
   def route_owners(self) -> dict[str, str | None]:
-    """Map subdomain under the harbor domain -> owning harbor app id.
-
-    ``None`` means a proxy host exists for that subdomain but is not
-    Harbor-owned. Missing keys are free.
-    """
+    """Map subdomain under the harbor domain -> owning harbor app id."""
     raise NotImplementedError
 
   def validate(self) -> list[str]:
@@ -102,11 +89,7 @@ class RouteProvider:
 
 
 class NoopRouteProvider(RouteProvider):
-  """A route provider that records intent but does not configure any proxy.
-
-  Used for the reserved ``none`` tag, and for any ``kind = "noop"`` provider
-  the operator defines (e.g. to mint URLs on a domain without a reverse proxy).
-  """
+  """A route provider that records intent but does not configure any proxy."""
 
   KIND = "noop"
 

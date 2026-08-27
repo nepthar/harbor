@@ -47,14 +47,7 @@ def route_lines(
   *,
   host: str = "localhost",
 ) -> list[str]:
-  """Every declared route, read right to left: where you reach it, then what
-  answers.
-
-  `published` supplies the public URL for the routes that have one; a route
-  missing from it simply stops at the host port. URLs are printed bare rather
-  than wrapped in terminal hyperlink escapes -- that is what makes them
-  clickable in a terminal *and* still useful piped into anything else.
-  """
+  """Every declared route, read right to left: where you reach it, then what answers."""
   lines: list[str] = []
   for name, route in stack.routes.items():
     assigned = run_data.routes.get(name) if run_data else None
@@ -170,11 +163,7 @@ def capability_receipt(
   last_action: str | None = None,
   show_logs: bool = False,
 ) -> str:
-  """Happ card for inspect / first-run up.
-
-  Live fields (state, reachability, last action, logs) are omitted unless the
-  caller passes them -- inspect-by-path is the capability card only.
-  """
+  """Happ card for inspect / first-run up."""
   app_id = stack.app
   lines: list[str] = [f"{app_id}"]
 

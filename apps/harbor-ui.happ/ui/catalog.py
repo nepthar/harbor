@@ -67,12 +67,7 @@ def catalog_tables(catalogs, open_app="", update=None, confirm=False):
 
 
 def fetch_bar(target=""):
-  """Where an operator names a happ to fetch. GitHub is the only source today.
-
-  A GET form: a preview installs nothing, so it is safe to land on, safe to
-  refresh, and safe to link. The cost is one GitHub round trip per render of
-  the result, which beats holding a downloaded copy between two requests.
-  """
+  """Where an operator names a happ to fetch. GitHub is the only source today."""
   return (
     '<form class="fetchbar" method="get" action="/catalog">'
     '<input type="hidden" name="fetch" value="1">'
@@ -102,20 +97,13 @@ def catalog_card_id(app):
 
 
 def catalog_status_pill(app):
-  """Installed-ness first, config second.
-
-  "needs config" on an app that was never installed reads as a chore the
-  operator has already been handed; until there is a logtab under config/,
-  there is nothing to configure.
-  """
+  """Installed-ness first, config second."""
   if app.get("configured") is None:
     return ""
   state = app.get("state")
   if state == "available":
     return '<span class="pill"><span class="dot"></span>not installed</span>'
   if state == "uninstalled":
-    # Its settings and data are still here, so this is not the same thing as
-    # never having installed it.
     return '<span class="pill"><span class="dot exited"></span>uninstalled</span>'
   if app.get("configured") == "missing":
     return '<span class="pill"><span class="dot exited"></span>needs config</span>'
@@ -138,11 +126,7 @@ def catalog_conflict_note(app):
 
 
 def catalog_actions(app):
-  """Reinstall from the catalog. Starting is the app page's job, not this one.
-
-  `install` is the same verb the app page's Reinstall button posts, so an app
-  installed here lands in exactly the state `harbor install` leaves it in.
-  """
+  """Reinstall from the catalog. Starting is the app page's job, not this one."""
   if app.get("configured") is None:
     return ""
   app_id = app.get("app_id") or ""
@@ -188,11 +172,7 @@ def confirm_update_actions(app):
 
 
 def catalog_update_section(app, confirm=False):
-  """Remote vs fetched, under the name/version/status block.
-
-  Only present after a check. A local happ never gets one; a github happ
-  gets "up to date", "pinned", or the versions that would change.
-  """
+  """Remote vs fetched, under the name/version/status block."""
   update = app.get("update")
   if not update:
     return ""
@@ -250,12 +230,7 @@ def catalog_diff_html(diff):
 
 
 def preview_actions(app):
-  """Fetch what the preview just showed, or nothing when the id is taken.
-
-  A conflicting id has no button at all: `catalog_conflict_note` has already
-  said why, and offering an action harbor would refuse is worse than offering
-  none.
-  """
+  """Fetch what the preview just showed, or nothing when the id is taken."""
   close = '<a class="link" href="/catalog?fetch=1">Back</a>'
   if app.get("conflict"):
     return f'<div class="row actions">{close}</div>'
@@ -274,19 +249,8 @@ def catalog_card(
 ):
   """One happ, full width: what it is on the left, its manifest on the right.
 
-  `actions` is what the card can *do* about this happ, and is the only thing
-  that differs between a catalog entry and a fetch preview -- everything else
-  is the same shape because the API projects it that way.
-
-  Catalog cards ship hidden and are revealed by the row that opens them. A
-  preview has no row to click: it *is* the page's answer, so it renders open.
-
-  `status` is off for a preview: the pill answers "is this installed", and for
-  a happ that is still on GitHub the answer is always no. Printed next to a
-  conflict note saying the id is already taken, it reads as a contradiction.
-
-  `confirm` swaps the right pane for a diff of the remote manifest and the
-  buttons for applying it. Only a check that found an update offers that.
+  `actions` is the only thing that differs between a catalog entry and a
+  fetch preview. A preview renders open and without a status pill.
   """
   name = app.get("display_name") or app.get("app_id")
   version = app.get("version")
@@ -326,18 +290,12 @@ def catalog_card(
 
 
 def update_applied_note(job):
-  """What to do after a catalog fetch of an already-installed app id.
-
-  A first-time `github:` fetch is not this: nothing is running yet. The
-  buttons named here are the ones on this card, not the CLI verbs.
-  """
+  """What to do after a catalog fetch of an already-installed app id."""
   if not job or job.get("state") != "done" or job.get("verb") != "fetch":
     return ""
   target = (job.get("args") or {}).get("target") or ""
   if target.startswith("github:") or not job.get("log"):
     return ""
-  # The job carries no output; its run log says whether anything was updated
-  # (as opposed to already being at the pinned sha).
   try:
     text = api(f"/activity/{quote(job['log'])}").get("text") or ""
   except ApiError:

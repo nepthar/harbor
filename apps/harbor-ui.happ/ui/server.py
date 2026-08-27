@@ -176,9 +176,7 @@ def logs(file: str = ""):
 async def post_catalog(request: Request):
   """Fetch a previewed target, or update an already-fetched app id.
 
-  `yes` is this submit for a first install: the operator has now read the
-  manifest the preview put in front of them. An update has no prompt in
-  harbor itself -- the confirm step is this page's.
+  `yes` is this submit: the operator has read the manifest the preview showed.
   """
   form = await request.form()
   target = field(form, "target")

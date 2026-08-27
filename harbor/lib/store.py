@@ -131,10 +131,7 @@ class HarborStore:
     self._store.delete(f"system/secrets/{name}")
 
   def set_app_source(self, app_id: str, *, source: str, current: str) -> None:
-    """Record where a catalog happ was fetched from, and which commit is on disk.
-
-    Catalog state, not install state: `purge_app` does not clear it.
-    """
+    """Record where a catalog happ was fetched from, and which commit is on disk."""
     self._store.write(f"app_source/{app_id}", {"source": source, "current": current})
 
   def get_app_source(self, app_id: str) -> dict[str, str] | None:
@@ -149,13 +146,7 @@ class HarborStore:
 
   # App Management
   def app_ids(self) -> list[str]:
-    """Every app harbordb still holds *install* state for -- which means routes.
-
-    Config and binds live in config/<app_id>.logtab. Fetch provenance lives
-    under `app_source/` and is not an install leftover, so it is not listed
-    here; `doctor` reports an id here with no run directory as an orphaned
-    route allocation.
-    """
+    """Every app harbordb still holds *install* state for -- which means routes."""
     return sorted({key.split("/")[0] for key in self._store.scan("routes/")})
 
   def purge_app(self, app_id: str) -> bool:
