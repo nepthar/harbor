@@ -243,7 +243,10 @@ def test_a_bundle_symlinked_into_two_sources_counts_twice(harbor_env):
 
   assert harbor_env.run("install", str(link)).returncode == 0
   rows = _rows(harbor_env.run("catalog").stdout, "dev-app")
-  assert [(row[1], row[2]) for row in rows] == [("apps", "installed"), ("hrbr-dev", "-")]
+  assert [(row[1], row[2]) for row in rows] == [
+    ("apps", "installed"),
+    ("hrbr-dev", "-"),
+  ]
 
 
 def test_doctor_reports_a_missing_app_source_directory(harbor_env):

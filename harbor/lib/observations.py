@@ -35,6 +35,34 @@ UNINSTALLED = "uninstalled"  # no run dir, but harbor still holds state for it
 AVAILABLE = "available"  # a catalog entry and nothing else
 
 
+def app_state(
+  *,
+  run_dir_exists: bool,
+  config_exists: bool,
+  volumes_exist: bool,
+  has_containers: bool = False,
+) -> str:
+  """`installed`, `uninstalled`, or `available`.
+
+  `uninstalled` is the state `harbor uninstall` leaves behind: the
+  installation is gone, but the data, config and address it kept are all
+  still here, which is what makes reinstalling pick up where it left off.
+
+  Container state is optional because asking docker costs a subprocess, and
+  a caller building a catalog listing has no reason to pay for it -- an app
+  with containers but no run dir is a broken state for `doctor`, not a
+  distinction a listing needs to draw.
+  """
+  if run_dir_exists or has_containers:
+    return INSTALLED
+  # Config and volumes are what `uninstall` keeps, so they are what makes
+  # this the uninstalled state rather than nothing. A lone harbordb row is
+  # not: that is an orphan for `doctor` to report, not a kept app.
+  if config_exists or volumes_exist:
+    return UNINSTALLED
+  return AVAILABLE
+
+
 @dataclass(frozen=True)
 class AppObservation:
   """A union of every possible place an app can leave a trace - for diagnostics and status"""
@@ -55,20 +83,13 @@ class AppObservation:
 
   @property
   def state(self) -> str:
-    """`installed`, `uninstalled`, or `available`.
-
-    `uninstalled` is the state `harbor uninstall` leaves behind: the
-    installation is gone, but the data, config and address it kept are all
-    still here, which is what makes reinstalling pick up where it left off.
-    """
-    if self.run_dir_exists or self.containers:
-      return INSTALLED
-    # Config and volumes are what `uninstall` keeps, so they are what makes
-    # this the uninstalled state rather than nothing. A lone harbordb row is
-    # not: that is an orphan for `doctor` to report, not a kept app.
-    if self.config_exists or self.volumes_exist:
-      return UNINSTALLED
-    return AVAILABLE
+    """Where this app stands. See `app_state`."""
+    return app_state(
+      run_dir_exists=self.run_dir_exists,
+      config_exists=self.config_exists,
+      volumes_exist=self.volumes_exist,
+      has_containers=bool(self.containers),
+    )
 
   @property
   def installed(self) -> bool:
@@ -82,12 +103,17 @@ class AppObservation:
 
   @property
   def status(self) -> str:
-    """Container state as one word: what an operator scanning a list wants."""
+    """Container state as one word: what an operator scanning a list wants.
+
+    Strictly about containers. Whether the app is installed at all is a
+    separate axis -- see `state` -- and conflating them is what made a
+    listing claim an uninstalled app was merely `stopped`.
+    """
     if self.running_count:
       return "running"
     if self.containers:
       return "exited"
-    return UNINSTALLED if self.state == UNINSTALLED else "stopped"
+    return "stopped"
 
   @property
   def run_display(self) -> str:

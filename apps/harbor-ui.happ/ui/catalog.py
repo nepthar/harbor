@@ -110,8 +110,13 @@ def catalog_status_pill(app):
   """
   if app.get("configured") is None:
     return ""
-  if not app.get("installed"):
+  state = app.get("state")
+  if state == "available":
     return '<span class="pill"><span class="dot"></span>not installed</span>'
+  if state == "uninstalled":
+    # Its settings and data are still here, so this is not the same thing as
+    # never having installed it.
+    return '<span class="pill"><span class="dot exited"></span>uninstalled</span>'
   if app.get("configured") == "missing":
     return '<span class="pill"><span class="dot exited"></span>needs config</span>'
   return '<span class="pill"><span class="dot running"></span>ready</span>'
@@ -141,7 +146,7 @@ def catalog_actions(app):
   if app.get("configured") is None:
     return ""
   app_id = app.get("app_id") or ""
-  label = "Re-install" if app.get("installed") else "Install"
+  label = "Re-install" if app.get("state") == "installed" else "Install"
   update = ""
   github = str(app.get("source") or "").startswith("github:")
   if github and (app.get("update") or {}).get("available"):

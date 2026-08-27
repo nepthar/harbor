@@ -7,13 +7,24 @@ from layout import error_card, esc, fmt_size, job_card, kv_table
 
 
 def status_cell(app):
-  state = app.get("status") or "unknown"
+  """Containers, unless there is no installation for them to belong to.
+
+  An uninstalled app has no containers, and calling that "stopped" would
+  contradict the list's own state column -- and what `harbor uninstall`
+  told the operator it kept.
+  """
+  if app.get("state") == "uninstalled":
+    return (
+      '<span class="pill"><span class="dot exited"></span>uninstalled</span>'
+      '<span class="sub">data and config kept</span>'
+    )
+  status = app.get("status") or "unknown"
   containers = app.get("containers") or {}
   running, total = containers.get("running", 0), containers.get("total", 0)
-  css = state if state in ("running", "exited") else ""
+  css = status if status in ("running", "exited") else ""
   detail = f"{running}/{total}" if total else "no containers"
   return (
-    f'<span class="pill"><span class="dot {css}"></span>{esc(state)}</span>'
+    f'<span class="pill"><span class="dot {css}"></span>{esc(status)}</span>'
     f'<span class="sub">{esc(detail)}</span>'
   )
 
@@ -60,12 +71,12 @@ def apps_table(apps):
 def lifecycle_bar(app):
   """Start, stop, install, snapshot. Each posts a job and comes back with its id."""
   running = app["status"] == "running"
-  staged = app.get("staged")
+  installed = app.get("state") == "installed"
   buttons = [
     ("start", "Start", not running),
     ("stop", "Stop", running),
     ("install", "Reinstall", True),
-    ("snapshot", "Snapshot", staged),
+    ("snapshot", "Snapshot", installed),
   ]
   return (
     '<div class="row actions">'
@@ -222,20 +233,20 @@ def commands_section(app):
   a `cmd` job and tails its activity file until the job ends or the modal
   closes.
 
-  Disabled until the app is staged, because a command runs inside the app's
+  Disabled until the app is installed, because a command runs inside the app's
   own container -- there is nothing to run it in otherwise, and the job would
   come back failed with exactly that message.
   """
   commands = app.get("commands") or []
   if not commands:
     return '<p class="empty">This app declares no commands.</p>'
-  staged = app.get("staged")
+  installed = app.get("state") == "installed"
   rows = []
   for command in commands:
     button = (
       f'<button type="button" class="cmd-open" data-command="{esc(command["name"])}"'
       f' data-desc="{esc(command.get("desc") or "")}"'
-      f"{'' if staged else ' disabled'}>Run</button>"
+      f"{'' if installed else ' disabled'}>Run</button>"
     )
     rows.append(
       f'<tr><td class="key">{esc(command["name"])}</td>'
@@ -249,8 +260,8 @@ def commands_section(app):
     + "".join(rows)
     + "</tbody></table></div>"
   )
-  if not staged:
-    table += '<p class="sub">Stage the app to run its commands.</p>'
+  if not installed:
+    table += '<p class="sub">Install the app to run its commands.</p>'
   return table
 
 

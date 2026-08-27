@@ -1011,7 +1011,7 @@ def test_preview_reads_a_target_without_installing_it(github, api_client, harbor
   assert body["display_name"] == "Hello world"
   assert body["version"] == "0.1.0"
   assert body["source"] == "github:nepthar"
-  assert body["installed"] is False
+  assert body["state"] == "available"
   assert body["conflict"] is None
   assert body["sha"] == SHA
   assert 'image   = "alpine:latest"' in body["manifest"]

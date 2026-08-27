@@ -82,10 +82,8 @@ def _done(plan: RemovalPlan) -> str:
   app = plan.app_id
   if plan.mode == UNINSTALL:
     return (
-      f"Uninstalled {app}. Its data and settings are still here -- reinstall "
-      f"it with `harbor install {app}`.\n"
-      f"To remove its volumes and configuration too, run "
-      f"`harbor uninstall --purge {app}`."
+      f"Uninstalled {app}. Configuration and volume data were kept.\n"
+      f"To remove those too, run `harbor uninstall --purge {app}`."
     )
   if plan.mode == RESET:
     return (
@@ -96,36 +94,55 @@ def _done(plan: RemovalPlan) -> str:
 
 
 def _confirmed(plan: RemovalPlan, ctx: HarborCtx, conn: Conn) -> bool:
-  app = plan.app_id
+  """Say what the operator is deciding, and nothing else.
+
+  Which directories harbor keeps an app in is its own business: paths appear
+  here only for data it is about to destroy, where seeing exactly what is at
+  stake is the point of asking at all.
+  """
   if plan.mode == RESET:
     _describe_reset(plan, conn)
-  else:
-    conn.out(f"{_DOING[plan.mode]} {app} deletes:")
-    for line in _deletes(plan):
-      conn.out(f"  {line}")
-
-    conn.out("Left alone:")
-    for line in _keeps(plan, ctx):
-      conn.out(f"  {line}")
-
-  # No snapshot is taken yet (docs/run-layout.md §8), so say plainly that
-  # there is nothing to roll back to rather than implying a safety net that
-  # is not there. An uninstall is the exception: everything it takes is
-  # rebuilt from the bundle by the next `install`.
-  if plan.mode == RESET:
-    conn.out("If you want to retain this data, take a snapshot first.")
   elif plan.purges:
-    conn.out("If you want this data back, take a snapshot first.")
+    _describe_purge(plan, ctx, conn)
+  else:
+    conn.out(
+      f"Configuration and volume data will be kept. Use "
+      f"`harbor uninstall --purge {plan.app_id}` to also remove those."
+    )
   try:
-    answer = conn.read(f"{_ASKED[plan.mode]} {app}? [y/N] ")
+    answer = conn.read(f"{_ASKED[plan.mode]} {plan.app_id}? [y/N] ")
   except EOFError:
     return False
   return answer.strip().lower() in ("y", "yes")
 
 
-# What this removal is called mid-sentence, and how it asks.
-_DOING = {UNINSTALL: "Uninstalling", RESET: "Resetting", PURGE: "Removing"}
+# How each removal asks.
 _ASKED = {UNINSTALL: "Uninstall", RESET: "Reset", PURGE: "Remove"}
+
+
+def _describe_purge(plan: RemovalPlan, ctx: HarborCtx, conn: Conn) -> None:
+  """The destructive one, so it names the data going away."""
+  volumes = _volume_lines(plan)
+  if plan.volume_paths:
+    conn.out(f"Removing {plan.app_id} deletes its data volumes:")
+    for line in volumes:
+      conn.out(f"  {line}")
+    conn.out("along with its configuration, secrets, and route allocations.")
+  else:
+    conn.out(
+      f"Removing {plan.app_id} deletes its configuration, secrets, and route "
+      f"allocations. It has no data volumes on disk."
+    )
+
+  # Host volumes are the operator's own directories, so saying they survive
+  # is worth the line -- everything else harbor removes is harbor's.
+  for path in plan.host_paths:
+    conn.out(f"The host volume at {path} is left alone.")
+
+  # No snapshot is taken yet (docs/run-layout.md §8), so say plainly that
+  # there is nothing to roll back to rather than implying a safety net that
+  # is not there.
+  conn.out("If you want this data back, take a snapshot first.")
 
 
 def _describe_reset(plan: RemovalPlan, conn: Conn) -> None:
@@ -152,35 +169,3 @@ def _volume_lines(plan: RemovalPlan) -> list[str]:
     volumes = sorted(p for p in path.iterdir() if p.is_dir()) if path.is_dir() else []
     lines += [str(volume) for volume in volumes] or [str(path)]
   return lines or ["nothing -- this app has no data on disk"]
-
-
-def _deletes(plan: RemovalPlan) -> list[str]:
-  lines = []
-  if plan.run_path is not None:
-    lines.append(f"{plan.run_path} (happ, compose)")
-  if plan.config_path is not None:
-    lines.append(f"{plan.config_path} (config, secrets)")
-  for path in plan.volume_paths:
-    # A reset keeps the volume directories themselves; what goes is what the
-    # app wrote inside them, which is the part the operator cares about.
-    lines.append(f"{path}" if plan.purges else f"everything under {path}")
-  if plan.purges:
-    lines.append("its route and host-port allocations")
-  return lines or ["nothing -- there is no such state on disk"]
-
-
-def _keeps(plan: RemovalPlan, ctx: HarborCtx) -> list[str]:
-  lines = []
-  if plan.mode == RESET:
-    lines.append("its installation under run/")
-  if plan.mode == UNINSTALL:
-    lines.append("its data volumes")
-  if not plan.purges:
-    lines.append("its configuration and secrets")
-    lines.append("its route and host-port allocations")
-
-  # Every source that carries the id: a removal deletes the installation,
-  # never a bundle, so all of them survive and saying so is the point.
-  lines += [str(entry.path) for entry in ctx.app_catalog().get(str(plan.app_id), ())]
-  lines += [f"{path} (host volume)" for path in plan.host_paths]
-  return lines

@@ -87,11 +87,11 @@ def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
 
   # A catalog entry alone is not an installation, and nothing is staged to
   # have drifted from.
-  assert entry()["installed"] is False
+  assert entry()["state"] == "available"
   assert entry()["manifest_stale"] is False
 
   assert submit(client, jobs, "install", {"app": APP})["state"] == "done"
-  assert entry()["installed"] is True
+  assert entry()["state"] == "installed"
   assert entry()["manifest_stale"] is False
 
   # Editing the bundle leaves the staged copy behind: that is the drift the
@@ -166,7 +166,7 @@ def test_catalog_keeps_a_broken_bundle(harbor_env, client):
     "description": "",
     "source": "local",
     "catalog": "apps",
-    "installed": False,
+    "state": "available",
     "configured": None,
     "manifest": "not toml",
     "manifest_stale": False,
@@ -201,7 +201,7 @@ def test_apps_lists_only_installed(harbor_env, client):
   app = apps[0]
   assert app["display_name"] == "Basic Features"
   assert app["status"] == "stopped"
-  assert app["staged"] is True
+  assert app["state"] == "installed"
   assert app["volume_count"] == 3
   assert app["containers"] == {"running": 0, "total": 0}
   # admin_user has no default and was never set, so the app cannot start yet.
@@ -756,3 +756,31 @@ def test_config_changes_are_refused_with_a_reason(harbor_env, client):
     refused = client.post(f"/apps/{APP}/config", json=payload)
     assert refused.status_code == 400, refused.text
     assert expected in refused.json()["error"]
+
+
+def test_apps_and_catalog_agree_on_state(harbor_env, client, jobs):
+  """One vocabulary across both views: no `staged`/`installed` booleans."""
+
+  def catalog_entry():
+    catalogs = client.get("/catalog").json()["catalogs"]
+    return {app["app_id"]: app for app in catalogs[0]["apps"]}[APP]
+
+  assert catalog_entry()["state"] == "available"
+  assert client.get("/apps").json()["apps"] == []
+
+  assert submit(client, jobs, "install", {"app": APP})["state"] == "done"
+  app = client.get("/apps").json()["apps"][0]
+  assert app["state"] == "installed"
+  assert "staged" not in app
+  assert catalog_entry()["state"] == "installed"
+  # `status` is about containers and stays its own axis.
+  assert app["status"] == "stopped"
+
+  harbor_env.run("uninstall", APP, "-y")
+  app = client.get("/apps").json()["apps"][0]
+  assert app["state"] == "uninstalled"
+  assert catalog_entry()["state"] == "uninstalled"
+
+  harbor_env.run("uninstall", "--purge", APP, "-y")
+  assert client.get("/apps").json()["apps"] == []
+  assert catalog_entry()["state"] == "available"

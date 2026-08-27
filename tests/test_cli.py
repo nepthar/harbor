@@ -1525,10 +1525,12 @@ def test_uninstall_confirmation_says_what_it_keeps(harbor_env):
 
   declined = harbor_env.run("uninstall", BASIC, input="n\n")
   assert declined.returncode == 0, declined.stderr
-  assert "its data volumes" in declined.stdout
-  assert "its configuration and secrets" in declined.stdout
+  assert "Configuration and volume data will be kept" in declined.stdout
+  assert f"harbor uninstall --purge {BASIC}" in declined.stdout
   # Nothing irreversible is at stake, so it must not borrow rm's warning.
   assert "take a snapshot first" not in declined.stdout
+  # Where harbor keeps an installation is not the operator's problem.
+  assert str(harbor_env.run_root) not in declined.stdout
   assert "Nothing removed" in declined.stdout
   assert (harbor_env.run_root / BASIC).is_dir()
 
@@ -1567,6 +1569,7 @@ def test_uninstall_purge_is_rm(harbor_env):
 def test_uninstall_points_at_purge(harbor_env):
   assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
   done = harbor_env.run("uninstall", BASIC, "-y")
+  assert "Configuration and volume data were kept" in done.stdout
   assert f"harbor uninstall --purge {BASIC}" in done.stdout
 
 
