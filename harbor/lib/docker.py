@@ -20,8 +20,8 @@ DOCKER = "docker"
 
 # Where streamed (`json_output=False`) command output goes when the caller has
 # no terminal. Unset -- the normal CLI case -- the child inherits harbor's
-# stdio, exactly as before. The daemon's job runner sets it so `compose up`
-# output lands in the job record instead of on harbord's stderr.
+# stdio, exactly as before. An Operation sets it so `compose up` output lands
+# in the run log instead of on this process's stderr.
 _output_sink: ContextVar[TextIO | None] = ContextVar("docker_output_sink", default=None)
 
 # How much captured output a DockerError carries. The full text is in the

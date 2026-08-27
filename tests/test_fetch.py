@@ -992,7 +992,7 @@ def api_client(harbor_env):
   from fastapi.testclient import TestClient
 
   from harbor.daemon.api import create_app
-  from harbor.daemon.jobs import JobRunner
+  from harbor.ops import JobRunner
 
   def factory() -> HarborCtx:
     return HarborCtx(load_config_file(harbor_env.config))
@@ -1046,15 +1046,11 @@ def test_preview_refuses_a_target_that_is_not_a_github_url(api_client):
 def test_fetch_job_needs_an_explicit_yes(github, api_client, harbor_env):
   """No prompt exists over HTTP, so consent has to be in the submission."""
   github.hello_world()
-  client, runner = api_client
+  client, _ = api_client
 
   response = client.post("/jobs", json={"verb": "fetch", "args": {"target": TARGET}})
-  assert response.status_code == 202
-  runner.run_pending()
-  job = client.get(f"/jobs/{response.json()['id']}").json()
-
-  assert job["state"] == "failed"
-  assert "resubmit with yes=1" in job["error"]
+  assert response.status_code == 400
+  assert "resubmit with yes=1" in response.json()["error"]
   assert not (harbor_env.root / "apps" / "hello-world.happ").exists()
 
 
@@ -1086,12 +1082,8 @@ def test_fetch_job_refuses_a_path_target(api_client):
   response = client.post(
     "/jobs", json={"verb": "fetch", "args": {"target": "./local.happ", "yes": "1"}}
   )
-  assert response.status_code == 202
-  _, runner = api_client
-  runner.run_pending()
-  job = client.get(f"/jobs/{response.json()['id']}").json()
-  assert job["state"] == "failed"
-  assert "expected a github: target" in job["error"]
+  assert response.status_code == 400
+  assert "expected a github: target" in response.json()["error"]
 
 
 def test_check_reads_a_moved_ref_without_installing(github, api_client, harbor_env):

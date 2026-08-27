@@ -24,7 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from harbor import VERSION
-from harbor.daemon.jobs import JobRunner, validate
 from harbor.lib import views
 from harbor.lib.apps import AppID
 from harbor.lib.config import load_config_file
@@ -38,6 +37,7 @@ from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
 from harbor.lib.routes import RouteProviderError
 from harbor.lib.stack import AppStack
+from harbor.ops import JobRunner
 
 # Bumped when a response shape changes in a way a client would notice. The web
 # UI ships separately from the daemon, so it has to be able to tell.
@@ -87,7 +87,7 @@ class FetchTarget(BaseModel):
   """A github: target to look at, as the UI sends it.
 
   A URL, which the rest of this API refuses to take -- see the note above
-  `VERBS` in `harbor.daemon.jobs`. It is allowed here because looking is not
+  `OPS` in `harbor.ops`. It is allowed here because looking is not
   installing: the preview downloads to a scratch directory, reads the manifest,
   and throws the copy away. Nothing it fetches survives the request.
   """
@@ -110,7 +110,7 @@ class JobSubmission(BaseModel):
 
   Shape only. Whether the verb exists, whether its arguments are the ones it
   declares, and whether the app is installed are harbor questions, and
-  `jobs.validate` answers them against a live context.
+  `JobRunner.submit` answers them against a live context (via `Operation.init`).
   """
 
   model_config = ConfigDict(extra="forbid")
@@ -345,10 +345,9 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
   @app.post("/jobs", status_code=202, tags=["jobs"])
   def submit_job(submission: JobSubmission, ctx: Ctx, jobs: Jobs) -> dict:
     try:
-      validate(submission.verb, submission.args, ctx)
+      return jobs.submit(submission.verb, submission.args, ctx)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(400, str(e)) from e
-    return jobs.submit(submission.verb, submission.args)
 
   @app.get("/jobs/{job_id}", tags=["jobs"])
   def get_job(job_id: str, jobs: Jobs) -> dict:

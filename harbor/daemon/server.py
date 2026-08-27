@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 
 from harbor import VERSION
-from harbor.daemon.jobs import JobRunner
 from harbor.lib.config import Config, load_config
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.util import refuse_root
+from harbor.ops import JobRunner
 
 try:
   import uvicorn

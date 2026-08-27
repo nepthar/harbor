@@ -9,9 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from harbor.daemon.api import API_VERSION, create_app
-from harbor.daemon.jobs import JobRunner
 from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
+from harbor.ops import JobRunner
 
 APP = "io.p2net.basic-features"
 
@@ -347,20 +347,28 @@ def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
   and already contain what has been printed."""
   import logging
 
-  from harbor.daemon import jobs as jobs_mod
+  from harbor.ops import OPS
+  from harbor.ops.operation import BaseOp
 
-  def run(ctx, args):
-    logging.getLogger("harbor").info("live line")
-    running = [job for job in jobs.list() if job["state"] == "running"]
-    assert len(running) == 1
-    assert running[0]["log"]
-    text = (ctx.config.activity_root / running[0]["log"]).read_text()
-    assert "— running" in text
-    assert "live line" in text
-    return "done"
+  class LiveOp(BaseOp):
+    name = "stage"
+    required_args = ("app",)
 
-  monkeypatch.setitem(jobs_mod.VERBS, "stage", jobs_mod.Verb(run))
-  job = jobs.submit("stage", {"app": "basic-features"})
+    def init(self, ctx, kwargs):
+      self.app = str(ctx.resolve_app(kwargs["app"]))
+
+    def run(self, ctx) -> None:
+      logging.getLogger("harbor").info("live line")
+      running = [job for job in jobs.list() if job["state"] == "running"]
+      assert len(running) == 1
+      assert running[0]["log"]
+      text = (ctx.config.activity_root / running[0]["log"]).read_text()
+      assert "— running" in text
+      assert "live line" in text
+      logging.getLogger("harbor").info("done")
+
+  monkeypatch.setitem(OPS, "stage", LiveOp)
+  job = jobs.submit("stage", {"app": "basic-features"}, ctx())
   jobs.run_pending()
   finished = jobs.get(job["id"])
   assert finished is not None
@@ -430,11 +438,13 @@ def test_cmd_verb_requires_a_command_argument(harbor_env, client):
   assert "command" in response.json()["error"]
 
 
-def test_cmd_verb_reports_an_unknown_command(harbor_env, client, jobs):
+def test_cmd_verb_reports_an_unknown_command(harbor_env, client):
   harbor_env.run("start", "basic-features", "--set", "admin_user=root")
-  job = submit(client, jobs, "cmd", {"app": "basic-features", "command": "nope"})
-  assert job["state"] == "failed"
-  assert "nope" in job["error"]
+  response = client.post(
+    "/jobs", json={"verb": "cmd", "args": {"app": "basic-features", "command": "nope"}}
+  )
+  assert response.status_code == 400
+  assert "nope" in response.json()["error"]
 
 
 def test_snapshots_empty_when_none_taken(harbor_env, client):
