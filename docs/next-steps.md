@@ -77,9 +77,11 @@ submitted through harbord cannot answer one, and a question asked on every
   wedges that app. The runner also allocates no TTY, so a command that waits
   on stdin hangs rather than prompting.
 - **Only daemon jobs file activity output.** A CLI invocation prints to the
-  operator's terminal and records only its status line in `activity.logtab`;
-  whether to also tee it into `$harbor/var/logs` is undecided. The UI's Activity
-  page therefore shows what harbord ran, not what the operator typed.
+  operator's terminal and records only its status line in `activity.logtab`,
+  so the UI's Activity page shows what harbord ran, not what the operator
+  typed. The mechanism to close this is in place — `Job.call(args, ctx,
+  echo=stream)` writes the run log and the terminal from one stream — and the
+  plan is to migrate CLI verbs onto their Job classes, verb by verb.
 - **The Activity page shows harbor runs, not container logs.** `harbor logs`
   streams `docker compose logs`; the UI has no equivalent yet.
 - **harbor-ui has no tests.** Catalog update-check is covered on the daemon

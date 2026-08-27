@@ -1,3 +1,4 @@
+from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import (
   resolve_snapshot_app,
@@ -6,10 +7,9 @@ from harbor.lib.lifecycle import (
   snapshot_names,
 )
 from harbor.lib.lifecycle.snapshot import SNAPSHOT_TAR_SUFFIX
-from harbor.ops.operation import BaseOp, logger
 
 
-class RestoreOp(BaseOp):
+class RestoreJob(Job):
   name = "restore"
   description = "Replace an app's run state with a snapshot"
   required_args = ("app", "snapshot")

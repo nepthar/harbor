@@ -992,7 +992,7 @@ def api_client(harbor_env):
   from fastapi.testclient import TestClient
 
   from harbor.daemon.api import create_app
-  from harbor.ops import JobRunner
+  from harbor.jobs import JobRunner
 
   def factory() -> HarborCtx:
     return HarborCtx(load_config_file(harbor_env.config))
@@ -1065,7 +1065,8 @@ def test_fetch_job_installs_and_records_its_source(github, api_client, ctx, harb
   job = client.get(f"/jobs/{response.json()['id']}").json()
 
   assert job["state"] == "done", job["error"]
-  assert "Installed hello-world" in job["output"]
+  log_text = (ctx.config.activity_root / job["log"]).read_text()
+  assert "Installed hello-world" in log_text
   installed = harbor_env.root / "apps" / "hello-world.happ"
   assert (installed / "manifest.toml").read_bytes() == MANIFEST
   assert ctx.harbor_db.get_app_source("hello-world") == {

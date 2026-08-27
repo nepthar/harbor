@@ -1,10 +1,10 @@
+from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import start
 from harbor.lib.receipt import published_urls
-from harbor.ops.operation import BaseOp, logger
 
 
-class StartOp(BaseOp):
+class StartJob(Job):
   name = "start"
   description = "Start a happ, staging it first if needed"
   required_args = ("app",)

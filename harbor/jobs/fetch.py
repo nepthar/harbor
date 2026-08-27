@@ -1,3 +1,4 @@
+from harbor.jobs.job import Job, logger
 from harbor.lib.fetch import (
   GITHUB_PREFIX,
   USAGE,
@@ -8,10 +9,9 @@ from harbor.lib.fetch import (
 )
 from harbor.lib.happ import is_pathlike
 from harbor.lib.harbor import HarborCtx
-from harbor.ops.operation import BaseOp, logger
 
 
-class FetchOp(BaseOp):
+class FetchJob(Job):
   name = "fetch"
   description = "Install a happ from GitHub, or update one already fetched"
   required_args = ("target",)
@@ -21,7 +21,7 @@ class FetchOp(BaseOp):
     """`harbor fetch <target>`, with the prompt replaced by an explicit `yes`.
 
     The CLI asks before a first install, because harbor cannot vouch for a
-    happ's author and the receipt is the only check there is. An op cannot be
+    happ's author and the receipt is the only check there is. A job cannot be
     asked anything, so the caller has to have decided already -- a client
     that wants the operator to see what they are approving shows them the
     preview first. An update carries no prompt in the CLI either, so it
@@ -31,7 +31,7 @@ class FetchOp(BaseOp):
     spec, pin = split_pin(self.target)
     self.spec = spec
     self.pin = pin
-    self.yes = kwargs.get("yes") in ("1", "true", "yes")
+    self.yes = self._bool_arg(kwargs, "yes")
 
     if spec.startswith(GITHUB_PREFIX):
       if not self.yes:

@@ -41,7 +41,8 @@ def test_a_run_leaves_a_file_and_an_index_row(ctx):
   assert path.is_file()
   body = path.read_text()
   assert "line one\nline two" in body
-  assert "# harbor start demo.app — ok" in body
+  assert "# harbor start demo.app" in body
+  assert "— ok" in body
 
   runs = activity.list_runs(ctx)
   assert len(runs) == 1
@@ -136,7 +137,7 @@ def test_begin_run_is_readable_before_finish(ctx):
     started=started,
   )
   path = ctx.config.activity_root / relpath
-  assert "— running" in path.read_text()
+  assert "# harbor cmd demo.app" in path.read_text()
   assert activity.list_runs(ctx) == []
 
   with path.open("a") as log:
@@ -148,12 +149,10 @@ def test_begin_run_is_readable_before_finish(ctx):
     ctx,
     relpath,
     "cmd",
-    {"app": "demo.app", "command": "ping"},
     app_id=AppID("demo.app"),
     status=activity.OK,
     started=started,
     finished=finished,
-    output="pong\n",
   )
   body = path.read_text()
   assert "— ok" in body

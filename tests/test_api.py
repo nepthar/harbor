@@ -9,9 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from harbor.daemon.api import API_VERSION, create_app
+from harbor.jobs import JobRunner
 from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
-from harbor.ops import JobRunner
 
 APP = "io.p2net.basic-features"
 
@@ -31,6 +31,14 @@ def jobs() -> JobRunner:
 @pytest.fixture
 def client(jobs: JobRunner) -> TestClient:
   return TestClient(create_app(ctx, jobs))
+
+
+def read_log(job) -> str:
+  """A finished job's output lives only in the file `log` names."""
+  assert job["log"]
+  config = load_config()
+  assert config is not None
+  return (config.activity_root / job["log"]).read_text()
 
 
 def submit(client: TestClient, jobs: JobRunner, verb: str, args: dict[str, str]):
@@ -283,7 +291,8 @@ def test_stop_runs_as_a_job(harbor_env, client, jobs):
   job = submit(client, jobs, "stop", {"app": "basic-features"})
   assert job["state"] == "done"
   assert job["error"] is None
-  assert job["output"] == f"Stopped {APP}"
+  assert "output" not in job
+  assert f"Stopped {APP}" in read_log(job)
   assert job["started_at"] and job["finished_at"]
 
   assert client.get("/apps").json()["apps"][0]["status"] == "stopped"
@@ -296,7 +305,7 @@ def test_failed_job_carries_the_error(harbor_env, client, jobs):
   job = submit(client, jobs, "start", {"app": "basic-features"})
   assert job["state"] == "failed"
   assert "admin_user is unset" in job["error"]
-  assert job["output"] == ""
+  assert "admin_user is unset" in read_log(job)
 
 
 def test_jobs_are_listed_newest_first(harbor_env, client, jobs):
@@ -347,10 +356,9 @@ def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
   and already contain what has been printed."""
   import logging
 
-  from harbor.ops import OPS
-  from harbor.ops.operation import BaseOp
+  from harbor.jobs import JOBS, Job
 
-  class LiveOp(BaseOp):
+  class LiveJob(Job):
     name = "stage"
     required_args = ("app",)
 
@@ -363,11 +371,11 @@ def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
       assert len(running) == 1
       assert running[0]["log"]
       text = (ctx.config.activity_root / running[0]["log"]).read_text()
-      assert "— running" in text
+      assert "# harbor stage" in text
       assert "live line" in text
       logging.getLogger("harbor").info("done")
 
-  monkeypatch.setitem(OPS, "stage", LiveOp)
+  monkeypatch.setitem(JOBS, "stage", LiveJob)
   job = jobs.submit("stage", {"app": "basic-features"}, ctx())
   jobs.run_pending()
   finished = jobs.get(job["id"])
@@ -401,7 +409,7 @@ def test_cmd_verb_runs_a_manifest_command_as_a_job(harbor_env, client, jobs):
 
   job = submit(client, jobs, "cmd", {"app": "cmd-demo", "command": "ping"})
   assert job["state"] == "done", job["error"]
-  assert "ping" in job["output"]
+  assert "ping" in read_log(job)
 
   # It reached docker as an exec of the declared argv, not something the caller
   # supplied.
@@ -490,7 +498,7 @@ def test_restore_verb(harbor_env, client, jobs):
   name = Path(taken.stdout.split("written to ")[1].strip()).name.removesuffix(".tar.gz")
   job = submit(client, jobs, "restore", {"app": "ports-demo", "snapshot": name})
   assert job["state"] == "done", job["error"]
-  assert "Restored" in job["output"]
+  assert "Restored" in read_log(job)
 
 
 def test_restore_unknown_snapshot_is_refused(harbor_env, client):

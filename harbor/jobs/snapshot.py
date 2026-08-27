@@ -1,9 +1,9 @@
+from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import snapshot, start, stop
-from harbor.ops.operation import BaseOp, logger
 
 
-class SnapshotOp(BaseOp):
+class SnapshotJob(Job):
   name = "snapshot"
   description = "Copy an app's volumes and run state to a snapshot archive"
   required_args = ("app",)

@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from harbor import VERSION
+from harbor.jobs import JobRunner
 from harbor.lib import views
 from harbor.lib.apps import AppID
 from harbor.lib.config import load_config_file
@@ -37,13 +38,13 @@ from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
 from harbor.lib.routes import RouteProviderError
 from harbor.lib.stack import AppStack
-from harbor.ops import JobRunner
 
 # Bumped when a response shape changes in a way a client would notice. The web
 # UI ships separately from the daemon, so it has to be able to tell.
 # 3: /activity endpoints; jobs carry a `log` path.
 # 4: /snapshots; restore is a job.
-API_VERSION = 4
+# 5: jobs no longer carry `output`; read the file `log` names via /activity.
+API_VERSION = 5
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -87,7 +88,7 @@ class FetchTarget(BaseModel):
   """A github: target to look at, as the UI sends it.
 
   A URL, which the rest of this API refuses to take -- see the note above
-  `OPS` in `harbor.ops`. It is allowed here because looking is not
+  `JOBS` in `harbor.jobs`. It is allowed here because looking is not
   installing: the preview downloads to a scratch directory, reads the manifest,
   and throws the copy away. Nothing it fetches survives the request.
   """
@@ -110,7 +111,7 @@ class JobSubmission(BaseModel):
 
   Shape only. Whether the verb exists, whether its arguments are the ones it
   declares, and whether the app is installed are harbor questions, and
-  `JobRunner.submit` answers them against a live context (via `Operation.init`).
+  `JobRunner.submit` answers them against a live context (via `Job.init`).
   """
 
   model_config = ConfigDict(extra="forbid")

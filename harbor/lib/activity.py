@@ -73,21 +73,25 @@ def _run_file(directory: Path, started: datetime, verb: str) -> Path:
 def _run_header(
   verb: str,
   app_id: AppID | None,
-  status: str,
   started: datetime,
-  finished: datetime | None,
   args: dict[str, str],
 ) -> str:
   who = f" {app_id}" if app_id else ""
-  lines = [f"# harbor {verb}{who} — {status}"]
-  time_line = f"# started {started.isoformat(timespec='seconds')}"
-  if finished is not None:
-    time_line += f" · finished {finished.isoformat(timespec='seconds')}"
-  lines.append(time_line)
+  lines = [
+    f"# harbor {verb}{who}",
+    f"# started {started.isoformat(timespec='seconds')}",
+  ]
   arg_text = " ".join(f"{k}={v}" for k, v in sorted(args.items()))
   if arg_text:
     lines.append(f"# args: {arg_text}")
   return "\n".join(lines) + "\n\n"
+
+
+def _run_trailer(status: str, finished: datetime, duration_ms: int) -> str:
+  return (
+    f"# — {status} · finished {finished.isoformat(timespec='seconds')}"
+    f" · {duration_ms / 1000:.1f}s\n"
+  )
 
 
 def _new_relpath(
@@ -109,12 +113,13 @@ def begin_run(
 ) -> str:
   """Create the run file so a live job can tee into it. Not indexed yet.
 
-  Returns the path relative to the activity root. `finish_run` rewrites this
-  same file with the final header and adds the index row.
+  Returns the path relative to the activity root. Output is appended to this
+  file as it happens; `finish_run` appends the closing trailer and adds the
+  index row.
   """
   relpath = _new_relpath(ctx, app_id, started, verb)
   path = ctx.config.activity_root / relpath
-  path.write_text(_run_header(verb, app_id, "running", started, None, args))
+  path.write_text(_run_header(verb, app_id, started, args))
   return relpath
 
 
@@ -122,20 +127,18 @@ def finish_run(
   ctx: HarborCtx,
   relpath: str,
   verb: str,
-  args: dict[str, str],
   *,
   app_id: AppID | None,
   status: str,
   started: datetime,
   finished: datetime,
-  output: str,
 ) -> None:
-  """Rewrite ``relpath`` with the final header and index the run."""
+  """Append the closing trailer to ``relpath`` and index the run."""
   path = ctx.config.activity_root / relpath
   path.parent.mkdir(parents=True, exist_ok=True)
-  text = output if output.endswith("\n") or not output else output + "\n"
-  path.write_text(_run_header(verb, app_id, status, started, finished, args) + text)
   duration_ms = max(0, int((finished - started).total_seconds() * 1000))
+  with open(path, "a", encoding="utf-8") as f:
+    f.write(_run_trailer(status, finished, duration_ms))
   ctx.activity_log.write(
     _index_key(app_id),
     json.dumps(
@@ -163,17 +166,19 @@ def record_run(
   The file is written first: an index record pointing at a file that never
   made it would be a lie, while a file the index missed is merely unlisted.
   """
-  relpath = _new_relpath(ctx, app_id, started, verb)
+  relpath = begin_run(ctx, verb, args, app_id=app_id, started=started)
+  if output:
+    text = output if output.endswith("\n") else output + "\n"
+    with open(ctx.config.activity_root / relpath, "a", encoding="utf-8") as f:
+      f.write(text)
   finish_run(
     ctx,
     relpath,
     verb,
-    args,
     app_id=app_id,
     status=status,
     started=started,
     finished=finished,
-    output=output,
   )
   return relpath
 

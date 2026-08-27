@@ -1,12 +1,12 @@
 import shlex
 
+from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import run_command
 from harbor.lib.stack import AppStack
-from harbor.ops.operation import BaseOp, logger
 
 
-class CmdOp(BaseOp):
+class CmdJob(Job):
   name = "cmd"
   description = "Run a command declared in a happ's manifest"
   required_args = ("app", "command")
@@ -16,7 +16,9 @@ class CmdOp(BaseOp):
     """`command` names an entry the happ's manifest already declares.
 
     Extra tokens in `args` are forwarded the same way the CLI's remainder is:
-    they cannot pick a different binary.
+    they cannot pick a different binary. A caller that starts from an argv
+    list must build `args` with `shlex.join`, so the split here recovers the
+    tokens exactly.
     """
     app = ctx.resolve_app(kwargs["app"])
     extra = []

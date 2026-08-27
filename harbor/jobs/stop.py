@@ -1,9 +1,9 @@
+from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import stop
-from harbor.ops.operation import BaseOp, logger
 
 
-class StopOp(BaseOp):
+class StopJob(Job):
   name = "stop"
   description = "Stop a running happ"
   required_args = ("app",)

@@ -1,9 +1,9 @@
+from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import stage
-from harbor.ops.operation import BaseOp, logger
 
 
-class StageOp(BaseOp):
+class StageJob(Job):
   name = "stage"
   description = "Install a happ into the run directory"
   required_args = ("app",)
