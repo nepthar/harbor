@@ -24,7 +24,8 @@ def register(subparsers) -> None:
     nargs=argparse.REMAINDER,
     help="Arguments forwarded to the command",
   )
-  # Like `logs`, this can stream or be interactive. No lock.
+  # Listing is a short read. Running holds the app lock so stage/start/stop
+  # of this app wait; the harbor lock is left free so other apps can proceed.
   parser.set_defaults(func=run)
 
 
@@ -37,7 +38,9 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
   extra = list(args.args or [])
   if extra and extra[0] == "--":
     extra = extra[1:]
-  raise SystemExit(run_command(app, args.cmd_name, extra, ctx))
+  with ctx.app_lock(app, f"cmd {app}"):
+    code = run_command(app, args.cmd_name, extra, ctx)
+  raise SystemExit(code)
 
 
 def _list_commands(app, ctx: HarborCtx, conn) -> None:

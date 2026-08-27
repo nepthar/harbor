@@ -70,6 +70,82 @@ def _run_file(directory: Path, started: datetime, verb: str) -> Path:
   return path
 
 
+def _run_header(
+  verb: str,
+  app_id: AppID | None,
+  status: str,
+  started: datetime,
+  finished: datetime | None,
+  args: dict[str, str],
+) -> str:
+  who = f" {app_id}" if app_id else ""
+  lines = [f"# harbor {verb}{who} — {status}"]
+  time_line = f"# started {started.isoformat(timespec='seconds')}"
+  if finished is not None:
+    time_line += f" · finished {finished.isoformat(timespec='seconds')}"
+  lines.append(time_line)
+  arg_text = " ".join(f"{k}={v}" for k, v in sorted(args.items()))
+  if arg_text:
+    lines.append(f"# args: {arg_text}")
+  return "\n".join(lines) + "\n\n"
+
+
+def _new_relpath(
+  ctx: HarborCtx, app_id: AppID | None, started: datetime, verb: str
+) -> str:
+  directory = ctx.config.activity_root / _dirname(app_id)
+  directory.mkdir(parents=True, exist_ok=True)
+  path = _run_file(directory, started, verb)
+  return f"{directory.name}/{path.name}"
+
+
+def begin_run(
+  ctx: HarborCtx,
+  verb: str,
+  args: dict[str, str],
+  *,
+  app_id: AppID | None,
+  started: datetime,
+) -> str:
+  """Create the run file so a live job can tee into it. Not indexed yet.
+
+  Returns the path relative to the activity root. `finish_run` rewrites this
+  same file with the final header and adds the index row.
+  """
+  relpath = _new_relpath(ctx, app_id, started, verb)
+  path = ctx.config.activity_root / relpath
+  path.write_text(_run_header(verb, app_id, "running", started, None, args))
+  return relpath
+
+
+def finish_run(
+  ctx: HarborCtx,
+  relpath: str,
+  verb: str,
+  args: dict[str, str],
+  *,
+  app_id: AppID | None,
+  status: str,
+  started: datetime,
+  finished: datetime,
+  output: str,
+) -> None:
+  """Rewrite ``relpath`` with the final header and index the run."""
+  path = ctx.config.activity_root / relpath
+  path.parent.mkdir(parents=True, exist_ok=True)
+  text = output if output.endswith("\n") or not output else output + "\n"
+  path.write_text(_run_header(verb, app_id, status, started, finished, args) + text)
+  duration_ms = max(0, int((finished - started).total_seconds() * 1000))
+  ctx.activity_log.write(
+    _index_key(app_id),
+    json.dumps(
+      {"verb": verb, "status": status, "ms": duration_ms, "log": relpath},
+      separators=(",", ":"),
+    ),
+  )
+  _prune(path.parent)
+
+
 def record_run(
   ctx: HarborCtx,
   verb: str,
@@ -87,32 +163,18 @@ def record_run(
   The file is written first: an index record pointing at a file that never
   made it would be a lie, while a file the index missed is merely unlisted.
   """
-  directory = ctx.config.activity_root / _dirname(app_id)
-  directory.mkdir(parents=True, exist_ok=True)
-  path = _run_file(directory, started, verb)
-
-  arg_text = " ".join(f"{k}={v}" for k, v in sorted(args.items()))
-  header = [
-    f"# harbor {verb}{f' {app_id}' if app_id else ''} — {status}",
-    f"# started {started.isoformat(timespec='seconds')}"
-    f" · finished {finished.isoformat(timespec='seconds')}",
-  ]
-  if arg_text:
-    header.append(f"# args: {arg_text}")
-  text = output if output.endswith("\n") or not output else output + "\n"
-  path.write_text("\n".join(header) + "\n\n" + text)
-
-  relpath = f"{directory.name}/{path.name}"
-  duration_ms = max(0, int((finished - started).total_seconds() * 1000))
-  ctx.activity_log.write(
-    _index_key(app_id),
-    json.dumps(
-      {"verb": verb, "status": status, "ms": duration_ms, "log": relpath},
-      separators=(",", ":"),
-    ),
+  relpath = _new_relpath(ctx, app_id, started, verb)
+  finish_run(
+    ctx,
+    relpath,
+    verb,
+    args,
+    app_id=app_id,
+    status=status,
+    started=started,
+    finished=finished,
+    output=output,
   )
-
-  _prune(directory)
   return relpath
 
 

@@ -342,6 +342,35 @@ def test_a_failed_job_still_files_activity_with_its_error(harbor_env, client, jo
   assert "admin_user is unset" in body["text"]
 
 
+def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
+  """The UI polls `job.log` while a command runs; the file must already exist
+  and already contain what has been printed."""
+  import logging
+
+  from harbor.daemon import jobs as jobs_mod
+
+  def run(ctx, args):
+    logging.getLogger("harbor").info("live line")
+    running = [job for job in jobs.list() if job["state"] == "running"]
+    assert len(running) == 1
+    assert running[0]["log"]
+    text = (ctx.config.activity_root / running[0]["log"]).read_text()
+    assert "— running" in text
+    assert "live line" in text
+    return "done"
+
+  monkeypatch.setitem(jobs_mod.VERBS, "stage", jobs_mod.Verb(run))
+  job = jobs.submit("stage", {"app": "basic-features"})
+  jobs.run_pending()
+  finished = jobs.get(job["id"])
+  assert finished is not None
+  assert finished["state"] == "done"
+  body = (harbor_env.root / "var" / "logs" / finished["log"]).read_text()
+  assert "— ok" in body
+  assert "live line" in body
+  assert "done" in body
+
+
 def test_activity_log_rejects_a_bad_name(harbor_env, client):
   assert client.get("/activity/demo.app/nope.log").status_code == 404
   assert client.get("/activity/demo.app/..%2F..%2Fetc%2Fpasswd").status_code == 404

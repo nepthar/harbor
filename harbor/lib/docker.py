@@ -163,10 +163,10 @@ def docker_run_command(
 
   sink = _output_sink.get() if not json_output else None
   if sink is not None:
-    # Streamed output with nowhere to stream: merge the two channels so the
-    # sink reads the way a terminal would have, and hand the error a tail of
-    # it -- "see the docker output above" points at a terminal nobody has.
-    result = subprocess.run(
+    # Stream into the sink as the child writes so a job's log file can be
+    # polled while the command is still running. Merge stderr so the sink
+    # reads the way a terminal would have.
+    proc = subprocess.Popen(
       full,
       cwd=cwd,
       stdout=subprocess.PIPE,
@@ -174,11 +174,24 @@ def docker_run_command(
       text=True,
       env=run_env,
     )
-    if result.stdout:
-      sink.write(result.stdout)
-    if check and result.returncode != 0:
-      raise DockerError(cmd, result.returncode, result.stdout[-_ERROR_TAIL:])
-    return DockerReturn(returncode=result.returncode, data=[])
+    stdout = proc.stdout
+    assert stdout is not None
+    chunks: list[str] = []
+    try:
+      while True:
+        chunk = stdout.read(4096)
+        if not chunk:
+          break
+        sink.write(chunk)
+        sink.flush()
+        chunks.append(chunk)
+    finally:
+      stdout.close()
+      proc.wait()
+    text = "".join(chunks)
+    if check and proc.returncode != 0:
+      raise DockerError(cmd, proc.returncode, text[-_ERROR_TAIL:])
+    return DockerReturn(returncode=proc.returncode or 0, data=[])
 
   if not json_output:
     # The child is about to write to the same stdout harbor has been buffering

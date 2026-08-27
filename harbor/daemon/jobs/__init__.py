@@ -87,8 +87,8 @@ class Job:
 
 
 @contextmanager
-def _capture_harbor_logging(buffer: io.StringIO) -> Iterator[None]:
-  """Tee `harbor.*` log records into `buffer` for the duration.
+def _capture_harbor_logging(stream: io.TextIOBase) -> Iterator[None]:
+  """Tee `harbor.*` log records into `stream` for the duration.
 
   This is what puts a verb's progress -- the container steps in `rootfs.py`,
   route-provider chatter -- into the job record instead of only on harbord's
@@ -96,7 +96,7 @@ def _capture_harbor_logging(buffer: io.StringIO) -> Iterator[None]:
   INFO while a job runs; the worker is serial, so the widening never spans two
   jobs.
   """
-  handler = logging.StreamHandler(buffer)
+  handler = logging.StreamHandler(stream)
   handler.setLevel(logging.INFO)
   handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
   harbor_logger = logging.getLogger("harbor")
@@ -109,6 +109,23 @@ def _capture_harbor_logging(buffer: io.StringIO) -> Iterator[None]:
   finally:
     harbor_logger.removeHandler(handler)
     harbor_logger.setLevel(previous_level)
+
+
+class _Tee(io.TextIOBase):
+  """Memory capture plus a flushed log file, so a poller can read mid-run."""
+
+  def __init__(self, memory: io.StringIO, log: io.TextIOBase) -> None:
+    self._memory = memory
+    self._log = log
+
+  def write(self, s: str) -> int:
+    self._memory.write(s)
+    self._log.write(s)
+    self._log.flush()
+    return len(s)
+
+  def flush(self) -> None:
+    self._log.flush()
 
 
 @dataclass(frozen=True)
@@ -250,11 +267,21 @@ class JobRunner:
     started = datetime.now(UTC)
     captured = io.StringIO()
     ctx = None
+    relpath = None
+    log_file = None
     try:
       ctx = self._ctx_factory()
+      app_id = self._record_app(ctx, args)
+      relpath = activity.begin_run(ctx, verb, args, app_id=app_id, started=started)
+      with self._lock:
+        job.log = relpath
+      log_file = open(
+        ctx.config.activity_root / relpath, "a", encoding="utf-8", buffering=1
+      )
+      tee = _Tee(captured, log_file)
       with (
-        _capture_harbor_logging(captured),
-        sink_output(captured),
+        _capture_harbor_logging(tee),
+        sink_output(tee),
       ):
         output, error = VERBS[verb].run(ctx, args), None
     except (ValueError, RuntimeError) as e:
@@ -262,19 +289,61 @@ class JobRunner:
     except Exception as e:  # noqa: BLE001 - a crashed worker would strand every later job
       logger.exception("job %s (%s) raised", job_id, verb)
       output, error = "", f"{type(e).__name__}: {e}"
+    finally:
+      if log_file is not None:
+        log_file.close()
 
     finished = datetime.now(UTC)
     # Progress first, the verb's own summary last -- the order a terminal
     # would have shown them in.
     output = "\n".join(part for part in (captured.getvalue().rstrip(), output) if part)
-    log_path = self._record(ctx, verb, args, error, started, finished, output)
+    if ctx is not None and relpath is not None:
+      self._finish(
+        ctx,
+        relpath,
+        verb,
+        args,
+        error,
+        started,
+        finished,
+        output,
+      )
+    else:
+      relpath = self._record(ctx, verb, args, error, started, finished, output)
 
     with self._lock:
       job.state = FAILED if error else DONE
       job.output = output
       job.error = error
       job.finished_at = _now()
-      job.log = log_path
+      job.log = relpath
+
+  def _finish(
+    self,
+    ctx: HarborCtx,
+    relpath: str,
+    verb: str,
+    args: dict[str, str],
+    error: str | None,
+    started: datetime,
+    finished: datetime,
+    output: str,
+  ) -> None:
+    """Rewrite the live file with the final header and index it. Never fails the job."""
+    try:
+      activity.finish_run(
+        ctx,
+        relpath,
+        verb,
+        args,
+        app_id=self._record_app(ctx, args),
+        status=activity.ERROR if error else activity.OK,
+        started=started,
+        finished=finished,
+        output="\n".join(part for part in (output, error) if part),
+      )
+    except Exception:  # noqa: BLE001 - the job itself already succeeded or failed on its own terms
+      logger.exception("could not record activity for `%s`", verb)
 
   def _record(
     self,

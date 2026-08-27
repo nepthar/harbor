@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import string
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Protocol
 
@@ -17,6 +18,8 @@ _GITHUB_USER_RE = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?\Z")
 _GITHUB_REPO_RE = re.compile(r"[a-zA-Z0-9._-]+\Z")
 _GITHUB_SEGMENT_MAX_LEN = 100
 
+def now_ts() -> str:
+  return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 def refuse_root(who: str) -> None:
   """Refuse to keep going when the effective uid is 0.

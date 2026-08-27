@@ -3,8 +3,10 @@ import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
+
+from harbor.lib.util import now_ts
 
 logger = logging.getLogger("harbor.logtab")
 
@@ -44,14 +46,10 @@ class LogTab:
 
   FS = "\t"
   KEY_RE = re.compile(r"[a-zA-Z0-9_/.-]+\Z")
-  MAX_KEY_LENGTH = 2048
+  MAX_KEY_LENGTH = 512
   MAX_VAL_LENGTH = 2048
 
   OPERATIONS = set(["set", "del", "clr"])
-
-  @staticmethod
-  def ts() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
   @staticmethod
   def validate_key(key: str):
@@ -77,7 +75,7 @@ class LogTab:
     LogTab.validate_key(key)
     LogTab.validate_operation(operation)
     LogTab.validate_value(value)
-    line = LogTab.FS.join((LogTab.ts(), operation, key, value))
+    line = LogTab.FS.join((now_ts(), operation, key, value))
 
     data = (line + "\n").encode()
     data_len = len(data)
@@ -120,7 +118,7 @@ class LogTab:
       header = []
       if title:
         header.append(f"# {title}")
-      header.append(f"# {path.name}, created {LogTab.ts()}")
+      header.append(f"# {path.name}, created {now_ts()}")
       header.append("# Format: <date>\\t<set|del|clr>\\t<key>\\t<value>\\n")
       header = "\n".join(header)
       with open(path, "w") as f:
@@ -253,7 +251,7 @@ class LogTab:
 
     compact_path = self.path.with_name(self.path.name + ".compact")
     lines = [
-      f"# Compacted logtab at {LogTab.ts()}",
+      f"# Compacted logtab at {now_ts()}",
       "# Format: <date>\\t<set|del|clr>\\t<key>\\t<value>\\n",
     ]
     for rec in backfill:

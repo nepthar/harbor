@@ -11,7 +11,6 @@ from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.happ import app_id_from_path, is_pathlike, load_happ
 from harbor.lib.harbor import HarborCtx, StagedAppPaths
 from harbor.lib.lifecycle._common import logger, managed_volume_dirs
-from harbor.lib.logtab import LogTab
 from harbor.lib.run_layout import (
   AppRunData,
   AssignedRoute,
@@ -21,7 +20,7 @@ from harbor.lib.run_layout import (
 )
 from harbor.lib.secrets import SecretGenerationError, generate_secret
 from harbor.lib.stack import AppStack
-from harbor.lib.util import validate_identifier
+from harbor.lib.util import now_ts, validate_identifier
 
 # Scratch names used while swapping in a new happ copy. Both are inside the run
 # dir so the swap is a rename on one filesystem rather than a second copy.
@@ -459,6 +458,6 @@ def stage(
     record_app_action("stage-failed", app, ctx)
     raise
 
-  store.set_meta("staged_at", LogTab.ts())
+  store.set_meta("staged_at", now_ts())
   record_app_action("staged", app, ctx)
   return StageSuccess(stack, run_data, dropped)

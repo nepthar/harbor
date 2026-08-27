@@ -19,6 +19,7 @@ from harbor import VERSION
 from harbor.daemon.jobs import JobRunner
 from harbor.lib.config import Config, load_config
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.util import refuse_root
 
 try:
   import uvicorn
@@ -192,6 +193,7 @@ def main() -> None:
   config_args = {"config_path": args.config, "root": args.root}
 
   try:
+    refuse_root("harbord")
     config = load_config(**config_args)
     if config is None:
       raise RuntimeError("Harbor is not initialized; run `harbor init` first")

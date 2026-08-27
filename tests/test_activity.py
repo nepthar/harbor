@@ -124,3 +124,41 @@ def test_two_runs_in_one_second_do_not_collide(ctx):
   assert (ctx.config.activity_root / a).read_text() != (
     ctx.config.activity_root / b
   ).read_text()
+
+
+def test_begin_run_is_readable_before_finish(ctx):
+  started = datetime(2026, 8, 25, 3, 30, tzinfo=UTC)
+  relpath = activity.begin_run(
+    ctx,
+    "cmd",
+    {"app": "demo.app", "command": "ping"},
+    app_id=AppID("demo.app"),
+    started=started,
+  )
+  path = ctx.config.activity_root / relpath
+  assert "— running" in path.read_text()
+  assert activity.list_runs(ctx) == []
+
+  with path.open("a") as log:
+    log.write("pong\n")
+  assert "pong" in activity.read_run_log(ctx, "demo.app", path.name)
+
+  finished = started + timedelta(seconds=1)
+  activity.finish_run(
+    ctx,
+    relpath,
+    "cmd",
+    {"app": "demo.app", "command": "ping"},
+    app_id=AppID("demo.app"),
+    status=activity.OK,
+    started=started,
+    finished=finished,
+    output="pong\n",
+  )
+  body = path.read_text()
+  assert "— ok" in body
+  assert "pong" in body
+  runs = activity.list_runs(ctx)
+  assert len(runs) == 1
+  assert runs[0]["log"] == relpath
+  assert runs[0]["status"] == "ok"

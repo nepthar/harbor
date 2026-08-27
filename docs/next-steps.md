@@ -63,9 +63,6 @@ submitted through harbord cannot answer one, and a question asked on every
 
 ## Smaller known gaps
 
-- **`harbord` does not refuse to run as root.** `refuse_root` exists in
-  `lib/util.py` and the CLI calls it; wiring `daemon/server.py` to it is one
-  line, left over from the daemon not existing on the branch that added it.
 - **No systemd unit.** `harbord` is foreground-only and dies with its shell.
 - **The web UI has no authentication.** Anything that can open `admin.sock`
   runs every verb the API exposes. Fine over an ssh tunnel; not fine on a
@@ -74,13 +71,11 @@ submitted through harbord cannot answer one, and a question asked on every
   things that already exist, so an unauthenticated caller can now pull code
   from GitHub into the apps root. It still cannot stage or start it. FastAPI
   also left `/docs`, `/redoc`, and `/openapi.json` on that same surface.
-- **A `cmd` job holds the app and harbor locks for the command's whole run.**
-  The CLI's `harbor cmd` takes no lock precisely because a command can stream
-  or be interactive; the daemon's `JobRunner` locks, so a command run from the
-  UI blocks that app (and harbor-wide ops) until it exits. Fine for the
-  batch-style commands the UI is for; a long-runner would wedge the queue.
-  The runner also allocates no TTY, so a command that waits on stdin hangs
-  rather than prompting.
+- **A `cmd` job holds the app lock for the command's whole run.** Harbor-wide
+  ops can proceed; the same app cannot be staged, started, or stopped until it
+  exits. Fine for the batch-style commands the UI is for; a long-runner still
+  wedges that app. The runner also allocates no TTY, so a command that waits
+  on stdin hangs rather than prompting.
 - **Only daemon jobs file activity output.** A CLI invocation prints to the
   operator's terminal and records only its status line in `activity.logtab`;
   whether to also tee it into `$harbor/var/logs` is undecided. The UI's Activity
@@ -93,8 +88,6 @@ submitted through harbord cannot answer one, and a question asked on every
 - **Volume sizes are computed per request.** `views.app_view` walks every file
   under a volume, so the app detail page pays for it on every load and the list
   view omits sizes entirely to stay cheap.
-- **`activity.logtab` grows without bound** — status lines per app action, and
-  harbord files a run record per job.
 - **Rootless docker breaks snapshot and restore silently.** `lib/lifecycle/
   rootfs.py` assumes the container's root can read root-owned volume files;
   under userns that maps back to the invoking user. Nothing checks.

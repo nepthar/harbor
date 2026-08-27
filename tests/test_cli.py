@@ -1333,6 +1333,19 @@ def test_every_command_refuses_to_run_as_root(harbor_env, monkeypatch):
     assert "refuses to run as root" in refused.stderr, argv
 
 
+def test_harbord_refuses_to_run_as_root(monkeypatch, capsys):
+  import sys
+
+  from harbor.daemon.server import main as harbord_main
+
+  monkeypatch.setattr(os, "geteuid", lambda: 0)
+  monkeypatch.setattr(sys, "argv", ["harbord"])
+  with pytest.raises(SystemExit) as exit_info:
+    harbord_main()
+  assert exit_info.value.code == 1
+  assert "harbord refuses to run as root" in capsys.readouterr().err
+
+
 # --- activity --------------------------------------------------------------
 
 

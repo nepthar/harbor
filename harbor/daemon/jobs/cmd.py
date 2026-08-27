@@ -23,7 +23,7 @@ def run(ctx: HarborCtx, args: dict[str, str]) -> str:
       raise ValueError(f"Could not parse arguments: {e}") from e
 
   app = ctx.resolve_app(args["app"])
-  with ctx.locked(f"cmd {app}", app):
+  with ctx.app_lock(app, f"cmd {app}"):
     code = run_command(app, args["command"], extra, ctx)
     if code != 0:
       raise ValueError(
