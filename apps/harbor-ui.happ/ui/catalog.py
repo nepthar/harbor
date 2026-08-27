@@ -133,10 +133,10 @@ def catalog_conflict_note(app):
 
 
 def catalog_actions(app):
-  """Re-stage from the catalog. Starting is the app page's job, not this one.
+  """Reinstall from the catalog. Starting is the app page's job, not this one.
 
-  `stage` is the same verb the app page's Re-stage button posts, so an app
-  installed here lands in exactly the state `harbor stage` leaves it in.
+  `install` is the same verb the app page's Reinstall button posts, so an app
+  installed here lands in exactly the state `harbor install` leaves it in.
   """
   if app.get("configured") is None:
     return ""
@@ -161,7 +161,7 @@ def catalog_actions(app):
   return (
     f'<div class="row actions">'
     f'<form method="post" action="/apps/{quote(app_id)}">'
-    f'<input type="hidden" name="action" value="stage">'
+    f'<input type="hidden" name="action" value="install">'
     f'<button type="submit">{label}</button></form>'
     f"{update}"
     f"</div>"

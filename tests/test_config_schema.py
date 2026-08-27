@@ -148,4 +148,4 @@ def test_store_keeps_binds_and_meta(tmp_path):
 
   assert store.list_binds() == {"media": "nas_media"}
   assert store.get_meta("origin") == "/harbor/apps/io.test.example.happ"
-  assert store.get_meta("staged_at") is None
+  assert store.get_meta("installed_at") is None

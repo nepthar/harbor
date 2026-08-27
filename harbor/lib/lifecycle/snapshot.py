@@ -145,7 +145,7 @@ def snapshot(
   paths = ctx.staged_paths(app)
 
   if not paths.run_path.exists():
-    raise ValueError(f"App {app} is not staged and therefore cannot be snapshotted")
+    raise ValueError(f"App {app} is not installed and therefore cannot be snapshotted")
 
   try:
     running_count = ctx.run_state(app).running_count

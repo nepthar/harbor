@@ -3,9 +3,9 @@ from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import stage
 
 
-class StageJob(Job):
-  name = "stage"
-  description = "Install a happ into the run directory"
+class InstallJob(Job):
+  name = "install"
+  description = "Install a fetched happ so it can be started"
   required_args = ("app",)
 
   def init(self, ctx: HarborCtx, kwargs: dict[str, str]) -> None:
@@ -17,7 +17,7 @@ class StageJob(Job):
     app = self.app_id
     with ctx.locked(f"stage {app}", app):
       result = stage(app, ctx.bundle_path(app), ctx)
-      lines = [f"Staged {app} at {ctx.run_path(app)}"]
+      lines = [f"Installed {app} at {ctx.run_path(app)}"]
       lines += [
         f"  volume {name} is no longer declared in the manifest; its link is gone "
         f"but its data was left in place"

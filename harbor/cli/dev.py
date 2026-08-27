@@ -9,9 +9,9 @@ from harbor.lib.util import Conn
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "dev",
-    help="Run a staged app in this terminal with its happ mounted from source",
+    help="Run an installed app in this terminal with its happ mounted from source",
   )
-  parser.add_argument("app", metavar="APP", help="App ID of a staged app")
+  parser.add_argument("app", metavar="APP", help="App ID of an installed app")
   parser.add_argument(
     "--routes",
     action="store_true",
@@ -47,7 +47,7 @@ def _confirmed(plan: DevPlan, conn: Conn) -> bool:
     f"{plan.app_id}'s manifest has changed since it was staged:\n"
     f"  source: {plan.source / 'manifest.toml'}\n"
     f"  staged: {plan.run_path / 'happ' / 'manifest.toml'}\n"
-    f"Run `harbor stage {plan.app_id}` to update it. Until then this dev run "
+    f"Run `harbor install {plan.app_id}` to update it. Until then this dev run "
     f"uses the staged copy: images, env, ports and mounts are all from it."
   )
   try:
@@ -82,7 +82,7 @@ def _receipt(plan: DevPlan, ctx: HarborCtx) -> str:
     rows.append(
       (
         "Note:",
-        f"manifest has changed, `harbor stage {plan.app_id}` may be required "
+        f"manifest has changed, `harbor install {plan.app_id}` may be required "
         f"to reflect changes",
       )
     )

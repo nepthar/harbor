@@ -46,7 +46,7 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 def _list_commands(app, ctx: HarborCtx, conn) -> None:
   paths = ctx.staged_paths(app)
   if not paths.compose_path.is_file():
-    raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
+    raise ValueError(f"App {app} is not installed; run `harbor install {app}` first")
 
   stack = AppStack.from_file(paths.manifest_path, app)
   if not stack.commands:

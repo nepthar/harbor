@@ -132,7 +132,7 @@ def test_scan_happs_prefers_the_folder_flavor(tmp_path: Path):
 def test_stage_md_happ_from_catalog(harbor_env):
   write_md_happ(harbor_env.root / "apps")
 
-  result = harbor_env.run("stage", "md-demo")
+  result = harbor_env.run("install", "md-demo")
   assert result.returncode == 0, result.stderr
 
   happ_dir = harbor_env.run_root / "md-demo" / "happ"
@@ -143,7 +143,7 @@ def test_stage_md_happ_from_catalog(harbor_env):
 def test_stage_md_happ_by_path_links_catalog_entry(harbor_env):
   source = write_md_happ(harbor_env.root / "elsewhere")
 
-  result = harbor_env.run("stage", str(source))
+  result = harbor_env.run("install", str(source))
   assert result.returncode == 0, result.stderr
 
   entry = harbor_env.root / "apps" / "md-demo.happ.md"
@@ -157,7 +157,7 @@ def test_two_flavors_of_one_id_make_it_ambiguous(harbor_env):
   # ports-demo.happ (a fixture directory) already owns this id.
   write_md_happ(harbor_env.root / "apps", app_id="ports-demo")
 
-  by_id = harbor_env.run("stage", "ports-demo")
+  by_id = harbor_env.run("install", "ports-demo")
   assert by_id.returncode == 1
   assert "Multiple apps matched" in by_id.stderr
 
@@ -170,7 +170,7 @@ def test_a_full_path_picks_the_flavor_to_stage(harbor_env):
   write_md_happ(harbor_env.root / "apps", app_id="ports-demo")
   md = harbor_env.root / "apps" / "ports-demo.happ.md"
 
-  result = harbor_env.run("stage", str(md))
+  result = harbor_env.run("install", str(md))
   assert result.returncode == 0, result.stderr
   # The md flavor's manifest, not the fixture directory's.
   staged = harbor_env.run_root / "ports-demo" / "happ" / "manifest.toml"
@@ -183,7 +183,7 @@ def test_invalid_md_happ_fails_stage_and_leaves_no_run_dir(harbor_env):
   bad = harbor_env.root / "apps" / "broken.happ.md"
   bad.write_text("just prose, no files\n")
 
-  result = harbor_env.run("stage", "broken")
+  result = harbor_env.run("install", "broken")
   assert result.returncode == 1
   assert "does not contain any files" in result.stderr
   assert not (harbor_env.run_root / "broken").exists()

@@ -263,7 +263,7 @@ def _load_volume_links(
         issues.append(
           ConfigIssue(
             f"volume {volume_name}: host path does not exist: {source}",
-            f"re-stage with `harbor stage {app_id}` or this might be a bug.",
+            f"reinstall with `harbor install {app_id}` or this might be a bug.",
           )
         )
         continue

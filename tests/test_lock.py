@@ -63,7 +63,7 @@ def test_the_lock_timeout_message_names_the_holder(harbor_env):
 def test_the_recorded_holder_is_the_command_not_the_argv(harbor_env):
   """`config --set k=secret` must never put the value in the lockfile."""
   app_id = "io.p2net.basic-features"
-  assert harbor_env.run("stage", app_id).returncode == 0
+  assert harbor_env.run("install", app_id).returncode == 0
   assert harbor_env.run("config", app_id, "--set", "admin_pass=hunter2").returncode == 0
 
   recorded = harbor_env.harbor_lockfile_path.read_text()
@@ -125,7 +125,7 @@ def test_cmd_does_not_hold_the_harbor_lock(harbor_env):
 def test_cmd_holds_the_app_lock(harbor_env):
   """The same app cannot be started while a command is running; others can."""
   _stage_cmd_demo(harbor_env)
-  assert harbor_env.run("stage", "routes-demo").returncode == 0
+  assert harbor_env.run("install", "routes-demo").returncode == 0
   lock = FileLock(harbor_env.app_lockfile_path("cmd-demo"))
   with lock:
     blocked = harbor_env.run("cmd", "cmd-demo", "ping")
@@ -152,7 +152,7 @@ cmd = ["/bin/sh", "-c", "sleep infinity"]
 cmd = "echo pong"
 """
   )
-  assert harbor_env.run("stage", "cmd-demo").returncode == 0
+  assert harbor_env.run("install", "cmd-demo").returncode == 0
 
 
 def test_logs_does_not_hold_the_harbor_lock(harbor_env):
@@ -176,7 +176,7 @@ def test_logs_does_not_hold_the_harbor_lock(harbor_env):
 
 def test_an_app_lock_does_not_block_another_app(harbor_env):
   """The point of per-app locks: snapshotting A must not stall start B."""
-  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  assert harbor_env.run("install", "ports-demo").returncode == 0
   lock = FileLock(harbor_env.app_lockfile_path("ports-demo"))
   with lock:
     started = harbor_env.run("start", "routes-demo")
@@ -202,7 +202,7 @@ def test_snapshot_releases_harbor_while_copying(harbor_env, monkeypatch):
 
   snapshot_mod = importlib.import_module("harbor.lib.lifecycle.snapshot")
 
-  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  assert harbor_env.run("install", "ports-demo").returncode == 0
   original = snapshot_mod.snapshot
 
   def during_copy(app, ctx, label=""):

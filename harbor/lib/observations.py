@@ -29,6 +29,12 @@ class RunState:
     return sum(container.state.lower() == "running" for container in self.containers)
 
 
+# Where an app stands, as one word.
+INSTALLED = "installed"  # there is a run dir harbor can start from
+UNINSTALLED = "uninstalled"  # no run dir, but harbor still holds state for it
+AVAILABLE = "available"  # a catalog entry and nothing else
+
+
 @dataclass(frozen=True)
 class AppObservation:
   """A union of every possible place an app can leave a trace - for diagnostics and status"""
@@ -38,6 +44,7 @@ class AppObservation:
   run_dir_exists: bool
   compose_exists: bool
   config_exists: bool
+  volumes_exist: bool
   containers: tuple[HarborRunUnitStatus, ...]
   db_present: bool
   last_action: str | None
@@ -47,12 +54,31 @@ class AppObservation:
     return sum(container.state.lower() == "running" for container in self.containers)
 
   @property
+  def state(self) -> str:
+    """`installed`, `uninstalled`, or `available`.
+
+    `uninstalled` is the state `harbor uninstall` leaves behind: the
+    installation is gone, but the data, config and address it kept are all
+    still here, which is what makes reinstalling pick up where it left off.
+    """
+    if self.run_dir_exists or self.containers:
+      return INSTALLED
+    # Config and volumes are what `uninstall` keeps, so they are what makes
+    # this the uninstalled state rather than nothing. A lone harbordb row is
+    # not: that is an orphan for `doctor` to report, not a kept app.
+    if self.config_exists or self.volumes_exist:
+      return UNINSTALLED
+    return AVAILABLE
+
+  @property
   def installed(self) -> bool:
+    return self.state == INSTALLED
+
+  @property
+  def known(self) -> bool:
     """Whether this id is more than a catalog entry -- something harbor put
     on disk, in docker, or in its own db."""
-    return bool(
-      self.run_dir_exists or self.config_exists or self.containers or self.db_present
-    )
+    return self.state != AVAILABLE or self.db_present
 
   @property
   def status(self) -> str:
@@ -61,7 +87,7 @@ class AppObservation:
       return "running"
     if self.containers:
       return "exited"
-    return "stopped"
+    return UNINSTALLED if self.state == UNINSTALLED else "stopped"
 
   @property
   def run_display(self) -> str:
@@ -105,6 +131,11 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
       run_dir_exists=paths.run_path.is_dir(),
       compose_exists=paths.compose_path.is_file(),
       config_exists=raw_id in config_ids,
+      # Spelled out rather than borrowing `lifecycle.managed_volume_dirs`,
+      # which would import back through HarborCtx into this module.
+      volumes_exist=any(
+        (root / raw_id).is_dir() for root in ctx.config.volume_roots.values()
+      ),
       containers=docker.get(raw_id, ()),
       db_present=raw_id in db_ids,
       last_action=action[1] if action else None,

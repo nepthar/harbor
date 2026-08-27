@@ -57,7 +57,7 @@ def _dev_source(app: AppID, ctx: HarborCtx) -> Path:
   origin = ctx.staged_origin(app)
   if origin is None:
     raise ValueError(
-      f"App {app} has no recorded origin; re-stage it with `harbor stage {app}`"
+      f"App {app} has no recorded origin; reinstall it with `harbor install {app}`"
     )
   if (
     not origin.name.endswith(HAPP_SUFFIX)
@@ -75,7 +75,7 @@ def dev_plan(app: AppID, ctx: HarborCtx, *, publish_routes: bool = False) -> Dev
   """Work out what a dev run would mount, and refuse if it cannot run at all."""
   paths = ctx.staged_paths(app)
   if not paths.exists() or not paths.compose_path.is_file():
-    raise ValueError(f"App {app} is not staged; run `harbor stage {app}` first")
+    raise ValueError(f"App {app} is not installed; run `harbor install {app}` first")
 
   running = ctx.run_state(app).running_count
   if running:
@@ -131,7 +131,7 @@ def source_volume_links(plan: DevPlan) -> Iterator[None]:
   What goes back is read off each link beforehand rather than recomputed, so
   restoring cannot drift from what `stage` built. A dev run that dies without
   running this (a kill -9, a lost terminal) leaves the links pointing at the
-  source; `harbor stage` rebuilds them.
+  source; `harbor install` rebuilds them.
   """
   saved: list[tuple[Path, Path, Path]] = []
   for name, target in plan.mounts.items():
@@ -139,7 +139,7 @@ def source_volume_links(plan: DevPlan) -> Iterator[None]:
     if not link.is_symlink():
       raise ValueError(
         f"App {plan.app_id} - volume {name}: {link} is not a link; "
-        f"re-stage with `harbor stage {plan.app_id}`"
+        f"reinstall with `harbor install {plan.app_id}`"
       )
     saved.append((link, link.readlink(), target))
 

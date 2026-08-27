@@ -559,7 +559,7 @@ def test_fetch_installs_a_happ(github, ctx, harbor_env):
   assert (installed / "manifest.toml").read_bytes() == MANIFEST
   assert "alpine:latest" in conn.text
   assert f"nepthar/harbor@{SHA[:8]}" in conn.text
-  assert "Installed hello-world" in conn.text
+  assert "App hello-world is now available for install" in conn.text
   record = ctx.harbor_db.get_app_source("hello-world")
   assert record == {
     "source": TARGET,
@@ -597,7 +597,7 @@ def test_declining_installs_nothing_and_leaves_no_scratch_dir(github, ctx, harbo
   apps_root = harbor_env.root / "apps"
   assert not (apps_root / "hello-world.happ").exists()
   assert list(apps_root.glob(".fetch-*")) == []
-  assert "Not installed." in conn.text
+  assert "Not fetched." in conn.text
 
 
 def test_yes_skips_the_prompt(github, ctx, harbor_env):
@@ -707,7 +707,7 @@ def test_fetch_installs_an_md_happ(github, ctx, harbor_env):
   installed = harbor_env.root / "apps" / "hello-md.happ.md"
   assert installed.read_bytes() == MD_HAPP
   assert "alpine:latest" in conn.text
-  assert "Installed hello-md" in conn.text
+  assert "App hello-md is now available for install" in conn.text
 
 
 def test_a_fetched_md_happ_is_an_ordinary_happ(github, ctx, harbor_env):
@@ -840,7 +840,7 @@ def test_fetch_app_id_does_not_touch_the_run_dir(github, ctx, harbor_env):
     harbor_env.run_root / "hello-world" / "happ" / "manifest.toml"
   ).read_bytes() == staged
   assert "harbor snapshot hello-world" in conn.text
-  assert "harbor stage hello-world" in conn.text
+  assert "harbor install hello-world" in conn.text
   assert "harbor start hello-world" in conn.text
 
 
@@ -1066,7 +1066,7 @@ def test_fetch_job_installs_and_records_its_source(github, api_client, ctx, harb
 
   assert job["state"] == "done", job["error"]
   log_text = (ctx.config.activity_root / job["log"]).read_text()
-  assert "Installed hello-world" in log_text
+  assert "App hello-world is now available for install" in log_text
   installed = harbor_env.root / "apps" / "hello-world.happ"
   assert (installed / "manifest.toml").read_bytes() == MANIFEST
   assert ctx.harbor_db.get_app_source("hello-world") == {

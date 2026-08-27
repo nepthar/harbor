@@ -9,8 +9,8 @@ from harbor.lib.util import Conn
 
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
-    "stage",
-    help="Install a happ into run/ without starting it (accepts app id or .happ path)",
+    "install",
+    help="Install a fetched happ so it can be started (accepts app id or .happ path)",
   )
   parser.add_argument(
     "app",
@@ -38,5 +38,5 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
         f"volume {name} is no longer declared in the manifest; "
         f"its link is gone but its data was left in place"
       )
-    conn.out(f"Staged {app} at {ctx.run_path(app)}")
+    conn.out(f"Installed {app} at {ctx.run_path(app)}")
     conn.out(f"Start it with: harbor start {app}")

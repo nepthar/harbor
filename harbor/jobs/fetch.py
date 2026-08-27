@@ -13,7 +13,7 @@ from harbor.lib.harbor import HarborCtx
 
 class FetchJob(Job):
   name = "fetch"
-  description = "Install a happ from GitHub, or update one already fetched"
+  description = "Fetch a happ from GitHub, or update one already fetched"
   required_args = ("target",)
   optional_args = ("yes",)
 
@@ -62,7 +62,9 @@ class FetchJob(Job):
     with ctx.harbor_lock(f"fetch {self.target}"):
       if self.mode == "install":
         result = install_target(self.spec, self.pin, ctx)
-        logger.info("Installed %s at %s", result.app_id, result.path)
+        logger.info(
+          "App %s is now available for install, at %s", result.app_id, result.path
+        )
         return
 
       result = update_app(self.app_id, self.pin, ctx)
@@ -75,5 +77,7 @@ class FetchJob(Job):
         f" + {result.current}",
       ]
       if result.staged:
-        lines.append(f"Re-stage and restart to pick it up: harbor stage {self.app_id}")
+        lines.append(
+          f"Reinstall and restart to pick it up: harbor install {self.app_id}"
+        )
       logger.info("\n".join(lines))

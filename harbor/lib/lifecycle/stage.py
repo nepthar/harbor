@@ -455,9 +455,9 @@ def stage(
   try:
     run_data, dropped = materialize(stack, ctx)
   except Exception:
-    record_app_action("stage-failed", app, ctx)
+    record_app_action("install-failed", app, ctx)
     raise
 
-  store.set_meta("staged_at", now_ts())
-  record_app_action("staged", app, ctx)
+  store.set_meta("installed_at", now_ts())
+  record_app_action("installed", app, ctx)
   return StageSuccess(stack, run_data, dropped)

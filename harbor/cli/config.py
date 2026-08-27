@@ -22,7 +22,7 @@ def register(subparsers) -> None:
   parser.add_argument(
     "app",
     metavar="APP",
-    help="App ID of a staged happ, or of one in an app source",
+    help="App ID of an installed happ, or of one in an app source",
   )
   parser.add_argument(
     "--set",

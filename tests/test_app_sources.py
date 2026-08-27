@@ -144,7 +144,7 @@ def test_an_app_in_a_second_source_stages_by_id(harbor_env):
   a_happ(dev, "dev-app")
   add_source(harbor_env, "hrbr-dev", dev)
 
-  result = harbor_env.run("stage", "dev-app")
+  result = harbor_env.run("install", "dev-app")
 
   assert result.returncode == 0, result.stderr
   assert (harbor_env.run_root / "dev-app" / "compose.yml").is_file()
@@ -171,10 +171,10 @@ def test_catalog_names_the_source_of_every_app(harbor_env):
 
 
 def test_catalog_reports_the_last_action_as_status(harbor_env):
-  assert harbor_env.run("stage", "ports-demo").returncode == 0
+  assert harbor_env.run("install", "ports-demo").returncode == 0
 
   staged = _row(harbor_env.run("catalog").stdout, "ports-demo")
-  assert staged[2] == "staged"
+  assert staged[2] == "installed"
 
   assert harbor_env.run("start", "ports-demo").returncode == 0
   started = _row(harbor_env.run("catalog").stdout, "ports-demo")
@@ -211,11 +211,11 @@ def test_status_follows_the_bundle_that_is_actually_installed(harbor_env):
   # Re-stage from the other source and the status moves with it.
   assert harbor_env.run("stop", "ports-demo").returncode == 0
   from_apps = harbor_env.root / "apps" / "ports-demo.happ"
-  assert harbor_env.run("stage", str(from_apps)).returncode == 0
+  assert harbor_env.run("install", str(from_apps)).returncode == 0
 
   rows = _rows(harbor_env.run("catalog").stdout, "ports-demo")
   assert [(row[1], row[2]) for row in rows] == [
-    ("apps", "staged"),
+    ("apps", "installed"),
     ("hrbr-dev", "-"),
   ]
 
@@ -237,13 +237,13 @@ def test_a_bundle_symlinked_into_two_sources_counts_twice(harbor_env):
   entries = ctx_for(harbor_env).app_catalog()["dev-app"]
   assert [entry.source for entry in entries] == ["apps", "hrbr-dev"]
 
-  by_id = harbor_env.run("stage", "dev-app")
+  by_id = harbor_env.run("install", "dev-app")
   assert by_id.returncode == 1
   assert "Multiple apps matched" in by_id.stderr
 
-  assert harbor_env.run("stage", str(link)).returncode == 0
+  assert harbor_env.run("install", str(link)).returncode == 0
   rows = _rows(harbor_env.run("catalog").stdout, "dev-app")
-  assert [(row[1], row[2]) for row in rows] == [("apps", "staged"), ("hrbr-dev", "-")]
+  assert [(row[1], row[2]) for row in rows] == [("apps", "installed"), ("hrbr-dev", "-")]
 
 
 def test_doctor_reports_a_missing_app_source_directory(harbor_env):
@@ -263,7 +263,7 @@ def test_an_id_in_two_sources_cannot_be_staged_or_started_by_id(harbor_env):
   a_happ(dev, "ports-demo")  # apps/ports-demo.happ is a fixture happ
   add_source(harbor_env, "hrbr-dev", dev)
 
-  staged = harbor_env.run("stage", "ports-demo")
+  staged = harbor_env.run("install", "ports-demo")
   assert staged.returncode == 1
   assert "Multiple apps matched" in staged.stderr
   assert str(dev) in staged.stderr
@@ -290,7 +290,7 @@ def test_a_full_path_picks_which_source_to_stage(harbor_env):
   bundle = a_happ(dev, "ports-demo", display="From dev")
   add_source(harbor_env, "hrbr-dev", dev)
 
-  result = harbor_env.run("stage", str(bundle))
+  result = harbor_env.run("install", str(bundle))
 
   assert result.returncode == 0, result.stderr
   staged = harbor_env.run_root / "ports-demo" / "happ" / "manifest.toml"
@@ -305,12 +305,12 @@ def test_only_one_app_is_staged_per_id(harbor_env):
   bundle = a_happ(dev, "ports-demo", display="From dev")
   add_source(harbor_env, "hrbr-dev", dev)
 
-  assert harbor_env.run("stage", str(bundle)).returncode == 0
+  assert harbor_env.run("install", str(bundle)).returncode == 0
   staged = harbor_env.run_root / "ports-demo" / "happ" / "manifest.toml"
   assert "From dev" in staged.read_text()
 
   from_apps = harbor_env.root / "apps" / "ports-demo.happ"
-  assert harbor_env.run("stage", str(from_apps)).returncode == 0
+  assert harbor_env.run("install", str(from_apps)).returncode == 0
 
   assert "From dev" not in staged.read_text()
   assert [p.name for p in harbor_env.run_root.iterdir()] == ["ports-demo"]

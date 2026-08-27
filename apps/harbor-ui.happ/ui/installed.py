@@ -58,13 +58,13 @@ def apps_table(apps):
 
 
 def lifecycle_bar(app):
-  """Start, stop, stage, snapshot. Each posts a job and comes back with its id."""
+  """Start, stop, install, snapshot. Each posts a job and comes back with its id."""
   running = app["status"] == "running"
   staged = app.get("staged")
   buttons = [
     ("start", "Start", not running),
     ("stop", "Stop", running),
-    ("stage", "Re-stage", True),
+    ("install", "Reinstall", True),
     ("snapshot", "Snapshot", staged),
   ]
   return (

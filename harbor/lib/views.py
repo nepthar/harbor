@@ -83,7 +83,7 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
     "source": _catalog_origin(entry.app_id, ctx),
     "catalog": entry.source,
     "installed": installed,
-    "configured": _catalog_configured(stack, store) if stack else None,
+    "configured": config_status(stack, store) if stack else None,
     "manifest": manifest,
     "manifest_stale": _catalog_manifest_stale(entry, manifest, ctx),
   }
@@ -116,7 +116,7 @@ def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
     # About the id, not the download: a conflicting id may well be installed,
     # and the card should say so rather than claim otherwise.
     "installed": ctx.config.app_config_path(preview.app_id).is_file(),
-    "configured": _catalog_configured(stack, None),
+    "configured": config_status(stack, None),
     "manifest": preview.manifest,
     "manifest_stale": False,
     "conflict": preview.conflict,
@@ -188,7 +188,7 @@ def _catalog_manifest_stale(entry: CatalogEntry, manifest: str, ctx: HarborCtx) 
     return False
 
 
-def _catalog_configured(stack: AppStack, store: AppStore | None) -> str:
+def config_status(stack: AppStack, store: AppStore | None) -> str:
   """ "ready" when every config key is set or will be filled, else "missing".
 
   A secret with a default is generated on stage, so it does not yellow the

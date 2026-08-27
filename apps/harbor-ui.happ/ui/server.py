@@ -230,7 +230,7 @@ async def post_app(app_id: str, request: Request):
   here = f"/apps/{quote(app_id)}"
   action = field(form, "action")
   try:
-    if action in ("start", "stop", "stage", "snapshot"):
+    if action in ("start", "stop", "install", "snapshot"):
       job = api("/jobs", "POST", {"verb": action, "args": {"app": app_id}})
       return see(f"{here}?job={quote(job['id'])}")
     if action == "cmd":

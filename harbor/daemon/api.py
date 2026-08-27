@@ -45,7 +45,8 @@ from harbor.lib.stack import AppStack
 # 4: /snapshots; restore is a job.
 # 5: jobs no longer carry `output`; read the file `log` names via /activity.
 # 6: activity files are flat under var/logs; /activity/{filename}.
-API_VERSION = 6
+# 7: the `stage` verb is now `install`.
+API_VERSION = 7
 
 CtxFactory = Callable[[], HarborCtx]
 

@@ -16,13 +16,13 @@ from harbor.cli import (
   fetch,
   init,
   inspect,
+  install,
   logs,
   ps,
+  remove,
   restore,
-  rm,
   routes,
   snapshot,
-  stage,
   start,
   stop,
   volumes,
@@ -31,15 +31,6 @@ from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.util import Conn, refuse_root
 
-for level, name in [
-  (logging.DEBUG, "debug"),
-  (logging.INFO, "info "),
-  (logging.WARNING, "warn "),
-  (logging.ERROR, "error"),
-  (logging.CRITICAL, "crit "),
-]:
-  logging.addLevelName(level, name)
-
 COMMANDS = [
   catalog,
   init,
@@ -47,11 +38,11 @@ COMMANDS = [
   ps,
   inspect,
   volumes,
-  stage,
+  install,
   start,
   dev,
   stop,
-  rm,
+  remove,
   snapshot,
   restore,
   logs,
