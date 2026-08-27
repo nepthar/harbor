@@ -57,7 +57,8 @@ def test_call_files_an_activity_log(ctx):
   assert runs[0]["verb"] == "sleep"
   assert runs[0]["app_id"] is None
   assert runs[0]["status"] == "ok"
-  assert runs[0]["log"].startswith(f"{activity.HARBOR_DIR}/")
+  assert runs[0]["log"].endswith(".sleep.log")
+  assert "/" not in runs[0]["log"]
   assert job.log == runs[0]["log"]
 
   body = _log_text(ctx, job)
@@ -118,7 +119,7 @@ def test_json_subprocess_is_captured_not_streamed(ctx):
       pass
 
     def run(self, ctx) -> None:
-      data = self.subprocess(["echo", '{"a": 1}'], json=True)
+      data = self.subprocess(["echo", '{"a": 1}'], parse_json=True)
       assert data == {"a": 1}
 
   job = JsonJob.call({}, ctx)

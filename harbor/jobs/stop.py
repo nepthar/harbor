@@ -1,6 +1,6 @@
+import harbor.lib.lifecycle as lifecycle
 from harbor.jobs.job import Job, logger
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import stop
 
 
 class StopJob(Job):
@@ -16,5 +16,5 @@ class StopJob(Job):
   def run(self, ctx: HarborCtx) -> None:
     app = self.app_id
     with ctx.locked(f"stop {app}", app):
-      stop(app, ctx)
+      lifecycle.stop(app, ctx)
     logger.info("Stopped %s", app)

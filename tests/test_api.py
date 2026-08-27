@@ -325,7 +325,7 @@ def test_a_job_files_activity_that_the_api_serves(harbor_env, client, jobs):
   job = submit(client, jobs, "stage", {"app": "basic-features"})
   assert job["state"] == "done"
   # The finished job points at its own output file...
-  assert job["log"] and job["log"].startswith(f"{APP}/")
+  assert job["log"] and job["log"].endswith(f".{APP}.stage.log")
 
   runs = client.get("/activity").json()["activity"]
   assert runs[0]["verb"] == "stage"
@@ -333,8 +333,7 @@ def test_a_job_files_activity_that_the_api_serves(harbor_env, client, jobs):
   assert runs[0]["status"] == "ok"
   assert runs[0]["log"] == job["log"]
 
-  dirname, _, filename = job["log"].partition("/")
-  body = client.get(f"/activity/{dirname}/{filename}").json()
+  body = client.get(f"/activity/{job['log']}").json()
   assert body["app_id"] == APP
   assert f"Staged {APP}" in body["text"]
 
@@ -346,8 +345,7 @@ def test_a_failed_job_still_files_activity_with_its_error(harbor_env, client, jo
 
   runs = client.get("/activity").json()["activity"]
   assert runs[0]["status"] == "error"
-  dirname, _, filename = job["log"].partition("/")
-  body = client.get(f"/activity/{dirname}/{filename}").json()
+  body = client.get(f"/activity/{job['log']}").json()
   assert "admin_user is unset" in body["text"]
 
 
@@ -388,8 +386,8 @@ def test_a_running_job_tees_output_to_its_log(harbor_env, jobs, monkeypatch):
 
 
 def test_activity_log_rejects_a_bad_name(harbor_env, client):
-  assert client.get("/activity/demo.app/nope.log").status_code == 404
-  assert client.get("/activity/demo.app/..%2F..%2Fetc%2Fpasswd").status_code == 404
+  assert client.get("/activity/nope.log").status_code == 404
+  assert client.get("/activity/..%2F..%2Fetc%2Fpasswd").status_code == 404
 
 
 def _install_cmd_demo(harbor_env):

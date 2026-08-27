@@ -502,11 +502,7 @@ def job_card(job):
     )
   body = ""
   if job.get("log"):
-    dirname, _, filename = job["log"].partition("/")
-    body = (
-      f' <a href="/logs?app={quote(dirname)}&amp;file={quote(filename)}">'
-      f"View its output</a>."
-    )
+    body = f' <a href="/logs?file={quote(job["log"])}">View its output</a>.'
   return f'<div class="notice"><b>{esc(job["verb"])}</b> finished.{body}</div>'
 
 

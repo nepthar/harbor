@@ -44,7 +44,8 @@ from harbor.lib.stack import AppStack
 # 3: /activity endpoints; jobs carry a `log` path.
 # 4: /snapshots; restore is a job.
 # 5: jobs no longer carry `output`; read the file `log` names via /activity.
-API_VERSION = 5
+# 6: activity files are flat under var/logs; /activity/{filename}.
+API_VERSION = 6
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -331,11 +332,11 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     except ValueError as e:
       raise HTTPException(400, str(e)) from e
 
-  @app.get("/activity/{dirname}/{filename}", tags=["activity"])
-  def get_activity_log(dirname: str, filename: str, ctx: Ctx) -> dict:
-    """One run's output file. Both segments are validated names, not paths."""
+  @app.get("/activity/{filename}", tags=["activity"])
+  def get_activity_log(filename: str, ctx: Ctx) -> dict:
+    """One run's output file. The name is a validated filename, not a path."""
     try:
-      return views.activity_log_view(ctx, dirname, filename)
+      return views.activity_log_view(ctx, filename)
     except ValueError as e:
       raise HTTPException(404, str(e)) from e
 

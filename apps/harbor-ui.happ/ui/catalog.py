@@ -329,13 +329,12 @@ def update_applied_note(job):
   if not job or job.get("state") != "done" or job.get("verb") != "fetch":
     return ""
   target = (job.get("args") or {}).get("target") or ""
-  if target.startswith("github:") or "/" not in (job.get("log") or ""):
+  if target.startswith("github:") or not job.get("log"):
     return ""
   # The job carries no output; its run log says whether anything was updated
   # (as opposed to already being at the pinned sha).
-  dirname, _, filename = job["log"].partition("/")
   try:
-    text = api(f"/activity/{quote(dirname)}/{quote(filename)}").get("text") or ""
+    text = api(f"/activity/{quote(job['log'])}").get("text") or ""
   except ApiError:
     return ""
   if "Updated " not in text:

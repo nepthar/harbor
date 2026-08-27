@@ -31,8 +31,7 @@ def _rows(runs):
   for run in runs:
     app = run["app_id"] or "harbor"
     if run["available"]:
-      dirname, _, filename = run["log"].partition("/")
-      output = f'<a href="/logs?app={quote(dirname)}&file={quote(filename)}">view</a>'
+      output = f'<a href="/logs?file={quote(run["log"])}">view</a>'
     else:
       output = '<span class="muted">pruned</span>'
     rows.append(
@@ -64,8 +63,8 @@ def list_page():
   )
 
 
-def detail_page(dirname, filename):
-  record = api(f"/activity/{quote(dirname)}/{quote(filename)}")
+def detail_page(filename):
+  record = api(f"/activity/{quote(filename)}")
   return (
     f'<h2>{esc(record["file"])} <span class="act">'
     '<a href="/logs">Back to activity</a></span></h2>'
@@ -73,7 +72,7 @@ def detail_page(dirname, filename):
   )
 
 
-def page(app="", file=""):
-  if app and file:
-    return detail_page(app, file)
+def page(file=""):
+  if file:
+    return detail_page(file)
   return list_page()

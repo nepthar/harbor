@@ -328,12 +328,14 @@ def activity_view(
   return activity.list_runs(ctx, app=app, limit=limit)
 
 
-def activity_log_view(ctx: HarborCtx, dirname: str, filename: str) -> dict[str, Any]:
+def activity_log_view(ctx: HarborCtx, filename: str) -> dict[str, Any]:
   """One run's output file, as `list_runs` named it in `log`."""
+  text = activity.read_run_log(ctx, filename)
+  middle = filename.removesuffix(".log").split(".")[1:-1]
   return {
-    "app_id": None if dirname == activity.HARBOR_DIR else dirname,
-    "file": f"{dirname}/{filename}",
-    "text": activity.read_run_log(ctx, dirname, filename),
+    "app_id": ".".join(middle) or None,
+    "file": filename,
+    "text": text,
   }
 
 
