@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ LOCK_TIMEOUT = 5.0
 
 ACTIVITY_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10mb
 ACTIVITY_LOG_HISTORY = 2000  # records
+
+LIVE_METRIC_CUTOFF_AGE_SECONDS = 60 * 60 * 2  # 2 hours
 
 
 def lock_timeout() -> float:
@@ -132,6 +135,10 @@ class HarborCtx:
       config.activity_log,
       auto_compact_size_bytes=ACTIVITY_LOG_MAX_BYTES,
       auto_compact_history=ACTIVITY_LOG_HISTORY,
+    )
+
+    self.metrics_log = LogTab(
+      config.metrics_log,
     )
 
   def _app_filelock(self, app: AppID | str) -> FileLock:
@@ -357,3 +364,28 @@ class HarborCtx:
   def observations(self) -> tuple[AppObservation, ...]:
     collected = collect_observations(self)
     return tuple(collected[key] for key in sorted(collected))
+
+  def record_gauge(self, name: str, reading: int | float) -> None:
+    """Record a gauge reading at the current time."""
+    key = "gauge/" + name
+    self.metrics_log.write(key, str(reading))
+
+  def read_gauges(self, prefix: str) -> dict[str, LogTab.Entry]:
+    """Fetch the current values of all current gauges with the given prefix"""
+    prefix = "gauge/" + prefix
+    abs_cutoff = int(datetime.now(UTC).timestamp()) - LIVE_METRIC_CUTOFF_AGE_SECONDS
+    all_found = self.metrics_log.scan(prefix)
+    return {
+      key: entry for key, entry in all_found.items() if entry.unix_seconds >= abs_cutoff
+    }
+
+  def history_gauges(self, prefix: str, days: int = 1) -> dict[str, list[LogTab.Entry]]:
+    """Fetch the history of all gauges matching a given prefix for the last N days"""
+    prefix = "gauge/" + prefix
+    abs_cutoff = int(datetime.now(UTC).timestamp()) - days * 24 * 60 * 60
+    all_found = self.metrics_log.history(prefix)
+    by_key: dict[str, list[LogTab.Entry]] = defaultdict(list)
+    for key, entry in all_found:
+      if entry.unix_seconds >= abs_cutoff:
+        by_key[key].append(entry)
+    return dict(by_key)

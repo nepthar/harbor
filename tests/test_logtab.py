@@ -254,7 +254,9 @@ def test_write_rejects_invalid_key(tab, key):
     tab.write(key, "v")
 
 
-@pytest.mark.parametrize("key", ["a", "A9", "apps/io.p2net.x/config/name", "a-b_c.d"])
+@pytest.mark.parametrize(
+  "key", ["a", "A9", "apps/io.p2net.x/config/name", "a-b_c.d", "gauge/vol/app/data/x"]
+)
 def test_write_accepts_valid_keys(tab, key):
   tab.write(key, "v")
   assert tab.read(key).value == "v"

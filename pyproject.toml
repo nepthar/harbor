@@ -27,6 +27,7 @@ dependencies = [
 # these -- see harbor/daemon/__init__.py.
 daemon = [
     "fastapi>=0.121.0",
+    "schedule>=1.2",
     "uvicorn>=0.34.0",
 ]
 
@@ -55,6 +56,7 @@ dev = [
     "fastapi>=0.121.0",
     "uvicorn>=0.34.0",
     "httpx2>=2.12.0",
+    "schedule>=1.2",
 ]
 
 [tool.pytest.ini_options]
