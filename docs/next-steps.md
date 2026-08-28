@@ -1,8 +1,105 @@
 # Next steps
 
-Known gaps, written down so they stop being remembered. Nothing here is
-scheduled, and nothing here is a spec — each entry says what exists today and,
-where a shape was already agreed, what it should become.
+Known gaps, written down so they stop being remembered. Nothing below
+"Ordered work" is scheduled, and nothing here is a spec — each entry says what
+exists today and, where a shape was already agreed, what it should become.
+
+## Who this is for
+
+The audience harbor is trying to reach is someone technical enough to install
+Linux on an old machine and paste terminal commands, but not a software
+engineer. "More people can run homelab stuff."
+
+That names the competition, and it is not Kubernetes tooling. Helm is a
+rounding error among self-hosters — Docker Compose is the default, Kubernetes
+is a vocal minority skewed toward people who use it professionally, and
+TrueNAS SCALE moved its apps to Kubernetes and then back to Compose. The real
+comparison set is **Unraid, CasaOS, Umbrel, YunoHost, Runtipi**, and every one
+of them leads with an app store and a first run that ends in a browser tab.
+
+Against Helm, harbor competes on simplicity and wins. Against CasaOS it
+competes on catalog size and first-run polish, and today it would lose. So
+work that grows the catalog or shortens the first fifteen minutes outranks
+work that improves the architecture, even though the architecture is the part
+that is genuinely better.
+
+Two assets to lean on, both underused. `.happ.md` is one committable file
+containing a manifest and its scripts, which is dramatically easier to publish
+than a Helm chart or a compose-plus-README — that is the growth loop. And the
+no-lock-in property is a *trust* argument that fits in one non-technical
+sentence: if you outgrow harbor, or it stops being maintained, your apps keep
+running. CasaOS and Umbrel users have been burned exactly there.
+
+## Ordered work
+
+Roughly in the order that unblocks the most. The first two gate everything
+user-facing below them.
+
+1. **A systemd unit and a one-command installer.** `harbord` is foreground-only
+   and dies with its shell, so the target user installs, pastes, closes the
+   laptop, and everything stops. The installer should end by printing the URL.
+2. **Authentication on the admin API.** There is none. Fine behind an ssh
+   tunnel; not fine on a LAN with a smart TV on it, and the UI is the product
+   for this audience. `HarborStore.set_token` already has expiring tokens.
+3. **App sources become repos.** Today `app_sources` is `dict[str, Path]` —
+   local directories — and `fetch` handles one app at a time. A repo is a link
+   to a folder of happs on a public GitHub page, addable from the web UI. This
+   is the single highest-value item: it turns a 14-app catalog into something
+   that grows without the maintainer, and it is where a curated official repo,
+   enabled by default, would live. Three things to get right: trust is
+   per-repo rather than per-app, because adding one is a standing commitment
+   to whatever appears there later, so say so in the UI and keep the per-app
+   capability receipt at install; ship the default repo so day one is not an
+   empty store; and surface which repo an app came from, since two repos can
+   carry one id (`ambiguity_message` and `doctor` already handle the
+   collision).
+4. **A dashboard.** There is none — the page says "Hello. Connected to
+   harbor". Host CPU, memory, filesystem, uptime, apps running, updates
+   available. All cheap; take disk from `statvfs` rather than the volume
+   walker. Keep per-app resource usage out of it: that needs `docker stats`,
+   which is slow, and it is the first step toward owning a metrics product.
+5. **Container logs in the web UI.** Nothing in the API or the UI exposes
+   them; `/logs` is the Activity page, and container output belongs to
+   dockerd. For a non-engineer whose app will not start, this matters more
+   than harbor's own run logs. The job modal is the obvious place to render
+   them.
+6. **Health, not just liveness.** `HarborRunUnitStatus` keeps `state` and
+   discards docker's `Status`, which carries `(healthy)` / `(unhealthy)`. A
+   container can be running and the app dead — precisely the failure this
+   audience cannot diagnose. Surfacing the field is nearly free; a `[health]`
+   probe in the manifest would go further.
+7. **Somewhere for backups to go.** `snapshot` / `restore` is a real
+   differentiator: Helm has no equivalent and neither do most app-store
+   OSes. But snapshots land on the disk that dies. A destination — USB,
+   another box, S3 — turns a feature into a reason to trust harbor with
+   family photos.
+8. **A first-run wizard.** After the installer, walk through `harbor_address`,
+   a route provider, and a first app, rather than opening on an empty
+   catalog.
+9. **Batteries-included HTTPS.** The route-provider abstraction is good, but
+   both providers presume Pangolin or NPM already exists, which presumes
+   someone who understands reverse proxies. A bundled Caddy provider giving
+   LAN-local HTTPS with no configuration would finish the abstraction.
+10. **Editing a happ from the web UI — the bundle, not the staged copy.**
+    Editing `run/<app>/happ/` is editing derived state: `install` regenerates
+    it from the bundle and `reset` re-stages, so edits vanish silently, and
+    `manifest_stale` only watches drift in the other direction. Edit
+    `apps/<app>.happ` instead, framed as "customise this app", after which
+    `manifest_stale` lights up and Reinstall applies it. Note this also
+    punches through the rule in the `JOBS` comment — a manifest defines bind
+    mounts, which means root — so it belongs behind authentication and behind
+    the capability receipt. Low value for the target audience, who do not
+    write manifests; real value for the tinkering loop in the case study.
+
+### Deliberately not doing
+
+**Built-in metric collection and dashboarding.** It is a whole product
+category, and building it means owning a time-series store, retention, and
+disk-full behaviour — against "smallest thing that works" and against
+no-lock-in. The target user wants "is it running" and "am I out of disk",
+which item 4 covers; the user who wants graphs is an engineer who will run
+their own. Be an excellent host for it instead: put Netdata, or
+Prometheus and Grafana, in the default repo as one-click happs.
 
 ## Privileged compose keys are invisible
 
@@ -63,13 +160,7 @@ submitted through harbord cannot answer one, and a question asked on every
 
 ## Smaller known gaps
 
-- **The removal verbs are CLI-only.** `uninstall`, `reset`, and `rm` are not
-  in the daemon's job registry, so the web UI cannot remove anything. That is
-  deliberate while the API has no authentication -- see below -- but it means
-  an operator who only uses the UI has no way to uninstall.
-
-- **No systemd unit.** `harbord` is foreground-only and dies with its shell.
-- **The web UI has no authentication.** Anything that can open `admin.sock`
+- **The web UI has no authentication** (see item 2 above). Anything that can open `admin.sock`
   runs every verb the API exposes. Fine over an ssh tunnel; not fine on a
   public route. `HarborStore.set_token` already has expiring tokens. This got
   sharper when `fetch` joined the API: the verb list is no longer only ids of
@@ -87,8 +178,6 @@ submitted through harbord cannot answer one, and a question asked on every
   typed. The mechanism to close this is in place — `Job.call(args, ctx,
   echo=stream)` writes the run log and the terminal from one stream — and the
   plan is to migrate CLI verbs onto their Job classes, verb by verb.
-- **The Activity page shows harbor runs, not container logs.** `harbor logs`
-  streams `docker compose logs`; the UI has no equivalent yet.
 - **harbor-ui has no tests.** Catalog update-check is covered on the daemon
   (`POST /catalog/check`); the happ itself is HTML builders and FastAPI
   routes with no TestClient coverage.
@@ -98,13 +187,8 @@ submitted through harbord cannot answer one, and a question asked on every
 - **Rootless docker breaks snapshot and restore silently.** `lib/lifecycle/
   rootfs.py` assumes the container's root can read root-owned volume files;
   under userns that maps back to the invoking user. Nothing checks.
-- **`harbor inspect` still requires staging for an app id**, unlike `config`,
-  which now falls back to the bundle in an app source.
 - **`fetch` is on the admin API without a source allowlist.** It takes a
   github: target and nothing else -- `parse_target` refuses any other shape --
   and it only copies files into the apps root, so nothing it fetches runs
   until someone stages and starts it separately. What is still missing is a
   restriction on *which* repositories: today any public one will do.
-- **Job output misses log lines.** `JobRunner` records a verb's return value;
-  progress written through `logging` (including the container steps in
-  `rootfs.py`) goes to harbord's stderr and never reaches `job.output`.

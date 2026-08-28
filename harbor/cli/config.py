@@ -7,8 +7,7 @@ from harbor.cli.kv import parse_kv
 from harbor.lib.apps import AppID
 from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
-from harbor.lib.routes import RouteProviderError
+from harbor.lib.lifecycle import apply_config_sets, bind
 from harbor.lib.run_layout import load_run_data, make_compose_dict
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore
@@ -178,13 +177,8 @@ def _apply_routes(
         f"Add [route_provider.{tag}] to config.toml"
       )
 
-    old_tag = store.get_route_assignment(route_name)
     store.set_route_assignment(route_name, tag)
-    try:
-      sync_route_assignment(app, route_name, old_tag, tag, ctx)
-    except RouteProviderError as e:
-      raise ValueError(str(e)) from e
-    conn.out(f"route {route_name} -> {tag}")
+    conn.out(f"route {route_name} -> {tag} (applied on next start)")
 
   # Rewrite compose so the next start picks up new ${routes.*} URLs.
   if ctx.is_staged(app):

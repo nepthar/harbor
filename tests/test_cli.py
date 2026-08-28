@@ -525,11 +525,14 @@ def test_config_refuses_an_app_it_has_no_manifest_for(harbor_env):
   assert "No app found" in gone.stderr
 
 
-def test_assigning_a_route_still_needs_staging(harbor_env):
-  """A provider needs the allocated host port, which only staging hands out."""
-  too_early = harbor_env.run("config", "routes-demo", "--route", "main=web")
-  assert too_early.returncode == 1
-  assert "harbor install routes-demo" in too_early.stderr
+def test_assigning_a_route_before_install_is_recorded(harbor_env):
+  """The provider is contacted by `start`, so an assignment can be made first."""
+  assigned = harbor_env.run("config", "routes-demo", "--route", "main=web")
+  assert assigned.returncode == 0, assigned.stderr
+  assert "applied on next start" in assigned.stdout
+
+  ctx = HarborCtx(load_config_file(harbor_env.config))
+  assert ctx.app_store("routes-demo").get_route_assignment("main") == "web"
 
 
 def test_config_set_secret(harbor_env):

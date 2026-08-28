@@ -23,10 +23,14 @@ def host_volume_rows(entries):
       f'<td class="name">{esc(entry["tag"])}</td>'
       f'<td class="muted path">{esc(entry["path"])}{missing}</td>'
       f'<td class="muted">{esc(flags or "—")}</td>'
-      f'<td class="act"><form method="post" action="/volumes">'
+      f'<td class="act"><form method="post" action="/volumes"'
+      f' data-confirm="Are you sure you want to delete the host volume '
+      f"{esc(entry['tag'])}? Apps bound to it will fail to start until they "
+      f"are bound somewhere else. Nothing under {esc(entry['path'])} is "
+      f'touched.">'
       f'<input type="hidden" name="action" value="delete">'
       f'<input type="hidden" name="tag" value="{esc(entry["tag"])}">'
-      f'<button class="link" type="submit">Delete</button></form></td>'
+      f'<button type="submit">Delete</button></form></td>'
       "</tr>"
     )
   return (

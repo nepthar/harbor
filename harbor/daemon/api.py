@@ -28,8 +28,7 @@ from harbor.lib.config_edit import (
 )
 from harbor.lib.happ import load_happ
 from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle import apply_config_sets, bind, sync_route_assignment
-from harbor.lib.routes import RouteProviderError
+from harbor.lib.lifecycle import apply_config_sets, bind
 from harbor.lib.stack import AppStack
 
 # Bumped when a response shape changes in a way a client would notice. The web
@@ -41,7 +40,8 @@ from harbor.lib.stack import AppStack
 # 7: the `stage` verb is now `install`.
 # 8: apps and catalog carry `state` (installed/uninstalled/available)
 #    in place of the `staged` and `installed` booleans.
-API_VERSION = 8
+# 9: uninstall and reset are job verbs.
+API_VERSION = 9
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -124,13 +124,9 @@ def _assign_route(
   if tag not in ctx.config.route_providers:
     known = ", ".join(sorted(ctx.config.route_providers))
     raise ValueError(f"route provider {tag!r} is not configured; known tags: {known}")
-  store = ctx.app_store(app)
-  old_tag = store.get_route_assignment(route_name)
-  store.set_route_assignment(route_name, tag)
-  try:
-    sync_route_assignment(app, route_name, old_tag, tag, ctx)
-  except RouteProviderError as e:
-    raise ValueError(str(e)) from e
+  # Recorded only. `start` registers assigned routes with their provider, so
+  # a change lands the next time the app starts, like any other config value.
+  ctx.app_store(app).set_route_assignment(route_name, tag)
 
 
 def _ctx_again(ctx: HarborCtx) -> HarborCtx:

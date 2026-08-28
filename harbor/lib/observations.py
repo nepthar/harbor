@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from harbor.lib.apps import AppID, read_app_actions
+from harbor.lib.apps import AppID, read_app_actions, read_app_starts
 from harbor.lib.docker import HarborRunUnitStatus, load_harbor_run_unit_status
+from harbor.lib.logtab import LogTab
 
 if TYPE_CHECKING:
   from harbor.lib.harbor import HarborCtx
@@ -64,6 +65,8 @@ class AppObservation:
   containers: tuple[HarborRunUnitStatus, ...]
   db_present: bool
   last_action: str | None
+  config_changed_at: str | None = None
+  started_at: str | None = None
 
   @property
   def running_count(self) -> int:
@@ -78,6 +81,19 @@ class AppObservation:
       volumes_exist=self.volumes_exist,
       has_containers=bool(self.containers),
     )
+
+  @property
+  def config_pending(self) -> bool:
+    """Configuration written since the running containers were started.
+
+    `start` reads config values and route assignments fresh and hands them to
+    `compose up`, so a change made after that is on disk but not in the app
+    that is running. Both timestamps are second-resolution, so a change made
+    in the same second as the start reads as applied.
+    """
+    if not (self.running_count and self.config_changed_at and self.started_at):
+      return False
+    return self.config_changed_at > self.started_at
 
   @property
   def installed(self) -> bool:
@@ -128,6 +144,7 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
   app_ids = set(bundles) | run_ids | set(docker) | db_ids | config_ids
 
   actions = read_app_actions(ctx)
+  starts = read_app_starts(ctx)
 
   observations: dict[str, AppObservation] = {}
   for raw_id in app_ids:
@@ -148,5 +165,11 @@ def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
       containers=docker.get(raw_id, ()),
       db_present=raw_id in db_ids,
       last_action=action[1] if action else None,
+      config_changed_at=(
+        LogTab(ctx.config.app_config_path(app_id)).last_ts()
+        if raw_id in config_ids
+        else None
+      ),
+      started_at=starts.get(raw_id),
     )
   return observations

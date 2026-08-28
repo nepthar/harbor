@@ -776,11 +776,70 @@ def test_apps_and_catalog_agree_on_state(harbor_env, client, jobs):
   # `status` is about containers and stays its own axis.
   assert app["status"] == "stopped"
 
+  # /apps is the installed list; an uninstalled app is the catalog's to report.
   harbor_env.run("uninstall", APP, "-y")
-  app = client.get("/apps").json()["apps"][0]
-  assert app["state"] == "uninstalled"
+  assert client.get("/apps").json()["apps"] == []
   assert catalog_entry()["state"] == "uninstalled"
 
   harbor_env.run("uninstall", "--purge", APP, "-y")
   assert client.get("/apps").json()["apps"] == []
   assert catalog_entry()["state"] == "available"
+
+
+def test_uninstall_verb_keeps_data_and_config(harbor_env, client, jobs):
+  harbor_env.run("start", APP, "--set", "admin_user=alice")
+  data = harbor_env.volumes_root / "data" / APP / "config"
+  (data / "app.db").write_text("rows")
+
+  job = submit(client, jobs, "uninstall", {"app": APP})
+  assert job["state"] == "done", job["error"]
+  assert (data / "app.db").read_text() == "rows"
+  assert harbor_env.app_logtab(APP).exists()
+  assert client.get("/apps").json()["apps"] == []
+
+
+def test_uninstall_purge_takes_everything(harbor_env, client, jobs):
+  harbor_env.run("start", APP, "--set", "admin_user=alice")
+  job = submit(client, jobs, "uninstall", {"app": APP, "purge": "1"})
+  assert job["state"] == "done", job["error"]
+  assert not (harbor_env.volumes_root / "data" / APP).exists()
+  assert not harbor_env.app_logtab(APP).exists()
+
+
+def test_reset_verb_clears_data_and_reinstalls(harbor_env, client, jobs):
+  harbor_env.run("start", APP, "--set", "admin_user=alice")
+  data = harbor_env.volumes_root / "data" / APP / "config"
+  (data / "app.db").write_text("rows")
+
+  job = submit(client, jobs, "reset", {"app": APP})
+  assert job["state"] == "done", job["error"]
+  assert list(data.iterdir()) == []
+  assert (harbor_env.run_root / APP).is_dir()
+  assert harbor_env.app_logtab(APP).exists()
+
+
+def test_removal_verbs_refuse_an_unknown_app(harbor_env, client):
+  for verb in ("uninstall", "reset"):
+    response = client.post("/jobs", json={"verb": verb, "args": {"app": "nope"}})
+    assert response.status_code == 400, verb
+
+
+def test_a_freshly_started_app_has_nothing_pending(harbor_env, client):
+  harbor_env.run("start", APP, "--set", "admin_user=alice")
+  assert client.get(f"/apps/{APP}").json()["config_pending"] is False
+
+
+def test_config_pending_is_false_when_not_running(harbor_env, client):
+  """Nothing is pending on a stopped app: the next start reads config fresh."""
+  harbor_env.run("install", APP)
+  harbor_env.run("config", APP, "--set", "admin_user=alice")
+  assert client.get(f"/apps/{APP}").json()["config_pending"] is False
+
+
+def test_route_assignment_is_recorded_without_calling_the_provider(
+  harbor_env, client, jobs
+):
+  submit(client, jobs, "install", {"app": "routes-demo"})
+  response = client.post("/apps/routes-demo/config", json={"route": {"main": "web"}})
+  assert response.status_code == 200, response.text
+  assert client.get("/apps/routes-demo").json()["config_pending"] is False
