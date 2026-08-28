@@ -9,6 +9,7 @@ shared by the daemon's HTTP API and the CLI's `--json` output.
 from __future__ import annotations
 
 import difflib
+from datetime import UTC, datetime
 from typing import Any
 
 from harbor.lib import activity
@@ -44,6 +45,18 @@ def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
     for observation in ctx.observations()
     if observation.installed
   ]
+
+
+def metrics_view(ctx: HarborCtx, prefix: str, hours: int) -> dict[str, Any]:
+  """Gauge history for keys starting `gauge/{prefix}` over the last `hours` hours."""
+  until = int(datetime.now(UTC).timestamp())
+  since = until - hours * 60 * 60
+  metrics: dict[str, list[dict[str, int | float]]] = {}
+  for key, entries in ctx.history_gauges(prefix, since).items():
+    metrics[key.removeprefix("gauge/")] = [
+      {"t": e.unix_seconds, "v": float(e.value)} for e in entries
+    ]
+  return {"since": since, "until": until, "metrics": metrics}
 
 
 def catalog_view(ctx: HarborCtx) -> list[dict[str, Any]]:
@@ -188,7 +201,17 @@ def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
   return f"{GITHUB_PREFIX}{user}" if user else "local"
 
 
-def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]:
+def _gauge_bytes(gauges: dict[str, Any], name: str) -> int | None:
+  entry = gauges.get("gauge/" + name)
+  if entry is None:
+    return None
+  try:
+    return int(float(entry.value))
+  except ValueError:
+    return None
+
+
+def volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   """Every harbor-managed volume on disk, whatever declared it."""
   running = {
     observation.app_id
@@ -197,6 +220,7 @@ def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]
   }
   declared: dict[str, set[str]] = {}
   volumes = []
+  gauges = ctx.read_gauges("volume_size_bytes/")
 
   for kind, root in sorted(ctx.config.volume_roots.items()):
     if not root.is_dir():
@@ -221,7 +245,9 @@ def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]
             # False means the data outlived whatever declared it: either the
             # app is gone, or its manifest stopped naming this volume.
             "declared": volume_dir.name in declared[app_id],
-            "bytes": path_size(volume_dir) if sizes else None,
+            "bytes": _gauge_bytes(
+              gauges, f"volume_size_bytes/{app_id}/{kind}/{volume_dir.name}"
+            ),
           }
         )
   return volumes
@@ -229,6 +255,7 @@ def volumes_view(ctx: HarborCtx, *, sizes: bool = False) -> list[dict[str, Any]]
 
 def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   """The `[host_volume]` entries config.toml declares, in tag order."""
+  gauges = ctx.read_gauges("volume_size_bytes//host/")
   return [
     {
       "tag": tag,
@@ -236,9 +263,20 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
       "readonly": volume.readonly,
       "require_mount": volume.require_mount,
       "exists": volume.path.is_dir(),
+      "bytes": _gauge_bytes(gauges, f"volume_size_bytes//host/{tag}"),
     }
     for tag, volume in sorted(ctx.config.host_volumes.items())
   ]
+
+
+def harbor_dir_sizes(ctx: HarborCtx) -> dict[str, int | None]:
+  """`$var` and `$snapshots` as last recorded by volume-metrics."""
+  return {
+    "var_bytes": _gauge_bytes(ctx.read_gauges("var_size_bytes"), "var_size_bytes"),
+    "snapshots_bytes": _gauge_bytes(
+      ctx.read_gauges("snapshots_size_bytes"), "snapshots_size_bytes"
+    ),
+  }
 
 
 def snapshots_view(ctx: HarborCtx) -> list[dict[str, Any]]:

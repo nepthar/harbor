@@ -54,13 +54,11 @@ def _rows(runs):
 
 
 def list_page():
-  runs = api("/activity?limit=50")["activity"]
+  runs = api("/activity?limit=100")["activity"]
   return (
     "<h2>Activity</h2>"
-    + '<p class="lede">What harbor ran on your behalf &mdash; each job&rsquo;s '
-    "output, kept as plain files under <code>$harbor/var/logs</code>. Container "
-    "logs stay with docker: <code>harbor logs &lt;app&gt;</code> streams "
-    "those.</p>" + f'<div class="card">{_rows(runs)}</div>' + job_modal()
+    + '<p class="lede">Recent app-related activities and output</p>'
+    + f'<div class="card">{_rows(runs)}</div>' + job_modal()
   )
 
 

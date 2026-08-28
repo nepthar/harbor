@@ -41,7 +41,10 @@ from harbor.lib.stack import AppStack
 # 8: apps and catalog carry `state` (installed/uninstalled/available)
 #    in place of the `staged` and `installed` booleans.
 # 9: uninstall and reset are job verbs.
-API_VERSION = 9
+# 10: GET /metrics (gauge history).
+# 11: /volumes bytes come from gauges; sizes=1 is gone; host volumes carry bytes.
+# 12: restart is a job verb.
+API_VERSION = 12
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -214,9 +217,9 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
     return views.app_view(resolved, _ctx_again(ctx))
 
   @app.get("/volumes", tags=["volumes"])
-  def list_volumes(ctx: Ctx, sizes: bool = False) -> dict:
-    """Harbor-managed volumes. `sizes=1` walks every file, so it is opt-in."""
-    return {"volumes": views.volumes_view(ctx, sizes=sizes)}
+  def list_volumes(ctx: Ctx) -> dict:
+    """Harbor-managed volumes, with sizes from the last volume-metrics run."""
+    return {"volumes": views.volumes_view(ctx), **views.harbor_dir_sizes(ctx)}
 
   @app.get("/host-volumes", tags=["host volumes"])
   def list_host_volumes(ctx: Ctx) -> dict:
@@ -284,6 +287,16 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
       return views.activity_log_view(ctx, filename)
     except ValueError as e:
       raise HTTPException(404, str(e)) from e
+
+  @app.get("/metrics", tags=["metrics"])
+  def get_metrics(ctx: Ctx, prefix: str = "", hours: int = 1) -> dict:
+    """Gauge history. `prefix` is matched after `gauge/`."""
+    if hours < 1:
+      raise HTTPException(400, "hours must be >= 1")
+    try:
+      return views.metrics_view(ctx, prefix, hours)
+    except ValueError as e:
+      raise HTTPException(400, str(e)) from e
 
   @app.get("/jobs", tags=["jobs"])
   def list_jobs(jobs: Jobs) -> dict:

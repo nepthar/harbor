@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import shutil
-import time
 from pathlib import Path
+
+import psutil
 
 from harbor.lib.docker import docker_run_command, load_harbor_run_unit_status
 from harbor.lib.harbor import HarborCtx
@@ -42,7 +42,7 @@ _SKIP_FS = frozenset(
 
 
 def record_volume_sizes(ctx: HarborCtx) -> int:
-  """Walk `$volumes/{kind}/{app_id}/*` and declared host volumes. Returns how many."""
+  """Walk volumes, host volumes, `$var`, and `$snapshots`. Returns how many."""
   n = 0
   for kind, root in ctx.config.volume_roots.items():
     if not root.is_dir():
@@ -62,6 +62,14 @@ def record_volume_sizes(ctx: HarborCtx) -> int:
     if not volume.path.exists():
       continue
     ctx.record_gauge(f"volume_size_bytes//host/{tag}", path_size(volume.path))
+    n += 1
+  for name, root in (
+    ("var", ctx.config.var_root),
+    ("snapshots", ctx.config.snapshot_root),
+  ):
+    if not root.exists():
+      continue
+    ctx.record_gauge(f"{name}_size_bytes", path_size(root))
     n += 1
   return n
 
@@ -90,97 +98,39 @@ def record_host_stats(ctx: HarborCtx) -> int:
   return n + record_app_stats(ctx)
 
 
-def cpu_used_ratio(*, sample_s: float = CPU_SAMPLE_S) -> float | None:
-  path = Path("/proc/stat")
-  if not path.is_file():
-    return None
-  first = _cpu_times(path.read_text())
-  time.sleep(sample_s)
-  second = _cpu_times(path.read_text())
-  if first is None or second is None:
-    return None
-  idle_d = second[0] - first[0]
-  total_d = second[1] - first[1]
-  if total_d <= 0:
-    return None
-  return max(0.0, min(1.0, 1 - idle_d / total_d))
-
-
-def _cpu_times(text: str) -> tuple[int, int] | None:
-  """`(idle, total)` jiffies from `/proc/stat` contents."""
-  for line in text.splitlines():
-    if not line.startswith("cpu "):
-      continue
-    nums = [int(x) for x in line.split()[1:]]
-    if len(nums) < 4:
-      return None
-    idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
-    total = sum(nums[:8] if len(nums) >= 8 else nums)
-    return idle, total
-  return None
+def cpu_used_ratio(*, sample_s: float = CPU_SAMPLE_S) -> float:
+  return psutil.cpu_percent(interval=sample_s) / 100.0
 
 
 def mem_used_ratio() -> float | None:
-  info = _meminfo()
-  total = info.get("MemTotal")
-  avail = info.get("MemAvailable")
-  if not total or avail is None:
+  vm = psutil.virtual_memory()
+  if vm.total <= 0:
     return None
-  return max(0.0, min(1.0, 1 - avail / total))
+  return max(0.0, min(1.0, 1 - vm.available / vm.total))
 
 
 def swap_used_ratio() -> float | None:
-  info = _meminfo()
-  total = info.get("SwapTotal")
-  free = info.get("SwapFree")
-  if not total or free is None:
+  swap = psutil.swap_memory()
+  if swap.total <= 0:
     return None
-  return max(0.0, min(1.0, 1 - free / total))
-
-
-def _meminfo() -> dict[str, int]:
-  path = Path("/proc/meminfo")
-  if not path.is_file():
-    return {}
-  return _parse_meminfo(path.read_text())
-
-
-def _parse_meminfo(text: str) -> dict[str, int]:
-  out: dict[str, int] = {}
-  for line in text.splitlines():
-    key, _, rest = line.partition(":")
-    if not rest:
-      continue
-    num = rest.strip().split()[0]
-    try:
-      out[key] = int(num)
-    except ValueError:
-      continue
-  return out
+  return max(0.0, min(1.0, swap.percent / 100.0))
 
 
 def mounted_disks() -> list[tuple[str, Path]]:
-  """`(device_name, mountpoint)` for real block devices, or `/` as `root`."""
-  proc = Path("/proc/mounts")
-  if not proc.is_file():
-    return [("root", Path("/"))]
+  """`(device_name, mountpoint)` for real disks, or `/` as `root`."""
   seen: dict[str, Path] = {}
-  for line in proc.read_text().splitlines():
-    parts = line.split()
-    if len(parts) < 3:
+  for part in psutil.disk_partitions(all=False):
+    if part.fstype in _SKIP_FS:
       continue
-    src, dest, fstype = parts[0], parts[1], parts[2]
-    if fstype in _SKIP_FS or not src.startswith("/dev/"):
-      continue
-    name = Path(src).name
-    if name and name not in seen:
-      seen[name] = Path(dest)
+    name = Path(part.device).name or "root"
+    if name not in seen:
+      seen[name] = Path(part.mountpoint)
   return list(seen.items()) or [("root", Path("/"))]
 
 
 def drive_used_ratio(mount: Path) -> float | None:
   try:
-    usage = shutil.disk_usage(mount)
+    usage = psutil.disk_usage(str(mount))
   except OSError:
     return None
   if usage.total <= 0:

@@ -20,6 +20,7 @@ dependencies = [
     "tabulate>=0.10.0",
     "requests>=2.32.0",
     "tomlkit>=0.13.0",
+    "psutil>=6.0",
 ]
 
 [project.optional-dependencies]

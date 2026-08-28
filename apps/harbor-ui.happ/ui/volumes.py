@@ -1,7 +1,7 @@
 """The Volumes page: host-volume declarations and harbor-managed storage."""
 
 from api import api
-from layout import esc, fmt_size
+from layout import esc, fmt_size, icon_button
 
 
 def host_volume_rows(entries):
@@ -23,6 +23,7 @@ def host_volume_rows(entries):
       f'<td class="name">{esc(entry["tag"])}</td>'
       f'<td class="muted path">{esc(entry["path"])}{missing}</td>'
       f'<td class="muted">{esc(flags or "—")}</td>'
+      f'<td class="muted">{fmt_size(entry.get("bytes"))}</td>'
       f'<td class="act"><form method="post" action="/volumes"'
       f' data-confirm="Are you sure you want to delete the host volume '
       f"{esc(entry['tag'])}? Apps bound to it will fail to start until they "
@@ -30,12 +31,12 @@ def host_volume_rows(entries):
       f'touched.">'
       f'<input type="hidden" name="action" value="delete">'
       f'<input type="hidden" name="tag" value="{esc(entry["tag"])}">'
-      f'<button type="submit">Delete</button></form></td>'
+      f"{icon_button('delete', 'delete-outline', submit=True)}</form></td>"
       "</tr>"
     )
   return (
-    '<div class="scroll"><table><thead><tr><th>Tag</th><th>Path</th>'
-    '<th>Flags</th><th class="act"></th></tr></thead><tbody>'
+    '<div class="scroll"><table><thead><tr><th>Name</th><th>Path</th>'
+    '<th>Flags</th><th>Size</th><th class="act"></th></tr></thead><tbody>'
     + "".join(rows)
     + "</tbody></table></div>"
   )
@@ -45,15 +46,15 @@ def host_volume_form():
   return (
     '<form method="post" action="/volumes" class="row">'
     '<input type="hidden" name="action" value="create">'
-    '<input name="tag" placeholder="tag (e.g. media)" required>'
+    '<input name="tag" placeholder="name (e.g. media)" required>'
     '<input name="path" placeholder="/mnt/media" required class="grow">'
     '<label><input type="checkbox" name="readonly"> read-only</label>'
     '<label><input type="checkbox" name="require_mount"> require mount</label>'
-    '<button type="submit">Add</button></form>'
+    f"{icon_button('add', 'plus-box-outline', submit=True)}</form>"
   )
 
 
-def volume_rows(volumes, sizes):
+def volume_rows(volumes):
   if not volumes:
     return '<p class="empty">No app volumes on disk yet.</p>'
   rows = []
@@ -65,14 +66,13 @@ def volume_rows(volumes, sizes):
     orphan = (
       "" if volume["declared"] else '<span class="sub">not in the manifest</span>'
     )
-    size = fmt_size(volume["bytes"]) if sizes else "&mdash;"
     rows.append(
       "<tr>"
       f'<td class="name">{esc(volume["name"])}{orphan}</td>'
       f'<td class="muted">{esc(volume["app_id"])}</td>'
       f'<td class="muted">{esc(volume["kind"])}</td>'
       f"<td>{use}</td>"
-      f'<td class="muted">{size}</td>'
+      f'<td class="muted">{fmt_size(volume.get("bytes"))}</td>'
       "</tr>"
     )
   return (
@@ -83,24 +83,31 @@ def volume_rows(volumes, sizes):
   )
 
 
-def volumes_page(sizes, notice=""):
-  host = api("/host-volumes")["host_volumes"]
-  volumes = api("/volumes?sizes=1" if sizes else "/volumes")["volumes"]
-  measure = (
-    '<a href="/volumes">Hide sizes</a>'
-    if sizes
-    else '<a href="/volumes?sizes=1">Measure sizes</a>'
+def harbor_rows(var_bytes, snapshots_bytes):
+  return (
+    '<div class="scroll"><table><thead><tr><th>Directory</th><th>Size</th>'
+    "</tr></thead><tbody>"
+    f'<tr><td class="name">var</td>'
+    f'<td class="muted">{fmt_size(var_bytes)}</td></tr>'
+    f'<tr><td class="name">snapshots</td>'
+    f'<td class="muted">{fmt_size(snapshots_bytes)}</td></tr>'
+    "</tbody></table></div>"
   )
+
+
+def volumes_page(notice=""):
+  host = api("/host-volumes")["host_volumes"]
+  body = api("/volumes")
   return (
     notice
     + "<h2>Host volumes</h2>"
-    + '<p class="lede">Paths on this machine that apps may bind to. An app '
-    "asks for one in its manifest; you decide which directory it gets.</p>"
+    + '<p class="lede">Named volumes on this machine that apps may bind to</p>'
     + f'<div class="card">{host_volume_rows(host)}</div>'
-    + f'<div class="card pad">{host_volume_form()}</div>'
-    + f'<h2>App volumes <span class="act">{measure}</span></h2>'
-    + '<p class="lede">Harbor-managed storage under your volume roots. '
-    "Sizes are measured on request: it walks every file, which is usually "
-    "quick and occasionally not.</p>"
-    + f'<div class="card">{volume_rows(volumes, sizes)}</div>'
+    + f'<div class="card entry">{host_volume_form()}</div>'
+    + "<h2>App volumes</h2>"
+    + '<p class="lede">Harbor-managed application storage. Sizes are refreshed hourly.</p>'
+    + f'<div class="card">{volume_rows(body.get("volumes") or [])}</div>'
+    + "<h2>Harbor</h2>"
+    + '<p class="lede">Harbor internal storage</p>'
+    + f'<div class="card">{harbor_rows(body.get("var_bytes"), body.get("snapshots_bytes"))}</div>'
   )

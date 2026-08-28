@@ -22,6 +22,7 @@ from harbor.jobs.install import InstallJob
 from harbor.jobs.job import DONE, FAILED, QUEUED, RUNNING, Job
 from harbor.jobs.metrics import HostMetricsJob, VolumeMetricsJob
 from harbor.jobs.remove import ResetJob, UninstallJob
+from harbor.jobs.restart import RestartJob
 from harbor.jobs.restore import RestoreJob
 from harbor.jobs.snapshot import SnapshotJob
 from harbor.jobs.start import StartJob
@@ -43,6 +44,7 @@ MAX_HISTORY = 200
 JOBS: dict[str, type[Job]] = {
   "start": StartJob,
   "stop": StopJob,
+  "restart": RestartJob,
   "install": InstallJob,
   "snapshot": SnapshotJob,
   "restore": RestoreJob,

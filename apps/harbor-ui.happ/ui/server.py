@@ -1,15 +1,18 @@
 """HTTP front door: route a request to a page, or run a POST as a harbor verb."""
 
+from pathlib import Path
 from urllib.parse import quote, unquote
 
 import activity
 import catalog
+import dashboard
 import installed
 import snapshots
 import volumes
-from api import ApiError, api, where
+from api import ApiError, api
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from layout import error_card, esc, page
 
 app = FastAPI()
@@ -20,13 +23,13 @@ NO_STORE = {"Cache-Control": "no-store"}
 # The harbord API this UI is written against. harbord bumps its own number
 # when a response shape changes, so a mismatch means one of the two was
 # installed without the other and fields this UI reads may be missing.
-NEEDS_API = 9
+NEEDS_API = 12
 _daemon_api = None
 
 
-def html(path, title, body, version="", status_code=200):
+def html(path, title, body, version="", status_code=200, actions=""):
   return HTMLResponse(
-    page(path, title, _skew_notice() + body, version),
+    page(path, title, _skew_notice() + body, version, actions=actions),
     status_code=status_code,
     headers=NO_STORE,
   )
@@ -77,17 +80,15 @@ def field(form, name):
 
 
 @app.get("/")
-def dashboard():
+def dashboard_get():
   version, err = harbor_version("/", "Dashboard")
   if err:
     return err
-  return html(
-    "/",
-    "Dashboard",
-    f'<div class="card"><p class="note">Hello. Connected to harbor '
-    f"{esc(version)} over <code>{esc(where())}</code>.</p></div>",
-    version,
-  )
+  try:
+    body = dashboard.page(version)
+  except ApiError as e:
+    return html("/", "Dashboard", error_card(e), version)
+  return html("/", "Dashboard", body, version)
 
 
 @app.get("/apps")
@@ -116,19 +117,19 @@ def app_detail(app_id: str, ok: str | None = None, err: str | None = None):
   version, unreachable = harbor_version(f"/apps/{app_id}", "Apps")
   if unreachable:
     return unreachable
-  title, body, version = installed.detail_page(app_id, version, notice=banner(ok, err))
-  return html(f"/apps/{app_id}", title, body, version)
+  title, body, version, actions = installed.detail_page(
+    app_id, version, notice=banner(ok, err)
+  )
+  return html(f"/apps/{app_id}", title, body, version, actions=actions)
 
 
 @app.get("/volumes")
-def volumes_get(
-  sizes: str | None = None, ok: str | None = None, err: str | None = None
-):
+def volumes_get(ok: str | None = None, err: str | None = None):
   version, unreachable = harbor_version("/volumes", "Volumes")
   if unreachable:
     return unreachable
   try:
-    body = volumes.volumes_page(sizes == "1", banner(ok, err))
+    body = volumes.volumes_page(banner(ok, err))
   except ApiError as e:
     return html("/volumes", "Volumes", error_card(e), version)
   return html("/volumes", "Volumes", body, version)
@@ -262,6 +263,13 @@ def proxy_activity_log(filename: str):
     return api(f"/activity/{quote(filename)}")
   except ApiError as e:
     return JSONResponse({"error": str(e)}, status_code=404)
+
+
+app.mount(
+  "/static",
+  StaticFiles(directory=Path(__file__).parent / "static"),
+  name="static",
+)
 
 
 @app.get("/{path:path}")

@@ -379,13 +379,12 @@ class HarborCtx:
       key: entry for key, entry in all_found.items() if entry.unix_seconds >= abs_cutoff
     }
 
-  def history_gauges(self, prefix: str, days: int = 1) -> dict[str, list[LogTab.Entry]]:
-    """Fetch the history of all gauges matching a given prefix for the last N days"""
+  def history_gauges(self, prefix: str, since: int) -> dict[str, list[LogTab.Entry]]:
+    """Gauge history matching `prefix`, from `since` (unix seconds) onward."""
     prefix = "gauge/" + prefix
-    abs_cutoff = int(datetime.now(UTC).timestamp()) - days * 24 * 60 * 60
     all_found = self.metrics_log.history(prefix)
     by_key: dict[str, list[LogTab.Entry]] = defaultdict(list)
     for key, entry in all_found:
-      if entry.unix_seconds >= abs_cutoff:
+      if entry.unix_seconds >= since:
         by_key[key].append(entry)
     return dict(by_key)
