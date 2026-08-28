@@ -35,11 +35,14 @@ GITHUB_PREFIX = "github:"
 
 
 def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
-  """Every app harbor holds state for, in the shape a dashboard list wants."""
+  """Every installed app, in the shape a dashboard list wants.
+
+  Uninstalled apps belong to the catalog listing, which reports their state.
+  """
   return [
     _summary(observation, ctx)
     for observation in ctx.observations()
-    if observation.known
+    if observation.installed
   ]
 
 
@@ -350,6 +353,7 @@ def _summary(
       "total": len(observation.containers),
     },
     "configured": _configured(observation, stack, ctx),
+    "config_pending": observation.config_pending,
     "volume_count": len(stack.volumes) if stack else 0,
     "last_action": observation.last_action,
   }

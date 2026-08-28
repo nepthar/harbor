@@ -3,7 +3,14 @@
 from urllib.parse import quote, unquote
 
 from api import ApiError, api
-from layout import error_card, esc, fmt_size, job_card, kv_table
+from layout import (
+  error_card,
+  esc,
+  fmt_size,
+  job_button,
+  job_modal,
+  kv_table,
+)
 
 
 def status_cell(app):
@@ -64,25 +71,101 @@ def apps_table(apps):
 
 
 def lifecycle_bar(app):
-  """Start, stop, install, snapshot. Each posts a job and comes back with its id."""
+  """Start, stop, install, snapshot. Each opens the job modal."""
+  app_id = app["app_id"]
+  name = app.get("display_name") or app_id
   running = app["status"] == "running"
   installed = app.get("state") == "installed"
   buttons = [
-    ("start", "Start", not running),
-    ("stop", "Stop", running),
-    ("install", "Reinstall", True),
-    ("snapshot", "Snapshot", installed),
+    job_button(
+      "Start",
+      "start",
+      title=f"Start {name}",
+      desc=f"Starts {app_id}, installing it first if it is not installed yet.",
+      args={"app": app_id},
+      enabled=not running,
+    ),
+    job_button(
+      "Stop",
+      "stop",
+      title=f"Stop {name}",
+      desc=f"Stops {app_id}'s containers. Its data and configuration are untouched.",
+      args={"app": app_id},
+      enabled=running,
+    ),
+    job_button(
+      "Reinstall",
+      "install",
+      title=f"Reinstall {name}",
+      desc=(
+        f"Rebuilds {app_id}'s installation from the catalog copy, picking up a "
+        f"changed manifest. Data, configuration and its address are kept."
+      ),
+      args={"app": app_id},
+    ),
+    job_button(
+      "Snapshot",
+      "snapshot",
+      title=f"Snapshot {name}",
+      desc=(
+        f"Copies {app_id}'s volumes and run state into an archive under "
+        f"snapshots/. The app is stopped for the copy and started again after."
+      ),
+      args={"app": app_id},
+      fields=[{"name": "label", "placeholder": "label (optional)"}],
+      enabled=installed,
+    ),
+    job_button(
+      "Uninstall",
+      title=f"Uninstall {name}",
+      desc=(
+        f"Pick how much of {app_id} to remove. To keep a copy of the data "
+        f"first, close this and take a Snapshot."
+      ),
+      choices=[
+        {
+          "label": "Uninstall",
+          "verb": "uninstall",
+          "args": {"app": app_id},
+          "desc": (
+            "Removes the installation. Data, configuration, secrets and its "
+            "address are kept, so reinstalling picks up where it left off."
+          ),
+        },
+        {
+          "label": "Reset",
+          "verb": "reset",
+          "args": {"app": app_id},
+          "desc": (
+            "Deletes the data volumes and installs the app again from the "
+            "bundle. Configuration and address are kept."
+          ),
+        },
+        {
+          "label": "Uninstall and purge",
+          "verb": "uninstall",
+          "args": {"app": app_id, "purge": "1"},
+          "desc": (
+            "Removes everything harbor holds: the installation, the data "
+            "volumes, the configuration and secrets, and its address. The "
+            "catalog copy survives."
+          ),
+        },
+      ],
+    ),
   ]
+  return '<div class="row actions">' + "".join(buttons) + "</div>"
+
+
+def pending_card(app):
+  """Config written since the running containers were started."""
+  if not app.get("config_pending"):
+    return ""
   return (
-    '<div class="row actions">'
-    + "".join(
-      f'<form method="post" action="/apps/{quote(app["app_id"])}">'
-      f'<input type="hidden" name="action" value="{verb}">'
-      f'<button type="submit"{"" if enabled else " disabled"}>{label}</button>'
-      f"</form>"
-      for verb, label, enabled in buttons
-    )
-    + "</div>"
+    '<div class="notice"><b>Restart to apply pending configuration changes.</b>'
+    '<span class="sub">Settings and route assignments were changed after '
+    "this app was started, so what is running does not have them yet.</span>"
+    "</div>"
   )
 
 
@@ -233,14 +316,20 @@ def commands_section(app):
   installed = app.get("state") == "installed"
   rows = []
   for command in commands:
-    button = (
-      f'<button type="button" class="cmd-open" data-command="{esc(command["name"])}"'
-      f' data-desc="{esc(command.get("desc") or "")}"'
-      f"{'' if installed else ' disabled'}>Run</button>"
+    desc = command.get("desc") or ""
+    button = job_button(
+      "Run",
+      "cmd",
+      title=f"{app['app_id']}: {command['name']}",
+      desc=desc
+      or f"Runs the {command['name']!r} command declared in this happ's manifest.",
+      args={"app": app["app_id"], "command": command["name"]},
+      fields=[{"name": "args", "placeholder": "extra arguments (optional)"}],
+      enabled=installed,
     )
     rows.append(
       f'<tr><td class="key">{esc(command["name"])}</td>'
-      f'<td class="muted wrap">{esc(command.get("desc") or "")}</td>'
+      f'<td class="muted wrap">{esc(desc)}</td>'
       f'<td class="muted">{esc(command["unit"])}</td>'
       f'<td class="act">{button}</td></tr>'
     )
@@ -250,141 +339,7 @@ def commands_section(app):
     + "".join(rows)
     + "</tbody></table></div>"
   )
-  if not installed:
-    table += '<p class="sub">Install the app to run its commands.</p>'
   return table
-
-
-def cmd_modal(app):
-  """Dialog: name the extra argv, run, tail the activity file, close anytime."""
-  title = esc(app.get("display_name") or app["app_id"])
-  return (
-    f'<div id="cmd-shade" class="shade" hidden data-app="{esc(app["app_id"])}">'
-    '<div class="cmd-modal" role="dialog" aria-modal="true" aria-labelledby="cmd-app">'
-    f'<h2 id="cmd-app">{title}</h2>'
-    '<p class="muted" id="cmd-desc" hidden></p>'
-    '<div class="row cmd-bar">'
-    '<span class="mono" id="cmd-command"></span>'
-    '<input id="cmd-args" class="grow" placeholder="args..." autocomplete="off">'
-    '<button type="button" id="cmd-go">Run</button>'
-    '<button type="button" id="cmd-close" hidden>Close</button>'
-    "</div>"
-    '<pre id="cmd-out" class="cmd-out"></pre>'
-    "</div></div>" + _CMD_SCRIPT
-  )
-
-
-_CMD_SCRIPT = """
-<script>
-(function () {
-  var shade = document.getElementById("cmd-shade");
-  if (!shade) return;
-  var appId = shade.getAttribute("data-app");
-  var commandEl = document.getElementById("cmd-command");
-  var descEl = document.getElementById("cmd-desc");
-  var argsEl = document.getElementById("cmd-args");
-  var outEl = document.getElementById("cmd-out");
-  var go = document.getElementById("cmd-go");
-  var close = document.getElementById("cmd-close");
-  var timer = null;
-  var jobId = null;
-
-  function stopPoll() {
-    if (timer) { clearInterval(timer); timer = null; }
-  }
-
-  function hide() {
-    stopPoll();
-    shade.hidden = true;
-  }
-
-  function showText(text) {
-    outEl.textContent = text || "";
-    outEl.scrollTop = outEl.scrollHeight;
-  }
-
-  function activityUrl(log) {
-    return "/activity/" + encodeURIComponent(log);
-  }
-
-  function pullLog(log) {
-    if (!log) return Promise.resolve();
-    return fetch(activityUrl(log)).then(function (r) {
-      if (!r.ok) return;
-      return r.json().then(function (body) {
-        if (body && body.text != null) showText(body.text);
-      });
-    }).catch(function () {});
-  }
-
-  function poll() {
-    if (!jobId) return;
-    fetch("/jobs/" + encodeURIComponent(jobId)).then(function (r) {
-      return r.json();
-    }).then(function (job) {
-      if (job.error && !job.log) showText(job.error);
-      var done = job.state === "done" || job.state === "failed";
-      return pullLog(job.log).then(function () {
-        if (done) {
-          stopPoll();
-          if (!job.log && job.error) showText(job.error);
-        }
-      });
-    }).catch(function () {});
-  }
-
-  document.querySelectorAll(".cmd-open").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      stopPoll();
-      jobId = null;
-      commandEl.textContent = btn.getAttribute("data-command") || "";
-      descEl.textContent = btn.getAttribute("data-desc") || "";
-      descEl.hidden = !descEl.textContent;
-      argsEl.value = "";
-      argsEl.disabled = false;
-      outEl.textContent = "";
-      go.hidden = false;
-      go.disabled = false;
-      close.hidden = true;
-      shade.hidden = false;
-      argsEl.focus();
-    });
-  });
-
-  close.addEventListener("click", hide);
-  shade.addEventListener("click", function (event) {
-    if (event.target === shade) hide();
-  });
-
-  go.addEventListener("click", function () {
-    var args = { app: appId, command: commandEl.textContent };
-    if (argsEl.value.trim()) args.args = argsEl.value;
-    go.disabled = true;
-    argsEl.disabled = true;
-    close.hidden = false;
-    go.hidden = true;
-    showText("queued\\u2026");
-    fetch("/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ verb: "cmd", args: args })
-    }).then(function (r) {
-      return r.json().then(function (body) { return { ok: r.ok, body: body }; });
-    }).then(function (res) {
-      if (!res.ok) {
-        showText(res.body.error || "failed");
-        return;
-      }
-      jobId = res.body.id;
-      timer = setInterval(poll, 1000);
-      poll();
-    }).catch(function (err) {
-      showText(String(err));
-    });
-  });
-})();
-</script>
-"""
 
 
 def unit_volumes_table(unit):
@@ -436,7 +391,7 @@ def units_section(app):
   return "".join(blocks) or '<p class="empty">No run units.</p>'
 
 
-def app_page(app, job, notice):
+def app_page(app, notice=""):
   meta = app.get("metadata", {})
   skip = {"display_name", "description", "app_id"}
   pairs = [(k, v) for k, v in sorted(meta.items()) if k not in skip]
@@ -445,7 +400,7 @@ def app_page(app, job, notice):
     f'<p class="lede">{esc(app.get("description") or "")}</p>'
     f'<p class="muted mono">{esc(app["app_id"])}</p></div>'
     f"{lifecycle_bar(app)}</div>"
-    + job_card(job)
+    + pending_card(app)
     + issues_card(app)
     + "<h2>Manifest</h2>"
     + (
@@ -463,7 +418,7 @@ def app_page(app, job, notice):
     + f'<div class="card">{commands_section(app)}</div>'
     + "<h2>Run units</h2>"
     + units_section(app)
-    + cmd_modal(app)
+    + job_modal()
   )
 
 
@@ -474,17 +429,11 @@ def list_page(version):
     return "Apps", error_card(e), version
 
 
-def detail_page(app_id, version, notice="", job=""):
+def detail_page(app_id, version, notice=""):
   app_id = unquote(app_id)
   try:
     app = api(f"/apps/{quote(app_id)}")
-    job_info = None
-    if job:
-      try:
-        job_info = api(f"/jobs/{quote(job)}")
-      except ApiError:
-        job_info = None
     title = app.get("display_name") or app_id
-    return title, app_page(app, job_info, notice), version
+    return title, app_page(app, notice), version
   except ApiError as e:
     return app_id, error_card(e), version

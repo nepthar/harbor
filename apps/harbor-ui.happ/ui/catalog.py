@@ -3,7 +3,7 @@
 from urllib.parse import quote
 
 from api import ApiError, api
-from layout import error_card, esc, job_card
+from layout import error_card, esc, job_button, job_modal
 
 
 def catalog_app_entry(catalogs, app_id):
@@ -148,12 +148,18 @@ def catalog_actions(app):
       f'<button type="submit">Check for update</button></form>'
     )
   return (
-    f'<div class="row actions">'
-    f'<form method="post" action="/apps/{quote(app_id)}">'
-    f'<input type="hidden" name="action" value="install">'
-    f'<button type="submit">{label}</button></form>'
-    f"{update}"
-    f"</div>"
+    '<div class="row actions">'
+    + job_button(
+      label,
+      "install",
+      title=f"{label} {app.get('display_name') or app_id}",
+      desc=(
+        f"Installs {app_id} from this catalog entry so it can be started. "
+        f"Any data and configuration it already has are kept."
+      ),
+      args={"app": app_id},
+    )
+    + f"{update}</div>"
   )
 
 
@@ -161,13 +167,20 @@ def confirm_update_actions(app):
   """Apply the remote copy the operator just reviewed, or back out."""
   app_id = app.get("app_id") or ""
   return (
-    f'<div class="row actions">'
-    f'<form method="post" action="/catalog">'
-    f'<input type="hidden" name="action" value="fetch">'
-    f'<input type="hidden" name="target" value="{esc(app_id)}">'
-    f'<button type="submit">Apply update</button></form>'
-    f'<a class="link" href="/catalog?app={quote(app_id)}">Cancel</a>'
-    f"</div>"
+    '<div class="row actions">'
+    + job_button(
+      "Apply update",
+      "fetch",
+      title=f"Update {app_id}",
+      desc=(
+        f"Replaces the catalog copy of {app_id} with the remote one reviewed "
+        f"above. The installed app is unchanged until it is reinstalled."
+      ),
+      args={"target": app_id},
+      autorun=True,
+    )
+    + f'<a class="link" href="/catalog?app={quote(app_id)}">Cancel</a>'
+    + "</div>"
   )
 
 
@@ -234,13 +247,19 @@ def preview_actions(app):
   close = '<a class="link" href="/catalog?fetch=1">Back</a>'
   if app.get("conflict"):
     return f'<div class="row actions">{close}</div>'
+  target = app.get("target") or ""
   return (
-    f'<div class="row actions">'
-    f'<form method="post" action="/catalog">'
-    f'<input type="hidden" name="action" value="fetch">'
-    f'<input type="hidden" name="target" value="{esc(app.get("target") or "")}">'
-    f'<button type="submit">Fetch</button></form>'
-    f"{close}</div>"
+    '<div class="row actions">'
+    + job_button(
+      "Fetch",
+      "fetch",
+      title=f"Fetch {app.get('app_id') or target}",
+      desc=f"Downloads {target} into the catalog. Nothing is installed or started.",
+      args={"target": target, "yes": "1"},
+      autorun=True,
+      done="/catalog",
+    )
+    + f"{close}</div>"
   )
 
 
@@ -289,25 +308,6 @@ def catalog_card(
   )
 
 
-def update_applied_note(job):
-  """What to do after a catalog fetch of an already-installed app id."""
-  if not job or job.get("state") != "done" or job.get("verb") != "fetch":
-    return ""
-  target = (job.get("args") or {}).get("target") or ""
-  if target.startswith("github:") or not job.get("log"):
-    return ""
-  try:
-    text = api(f"/activity/{quote(job['log'])}").get("text") or ""
-  except ApiError:
-    return ""
-  if "Updated " not in text:
-    return ""
-  return (
-    '<div class="notice">The catalog copy is updated. To run it: stop the '
-    "app if it is running, then Re-install and Start.</div>"
-  )
-
-
 def page(
   version,
   notice="",
@@ -317,7 +317,6 @@ def page(
   app="",
   confirm=False,
   check=False,
-  job="",
 ):
   """The catalog listing, plus fetch preview / update check when asked."""
   target = target.strip()
@@ -325,14 +324,6 @@ def page(
   body = notice
   if fetch or target:
     body += fetch_bar(target)
-  job_info = None
-  if job:
-    try:
-      job_info = api(f"/jobs/{quote(job)}")
-      body += job_card(job_info)
-      body += update_applied_note(job_info)
-    except ApiError:
-      pass
   # The preview is its own request and its own failure: a target that does
   # not resolve must not take the catalog listing down with it.
   preview = ""
@@ -348,9 +339,8 @@ def page(
   except ApiError as e:
     return "Catalog", error_card(e), version
   update = None
-  job_busy = job_info is not None and job_info.get("state") in ("queued", "running")
   # Opening a card is cheap. GitHub is not: only Check / Update wait on it.
-  if open_app and not job_busy and (check or confirm):
+  if open_app and (check or confirm):
     entry = catalog_app_entry(catalogs, open_app)
     if entry and str(entry.get("source") or "").startswith("github:"):
       try:
@@ -358,4 +348,4 @@ def page(
       except ApiError as e:
         update = {"error": str(e)}
   body += catalog_tables(catalogs, open_app=open_app, update=update, confirm=confirm)
-  return "Catalog", body + preview, version
+  return "Catalog", body + preview + job_modal(), version

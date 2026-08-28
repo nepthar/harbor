@@ -4,10 +4,8 @@ Container logs are docker's and stream through `harbor logs`; this page shows
 the other stream, filed under `$harbor/var/logs`.
 """
 
-from urllib.parse import quote
-
 from api import api
-from layout import esc
+from layout import esc, job_modal, log_button
 
 
 def _pill(status):
@@ -29,7 +27,12 @@ def _rows(runs):
   for run in runs:
     app = run["app_id"] or "harbor"
     if run["available"]:
-      output = f'<a href="/logs?file={quote(run["log"])}">view</a>'
+      output = log_button(
+        "view",
+        run["log"],
+        run["status"],
+        title=f"{run['verb']} {app}".strip(),
+      )
     else:
       output = '<span class="muted">pruned</span>'
     rows.append(
@@ -57,20 +60,9 @@ def list_page():
     + '<p class="lede">What harbor ran on your behalf &mdash; each job&rsquo;s '
     "output, kept as plain files under <code>$harbor/var/logs</code>. Container "
     "logs stay with docker: <code>harbor logs &lt;app&gt;</code> streams "
-    "those.</p>" + f'<div class="card">{_rows(runs)}</div>'
+    "those.</p>" + f'<div class="card">{_rows(runs)}</div>' + job_modal()
   )
 
 
-def detail_page(filename):
-  record = api(f"/activity/{quote(filename)}")
-  return (
-    f'<h2>{esc(record["file"])} <span class="act">'
-    '<a href="/logs">Back to activity</a></span></h2>'
-    + f'<div class="card"><pre>{esc(record["text"])}</pre></div>'
-  )
-
-
-def page(file=""):
-  if file:
-    return detail_page(file)
+def page():
   return list_page()

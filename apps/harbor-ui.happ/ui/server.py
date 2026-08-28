@@ -17,11 +17,31 @@ app = FastAPI()
 NO_STORE = {"Cache-Control": "no-store"}
 
 
+# The harbord API this UI is written against. harbord bumps its own number
+# when a response shape changes, so a mismatch means one of the two was
+# installed without the other and fields this UI reads may be missing.
+NEEDS_API = 9
+_daemon_api = None
+
+
 def html(path, title, body, version="", status_code=200):
   return HTMLResponse(
-    page(path, title, body, version),
+    page(path, title, _skew_notice() + body, version),
     status_code=status_code,
     headers=NO_STORE,
+  )
+
+
+def _skew_notice():
+  if _daemon_api is None or _daemon_api == NEEDS_API:
+    return ""
+  return (
+    f'<div class="error"><h2>Version mismatch</h2><p>This page was built for '
+    f"harbor API {NEEDS_API}, but harbord speaks {_daemon_api}. Buttons and "
+    f"status may be wrong until the two match.</p>"
+    f"<p>Reinstall this app and start it again:<br>"
+    f"<code>harbor install harbor-ui</code><br>"
+    f"<code>harbor start harbor-ui</code></p></div>"
   )
 
 
@@ -42,10 +62,13 @@ def banner(ok=None, err=None):
 
 def harbor_version(path, title):
   """Harbor version, or an HTML error page if harbord is unreachable."""
+  global _daemon_api
   try:
-    return api("/version").get("harbor", ""), None
+    info = api("/version")
   except ApiError as e:
     return "", html(path, title, error_card(e))
+  _daemon_api = info.get("api")
+  return info.get("harbor", ""), None
 
 
 def field(form, name):
@@ -77,45 +100,23 @@ def apps_list():
 
 
 @app.get("/snapshots")
-def snapshots_get(job: str = "", ok: str | None = None, err: str | None = None):
+def snapshots_get(ok: str | None = None, err: str | None = None):
   version, unreachable = harbor_version("/snapshots", "Snapshots")
   if unreachable:
     return unreachable
   try:
-    body = snapshots.page(banner(ok, err), job)
+    body = snapshots.page(banner(ok, err))
   except ApiError as e:
     return html("/snapshots", "Snapshots", error_card(e), version)
   return html("/snapshots", "Snapshots", body, version)
 
 
-@app.post("/snapshots")
-async def post_snapshots(request: Request):
-  form = await request.form()
-  app_id = field(form, "app")
-  name = field(form, "snapshot")
-  if not app_id or not name:
-    return see("/snapshots")
-  try:
-    job = api(
-      "/jobs",
-      "POST",
-      {"verb": "restore", "args": {"app": app_id, "snapshot": name}},
-    )
-    return see(f"/snapshots?job={quote(job['id'])}")
-  except ApiError as e:
-    return see(f"/snapshots?err={quote(str(e))}")
-
-
 @app.get("/apps/{app_id}")
-def app_detail(
-  app_id: str, job: str = "", ok: str | None = None, err: str | None = None
-):
+def app_detail(app_id: str, ok: str | None = None, err: str | None = None):
   version, unreachable = harbor_version(f"/apps/{app_id}", "Apps")
   if unreachable:
     return unreachable
-  title, body, version = installed.detail_page(
-    app_id, version, notice=banner(ok, err), job=job
-  )
+  title, body, version = installed.detail_page(app_id, version, notice=banner(ok, err))
   return html(f"/apps/{app_id}", title, body, version)
 
 
@@ -140,7 +141,6 @@ def catalog_get(
   app: str = "",
   confirm: str | None = None,
   check: str | None = None,
-  job: str = "",
   ok: str | None = None,
   err: str | None = None,
 ):
@@ -155,45 +155,20 @@ def catalog_get(
     app=app,
     confirm=confirm == "1",
     check=check == "1",
-    job=job,
   )
   return html("/catalog", title, body, version)
 
 
 @app.get("/logs")
-def logs(file: str = ""):
+def logs():
   version, unreachable = harbor_version("/logs", "Activity")
   if unreachable:
     return unreachable
   try:
-    body = activity.page(file)
+    body = activity.page()
   except ApiError as e:
     return html("/logs", "Activity", error_card(e), version)
   return html("/logs", "Activity", body, version)
-
-
-@app.post("/catalog")
-async def post_catalog(request: Request):
-  """Fetch a previewed target, or update an already-fetched app id.
-
-  `yes` is this submit: the operator has read the manifest the preview showed.
-  """
-  form = await request.form()
-  target = field(form, "target")
-  if field(form, "action") != "fetch" or not target:
-    return see("/catalog")
-  args = {"target": target}
-  if target.startswith("github:"):
-    args["yes"] = "1"
-  try:
-    job = api("/jobs", "POST", {"verb": "fetch", "args": args})
-    if target.startswith("github:"):
-      return see(f"/catalog?job={quote(job['id'])}")
-    return see(f"/catalog?app={quote(target)}&job={quote(job['id'])}")
-  except ApiError as e:
-    if target.startswith("github:"):
-      return see(f"/catalog?fetch=1&err={quote(str(e))}")
-    return see(f"/catalog?app={quote(target)}&err={quote(str(e))}")
 
 
 @app.post("/volumes")
@@ -222,22 +197,12 @@ async def post_volumes(request: Request):
 
 @app.post("/apps/{app_id}")
 async def post_app(app_id: str, request: Request):
-  """One action per submit: a lifecycle verb, or one kind of config change."""
+  """One config change per submit; lifecycle verbs go through the job modal."""
   form = await request.form()
   app_id = unquote(app_id)
   here = f"/apps/{quote(app_id)}"
   action = field(form, "action")
   try:
-    if action in ("start", "stop", "install", "snapshot"):
-      job = api("/jobs", "POST", {"verb": action, "args": {"app": app_id}})
-      return see(f"{here}?job={quote(job['id'])}")
-    if action == "cmd":
-      job = api(
-        "/jobs",
-        "POST",
-        {"verb": "cmd", "args": {"app": app_id, "command": field(form, "command")}},
-      )
-      return see(f"{here}?job={quote(job['id'])}")
     if action == "config":
       # Blank means "leave it alone" -- especially for secrets, whose
       # current value the UI never had in the first place.
@@ -267,7 +232,7 @@ async def post_app(app_id: str, request: Request):
 
 @app.post("/jobs")
 async def proxy_job_submit(request: Request):
-  """Forward a job from the command modal. JSON in, JSON out."""
+  """Forward a job from the job modal. JSON in, JSON out."""
   try:
     body = await request.json()
   except Exception:

@@ -1,9 +1,7 @@
 """The Snapshots page: every archive, and a restore button on each row."""
 
-from urllib.parse import quote
-
-from api import ApiError, api
-from layout import esc, fmt_size, job_card
+from api import api
+from layout import esc, fmt_size, job_button, job_modal
 
 
 def _when(snap):
@@ -24,10 +22,19 @@ def _rows(snapshots):
       f'<td class="muted">{_when(snap)}</td>'
       f'<td class="muted">{esc(snap.get("tag") or "")}</td>'
       f'<td class="muted">{fmt_size(snap.get("bytes"))}</td>'
-      f'<td class="act"><form method="post" action="/snapshots">'
-      f'<input type="hidden" name="app" value="{esc(snap["app_id"])}">'
-      f'<input type="hidden" name="snapshot" value="{esc(snap["name"])}">'
-      '<button type="submit">Restore</button></form></td>'
+      f'<td class="act">'
+      + job_button(
+        "Restore",
+        "restore",
+        title=f"Restore {snap['app_id']}",
+        desc=(
+          f"Replaces {snap['app_id']}'s run state, configuration and data "
+          f"volumes with {snap['name']}. A pre-restore snapshot is taken first "
+          f"when there is something to overwrite."
+        ),
+        args={"app": snap["app_id"], "snapshot": snap["name"]},
+      )
+      + "</td>"
       "</tr>"
     )
   return (
@@ -38,17 +45,13 @@ def _rows(snapshots):
   )
 
 
-def page(notice="", job=""):
+def page(notice=""):
   body = notice
-  if job:
-    try:
-      body += job_card(api(f"/jobs/{quote(job)}"))
-    except ApiError:
-      pass
   snapshots = api("/snapshots")["snapshots"]
   return (
     body + '<p class="lede">Archives under <code>snapshots/</code>. Restore '
     "replaces the app&rsquo;s current run state; a pre-restore snapshot is "
     "taken first when there is something to overwrite.</p>"
     + f'<div class="card">{_rows(snapshots)}</div>'
+    + job_modal()
   )

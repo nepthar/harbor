@@ -164,6 +164,13 @@ class LogTab:
     LogTab.write_entry(self.path, key, "del", comment)
     self._maybe_compact()
 
+  def last_ts(self) -> str | None:
+    """Timestamp of the newest record, or None when the table has none."""
+    newest = None
+    for ts, *_ in self._records():
+      newest = ts
+    return newest
+
   def history(self, prefix: str = "", suffix: str = "") -> list[tuple[str, Entry]]:
     """Every `set` record matching, oldest first, without collapsing by key."""
 

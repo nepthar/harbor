@@ -19,7 +19,6 @@ from harbor.lib.lifecycle.routes import (
   assigned_routes,
   preflight_app_routes,
   register_app_routes,
-  sync_route_assignment,
   unregister_app_routes,
 )
 from harbor.lib.lifecycle.run import logs, recovery_lines, run_command, start, stop
@@ -70,7 +69,6 @@ __all__ = [
   "staging_target",
   "start",
   "stop",
-  "sync_route_assignment",
   "unlink_host_volumes",
   "unregister_app_routes",
 ]

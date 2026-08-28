@@ -1,7 +1,7 @@
 """The shell around every page: CSS, JS, nav, and shared HTML fragments."""
 
 import html
-from urllib.parse import quote
+import json
 
 NAV = (
   ("/", "Dashboard"),
@@ -143,6 +143,8 @@ h2 .act a:hover { color: var(--fg); text-decoration: underline; }
 .lede { color: var(--muted); margin: 0 0 10px; max-width: 62ch; }
 .card.pad { padding: 14px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+/* `display: flex` outranks the UA stylesheet's [hidden] { display: none }. */
+.row[hidden] { display: none; }
 .row .grow { flex: 1; min-width: 200px; }
 input[type=text], input[type=password], input:not([type]) {
   background: var(--bg); color: var(--fg); border: 1px solid var(--border);
@@ -231,22 +233,34 @@ details.reveal > summary:hover { color: var(--fg); }
   background: color-mix(in srgb, var(--void) 62%, transparent);
 }
 .shade[hidden] { display: none; }
-.cmd-modal {
+.job-modal {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 10px; width: min(36rem, 100%);
   padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
   max-height: min(80vh, 100%);
 }
-.cmd-modal h2 { margin: 0; font-size: 17px; }
-.cmd-modal #cmd-desc { margin: 0; }
-.cmd-bar { width: 100%; }
-.cmd-bar #cmd-command { flex: 0 0 auto; white-space: nowrap; }
-.cmd-bar #cmd-args::placeholder { color: var(--muted); }
-.cmd-out {
+.job-modal h2 { margin: 0; font-size: 17px; }
+.job-modal p { margin: 0; }
+.job-bar { width: 100%; }
+.job-bar input::placeholder { color: var(--muted); }
+.job-fields { width: 100%; gap: 8px; }
+.job-out {
   margin: 0; min-height: 12rem; max-height: 40vh; overflow: auto;
   padding: 10px; background: var(--bg); border-radius: 6px;
   font-size: 12px; white-space: pre-wrap;
+  border: 1px solid transparent; transition: border-color 400ms ease;
 }
+.job-choices { display: flex; flex-direction: column; gap: 8px; }
+.job-choices[hidden] { display: none; }
+.job-choice {
+  display: flex; gap: 9px; align-items: flex-start; color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+  cursor: pointer;
+}
+.job-choice:has(input:checked) { border-color: var(--accent); }
+.job-choice .sub { margin-top: 2px; }
+.job-out.ok { border-color: var(--ok); }
+.job-out.bad { border-color: var(--bad); }
 .app-card {
   display: flex; flex-direction: row; align-items: stretch;
   background: var(--panel); border: 1px solid var(--border);
@@ -379,6 +393,7 @@ def page(path, title, body, version=""):
   {body}
 </main>
 </div>
+{confirm_modal()}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/toml.min.js"></script>
 <script>
@@ -473,6 +488,298 @@ def page(path, title, body, version=""):
 </body></html>"""
 
 
+def job_button(
+  label,
+  verb="",
+  *,
+  title,
+  desc="",
+  args=None,
+  fields=(),
+  choices=(),
+  enabled=True,
+  autorun=False,
+  done="",
+):
+  """A button that opens the job modal. See `job_modal` for the attributes.
+
+  `choices` offers several verbs behind one button, each with its own
+  wording; the operator picks before Run is live.
+  """
+  extra = "" if enabled else " disabled"
+  landing = f' data-done="{esc(done)}"' if done else ""
+  return (
+    f'<button type="button" class="job-open"{extra}'
+    f' data-verb="{esc(verb)}" data-title="{esc(title)}" data-desc="{esc(desc)}"'
+    f" data-args='{esc(json.dumps(args or {}))}'"
+    f" data-fields='{esc(json.dumps(list(fields)))}'"
+    f" data-choices='{esc(json.dumps(list(choices)))}'"
+    f"{landing}{' data-autorun=1' if autorun else ''}>{esc(label)}</button>"
+  )
+
+
+def log_button(label, log, status, *, title, klass="link"):
+  """A button that opens a finished run in the job modal, read-only."""
+  return (
+    f'<button type="button" class="job-open {esc(klass)}"'
+    f' data-title="{esc(title)}" data-log="{esc(log)}"'
+    f' data-status="{esc(status)}">{esc(label)}</button>'
+  )
+
+
+def job_modal():
+  """The dialog every job verb runs through: describe, Run, tail the log.
+
+  One per page. Buttons opt in with class `job-open` and carry the verb, the
+  wording, fixed args, and any fields the operator fills in.
+  """
+  return (
+    '<div id="job-shade" class="shade" hidden>'
+    '<div class="job-modal" role="dialog" aria-modal="true" aria-labelledby="job-title">'
+    '<div class="row between">'
+    '<h2 id="job-title"></h2>'
+    '<button type="button" id="job-dismiss" hidden>Close</button>'
+    "</div>"
+    '<p class="muted" id="job-desc"></p>'
+    '<div class="job-choices" id="job-choices" hidden></div>'
+    '<div class="row job-fields" id="job-fields"></div>'
+    '<div class="row job-bar" id="job-bar">'
+    '<button type="button" id="job-go">Run</button>'
+    '<button type="button" id="job-close">Cancel</button>'
+    "</div>"
+    '<pre id="job-out" class="job-out" hidden></pre>'
+    "</div></div>" + _JOB_SCRIPT
+  )
+
+
+_JOB_SCRIPT = """
+<script>
+(function () {
+  var shade = document.getElementById("job-shade");
+  if (!shade) return;
+  var titleEl = document.getElementById("job-title");
+  var descEl = document.getElementById("job-desc");
+  var fieldsEl = document.getElementById("job-fields");
+  var choicesEl = document.getElementById("job-choices");
+  var outEl = document.getElementById("job-out");
+  var bar = document.getElementById("job-bar");
+  var go = document.getElementById("job-go");
+  var close = document.getElementById("job-close");
+  var dismiss = document.getElementById("job-dismiss");
+  var timer = null, jobId = null, verb = null, fixed = {}, ran = false, done = null;
+  var choices = [];
+
+  function stopPoll() { if (timer) { clearInterval(timer); timer = null; } }
+
+  function hide() {
+    stopPoll();
+    shade.hidden = true;
+    // The page behind is stale once a job has run: its status, config and
+    // last-action all moved. Come back with the job id so the page can say
+    // how it ended.
+    if (ran) {
+      // Status, config and last-action all moved; the page behind is stale.
+      window.location.href = done || window.location.href;
+    }
+  }
+
+  function showText(text) {
+    outEl.hidden = false;
+    outEl.textContent = text || "";
+    outEl.scrollTop = outEl.scrollHeight;
+  }
+
+  function pullLog(log) {
+    if (!log) return Promise.resolve();
+    return fetch("/activity/" + encodeURIComponent(log)).then(function (r) {
+      if (!r.ok) return;
+      return r.json().then(function (body) {
+        if (body && body.text != null) showText(body.text);
+      });
+    }).catch(function () {});
+  }
+
+  function poll() {
+    if (!jobId) return;
+    fetch("/jobs/" + encodeURIComponent(jobId)).then(function (r) {
+      return r.json();
+    }).then(function (job) {
+      var done = job.state === "done" || job.state === "failed";
+      return pullLog(job.log).then(function () {
+        if (!done) return;
+        stopPoll();
+        if (!job.log && job.error) showText(job.error);
+        outEl.classList.add(job.state === "done" ? "ok" : "bad");
+      });
+    }).catch(function () {});
+  }
+
+  function chosen() {
+    if (!choices.length) return { verb: verb, args: fixed };
+    var picked = choicesEl.querySelector("input[name=job-choice]:checked");
+    return choices[picked ? Number(picked.value) : 0];
+  }
+
+  function submit() {
+    var pick = chosen();
+    var args = {};
+    Object.keys(pick.args || {}).forEach(function (k) { args[k] = pick.args[k]; });
+    fieldsEl.querySelectorAll("input").forEach(function (input) {
+      if (input.value.trim()) args[input.name] = input.value;
+    });
+    ran = true;
+    fieldsEl.querySelectorAll("input").forEach(function (i) { i.disabled = true; });
+    choicesEl.querySelectorAll("input").forEach(function (i) { i.disabled = true; });
+    // Nothing left to cancel, so the bar goes and Close moves up beside the
+    // title, clear of the output.
+    bar.hidden = true;
+    dismiss.hidden = false;
+    showText("queued\u2026");
+    fetch("/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ verb: pick.verb, args: args })
+    }).then(function (r) {
+      return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+    }).then(function (res) {
+      if (!res.ok) { showText(res.body.error || "failed"); return; }
+      jobId = res.body.id;
+      timer = setInterval(poll, 1000);
+      poll();
+    }).catch(function (err) { showText(String(err)); });
+  }
+
+  document.querySelectorAll(".job-open").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      stopPoll();
+      jobId = null; ran = false;
+      var log = btn.getAttribute("data-log");
+      verb = btn.getAttribute("data-verb");
+      fixed = JSON.parse(btn.getAttribute("data-args") || "{}");
+      done = btn.getAttribute("data-done");
+      titleEl.textContent = btn.getAttribute("data-title") || verb;
+      descEl.textContent = btn.getAttribute("data-desc") || "";
+      descEl.hidden = !descEl.textContent;
+      fieldsEl.innerHTML = "";
+      (JSON.parse(btn.getAttribute("data-fields") || "[]")).forEach(function (f) {
+        var input = document.createElement("input");
+        input.name = f.name;
+        input.placeholder = f.placeholder || f.name;
+        input.className = "grow";
+        input.autocomplete = "off";
+        fieldsEl.appendChild(input);
+      });
+      fieldsEl.hidden = fieldsEl.children.length === 0;
+      choices = JSON.parse(btn.getAttribute("data-choices") || "[]");
+      choicesEl.innerHTML = "";
+      choices.forEach(function (c, i) {
+        var label = document.createElement("label");
+        label.className = "job-choice";
+        var radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "job-choice";
+        radio.value = String(i);
+        if (i === 0) radio.checked = true;
+        var text = document.createElement("span");
+        text.innerHTML = "";
+        var strong = document.createElement("b");
+        strong.textContent = c.label;
+        var note = document.createElement("span");
+        note.className = "sub";
+        note.textContent = c.desc || "";
+        text.appendChild(strong);
+        text.appendChild(note);
+        label.appendChild(radio);
+        label.appendChild(text);
+        choicesEl.appendChild(label);
+      });
+      choicesEl.hidden = choices.length === 0;
+      outEl.textContent = "";
+      outEl.classList.remove("ok", "bad");
+      outEl.hidden = true;
+      bar.hidden = false;
+      go.hidden = false;
+      go.disabled = false;
+      dismiss.hidden = true;
+      shade.hidden = false;
+      if (log) {
+        bar.hidden = true;
+        dismiss.hidden = false;
+        outEl.classList.add(btn.getAttribute("data-status") === "ok" ? "ok" : "bad");
+        pullLog(log);
+        return;
+      }
+      if (btn.getAttribute("data-autorun")) {
+        submit();
+      } else if (fieldsEl.children.length) {
+        fieldsEl.querySelector("input").focus();
+      } else {
+        go.focus();
+      }
+    });
+  });
+
+  go.addEventListener("click", submit);
+  close.addEventListener("click", hide);
+  dismiss.addEventListener("click", hide);
+  shade.addEventListener("click", function (event) {
+    if (event.target === shade) hide();
+  });
+})();
+</script>
+"""
+
+
+def confirm_modal():
+  """The gate on any form carrying `data-confirm`. One per page."""
+  return (
+    '<div id="ask-shade" class="shade" hidden>'
+    '<div class="job-modal" role="dialog" aria-modal="true" aria-labelledby="ask-title">'
+    '<h2 id="ask-title">Are you sure?</h2>'
+    '<p class="muted" id="ask-text"></p>'
+    '<div class="row job-bar">'
+    '<button type="button" id="ask-go">Yes, continue</button>'
+    '<button type="button" id="ask-close">Cancel</button>'
+    "</div></div></div>" + _ASK_SCRIPT
+  )
+
+
+_ASK_SCRIPT = """
+<script>
+(function () {
+  var shade = document.getElementById("ask-shade");
+  if (!shade) return;
+  var textEl = document.getElementById("ask-text");
+  var go = document.getElementById("ask-go");
+  var close = document.getElementById("ask-close");
+  var pending = null;
+
+  function hide() { shade.hidden = true; pending = null; }
+
+  document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      if (form.dataset.confirmed) return;
+      event.preventDefault();
+      pending = form;
+      textEl.textContent = form.getAttribute("data-confirm");
+      shade.hidden = false;
+      go.focus();
+    });
+  });
+
+  go.addEventListener("click", function () {
+    if (!pending) return;
+    pending.dataset.confirmed = "1";
+    pending.submit();
+    hide();
+  });
+  close.addEventListener("click", hide);
+  shade.addEventListener("click", function (e) { if (e.target === shade) hide(); });
+})();
+</script>
+"""
+
+
 def error_card(message):
   return (
     f'<div class="error"><h2>Cannot reach harbord</h2>'
@@ -480,26 +787,6 @@ def error_card(message):
     f'<p class="muted">The socket is bound with '
     f"<code>harbor config harbor-ui --bind conn=&lt;host_volume&gt;</code>.</p></div>"
   )
-
-
-def job_card(job):
-  if not job:
-    return ""
-  state = job["state"]
-  if state in ("queued", "running"):
-    return (
-      f'<div class="notice"><b>{esc(job["verb"])}</b> is {esc(state)}. '
-      f"Refresh to see how it ended.</div>"
-    )
-  if state == "failed":
-    return (
-      f'<div class="error"><h2>{esc(job["verb"])} failed</h2>'
-      f"<pre>{esc(job['error'])}</pre></div>"
-    )
-  body = ""
-  if job.get("log"):
-    body = f' <a href="/logs?file={quote(job["log"])}">View its output</a>.'
-  return f'<div class="notice"><b>{esc(job["verb"])}</b> finished.{body}</div>'
 
 
 def kv_table(pairs):

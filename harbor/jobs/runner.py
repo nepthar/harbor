@@ -17,6 +17,7 @@ from harbor.jobs.cmd import CmdJob
 from harbor.jobs.fetch import FetchJob
 from harbor.jobs.install import InstallJob
 from harbor.jobs.job import DONE, FAILED, Job
+from harbor.jobs.remove import ResetJob, UninstallJob
 from harbor.jobs.restore import RestoreJob
 from harbor.jobs.snapshot import SnapshotJob
 from harbor.jobs.start import StartJob
@@ -43,6 +44,8 @@ JOBS: dict[str, type[Job]] = {
   "restore": RestoreJob,
   "cmd": CmdJob,
   "fetch": FetchJob,
+  "uninstall": UninstallJob,
+  "reset": ResetJob,
 }
 
 
