@@ -29,7 +29,7 @@ def test_entry_carries_timestamp(tab):
   assert entry is not None
   assert entry.value == "1"
   assert entry.ts.endswith("Z")
-  assert entry.datetime().tzinfo is not None
+  assert entry.datetime.tzinfo is not None
 
 
 # ── write / read / overwrite ──────────────────────────────────────────────
