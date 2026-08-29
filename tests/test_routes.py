@@ -421,7 +421,7 @@ def _config(tmp_path: Path, route_providers: dict) -> Config:
     config_path=tmp_path / "config.toml",
     harbor_root=tmp_path,
     volume_roots={},
-    apps_root=tmp_path / "apps",
+    repos_root=tmp_path / "repos",
     run_root=tmp_path / "run",
     snapshot_root=tmp_path / "snapshots",
     master_key="",

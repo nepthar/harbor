@@ -1,7 +1,5 @@
 import argparse
-from pathlib import Path
 
-from harbor.lib.happ import app_id_from_path, is_pathlike
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import stage, staging_target
 from harbor.lib.util import Conn
@@ -17,22 +15,21 @@ def register(subparsers) -> None:
     metavar="APP",
     help="App ID (e.g. io.example.myapp or myapp) or path to an app",
   )
+  parser.add_argument(
+    "--force",
+    action="store_true",
+    help="Install even though this id was last installed from somewhere else",
+  )
   parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  app = (
-    app_id_from_path(Path(args.app).expanduser().resolve())
-    if is_pathlike(args.app)
-    else ctx.resolve_app(args.app)
-  )
+  target = staging_target(ctx, args.app, force=args.force)
+  app = target.app_id
   with ctx.locked(f"stage {app}", app):
-    target = staging_target(ctx, args.app)
-    app = target.app_id
-    if target.linked_entry is not None:
-      conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
-
-    result = stage(app, target.bundle or ctx.bundle_path(app), ctx)
+    result = stage(
+      app, target.bundle or ctx.bundle_path(app), ctx, bound=target.bound_to
+    )
     for name in result.dropped_volumes:
       conn.err(
         f"volume {name} is no longer declared in the manifest; "

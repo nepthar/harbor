@@ -30,12 +30,14 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn) -> None:
 def _catalog_notes(ctx: HarborCtx) -> list[str]:
   """Problems with the catalog itself, rather than with any one app's state."""
   notes = []
-  for name, path in ctx.config.app_sources.items():
-    if not path.is_dir():
-      notes.append(
-        f"app source {name}: {path} is not a directory. "
-        f"Create it, fix its location in config.toml, or drop the entry."
+  for name, repo in ctx.config.repos.items():
+    if not repo.path.is_dir():
+      hint = (
+        f"Run `harbor repo update {name}` to mirror it."
+        if repo.mirrored
+        else "Create it, fix its path in config.toml, or drop the entry."
       )
+      notes.append(f"repo {name}: {repo.path} is not a directory. {hint}")
 
   catalog = ctx.app_catalog()
   for app_id in sorted(catalog):

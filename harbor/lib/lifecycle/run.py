@@ -39,12 +39,13 @@ def start(
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
+  bound: str | None = None,
 ) -> StageSuccess:
   """Stage if needed, then bring the app up and register assigned routes."""
   paths = ctx.staged_paths(app)
 
   if sets or binds or not ctx.is_staged(app):
-    result = stage(app, bundle, ctx, sets=sets, binds=binds)
+    result = stage(app, bundle, ctx, sets=sets, binds=binds, bound=bound)
   else:
     stack = AppStack.from_file(paths.manifest_path, app)
     result = StageSuccess(stack, load_run_data(stack, ctx))

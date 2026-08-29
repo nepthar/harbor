@@ -136,3 +136,48 @@ def remove_host_volume(ctx: HarborCtx, tag: str) -> None:
     raise ValueError(f"No host volume {tag!r}; known tags: {known}")
   with edit_config(ctx) as document:
     del _host_volumes(document)[tag]
+
+
+def _repos(document: TOMLDocument):
+  """The `[[repo]]` array, created on first use."""
+  if "repo" not in document:
+    document["repo"] = tomlkit.aot()
+  return document["repo"]
+
+
+def add_repo(ctx: HarborCtx, name: str, *, path: str = "", url: str = "") -> None:
+  """Append a `[[repo]]` entry. Exactly one of path or url."""
+  validate_identifier(name)
+  if bool(path) == bool(url):
+    raise ValueError("A repo needs exactly one of a local path or a github:// url")
+  if name in ctx.config.repos:
+    raise ValueError(
+      f"Repo {name!r} already exists ({ctx.config.repos[name].describe()}). "
+      f"Pass --name to add this one under a different name, or remove that one "
+      f"with `harbor repo remove {name}`."
+    )
+  with edit_config(ctx) as document:
+    table = tomlkit.table()
+    table["name"] = name
+    if path:
+      table["path"] = path
+    else:
+      table["url"] = url
+    _repos(document).append(table)
+
+
+def remove_repo(ctx: HarborCtx, name: str) -> None:
+  """Drop a `[[repo]]` entry. The mirrored directory is the caller's to clean."""
+  if name not in ctx.config.repos:
+    known = ", ".join(sorted(ctx.config.repos)) or "(none)"
+    raise ValueError(f"No repo {name!r}; configured repos: {known}.")
+  with edit_config(ctx) as document:
+    entries = document.get("repo")
+    if entries is None:
+      raise ValueError(f"Repo {name!r} is not in {ctx.config.config_path}")
+    for index, entry in enumerate(entries):
+      if entry.get("name") == name:
+        del entries[index]
+        break
+    else:
+      raise ValueError(f"Repo {name!r} is not in {ctx.config.config_path}")

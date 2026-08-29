@@ -15,17 +15,16 @@ from pydantic import (
 
 from harbor.lib.apps import AppID
 from harbor.lib.logtab import LogTab
+from harbor.lib.repo import MAIN_REPO, Repo, parse_github_url
 from harbor.lib.util import validate_identifier
 
 VOLUME_KINDS = ("data", "temp", "bulk", "logs")
 
-# Runtime state under `$harbor/var/`. Operator-facing tree is apps/, run/,
+# Runtime state under `$harbor/var/`. Operator-facing tree is repos/, run/,
 # volumes/, config/; this is sockets, activity files, scratch, and locks.
 VAR_DIRS = ("conn", "logs", "temp", "lock")
 
-# The app source backed by `apps_root`: always present, always first, and the
-# only one harbor itself writes to.
-DEFAULT_APP_SOURCE = "apps"
+DEFAULT_REPOS_ROOT = "repos"
 
 # Built-in noop provider tag. Always present; operators may not redefine it.
 NONE_ROUTE_PROVIDER_TAG = "none"
@@ -54,11 +53,14 @@ def _expand_path(
   return (relative_base / p).resolve()
 
 
-class AppSourceEntry(BaseModel):
+class RepoEntry(BaseModel):
+  """One `[[repo]]` table: a local directory, or a GitHub folder to mirror."""
+
   model_config = ConfigDict(extra="forbid")
 
   name: str
-  location: str
+  path: str | None = None
+  url: str | None = None
 
 
 class RouteProviderEntry(BaseModel):
@@ -95,7 +97,7 @@ class ConfigFile(BaseModel):
 
   model_config = ConfigDict(extra="forbid")
 
-  apps_root: str = "apps"
+  repos_root: str = DEFAULT_REPOS_ROOT
   run_root: str = "run"
   snapshot_root: str = "snapshots"
   master_keyfile: str = "master.key"
@@ -134,8 +136,8 @@ class Config:
   config_path: Path
   harbor_root: Path
   volume_roots: dict[str, Path]
-  apps_root: Path
-  app_sources: dict[str, Path]
+  repos_root: Path
+  repos: dict[str, Repo]
   run_root: Path
   master_key: str
   master_keyfile: Path
@@ -150,7 +152,7 @@ class Config:
     config_path: Path,
     harbor_root: Path,
     volume_roots: dict[str, Path],
-    apps_root: Path,
+    repos_root: Path,
     run_root: Path,
     snapshot_root: Path,
     master_key: str,
@@ -159,7 +161,7 @@ class Config:
     default_route_provider: str,
     route_providers: dict[str, RouteProviderEntry],
     harbor_address: str = "",
-    extra_app_sources: dict[str, Path] | None = None,
+    extra_repos: dict[str, Repo] | None = None,
     host_volumes: dict[str, HostVolume] | None = None,
   ) -> None:
     # Not derivable from harbor_root: an explicit --config may be named anything,
@@ -167,8 +169,11 @@ class Config:
     self.config_path = config_path
     self.harbor_root = harbor_root
     self.volume_roots = volume_roots
-    self.apps_root = apps_root
-    self.app_sources = {DEFAULT_APP_SOURCE: apps_root, **(extra_app_sources or {})}
+    self.repos_root = repos_root
+    self.repos = {
+      MAIN_REPO: Repo(MAIN_REPO, repos_root / MAIN_REPO, "local"),
+      **(extra_repos or {}),
+    }
     self.run_root = run_root
     self.snapshot_root = snapshot_root
     self.master_key = master_key
@@ -270,9 +275,9 @@ def load_config_file(config_file: str | Path) -> Config:
     data = tomllib.load(f)
 
   # Soft-fail section: validated after the hard schema so a typo here cannot
-  # take down every harbor command (see `_resolve_app_sources`).
-  app_source_raw = data.get("app_source", [])
-  parse_data = {k: v for k, v in data.items() if k != "app_source"}
+  # take down every harbor command (see `_resolve_repos`).
+  repo_raw = data.get("repo", [])
+  parse_data = {k: v for k, v in data.items() if k != "repo"}
 
   try:
     parsed = ConfigFile.model_validate(parse_data)
@@ -306,8 +311,8 @@ def load_config_file(config_file: str | Path) -> Config:
   else:
     logger.warning("Using empty master key")
 
-  apps_root = ep(parsed.apps_root)
-  extra_app_sources = _resolve_app_sources(app_source_raw, apps_root, ep)
+  repos_root = ep(parsed.repos_root)
+  extra_repos = _resolve_repos(repo_raw, repos_root, ep)
   run_root = ep(parsed.run_root)
   snapshot_root = ep(parsed.snapshot_root)
 
@@ -330,7 +335,7 @@ def load_config_file(config_file: str | Path) -> Config:
     config_path=config_path,
     harbor_root=harbor_root,
     volume_roots=volume_roots,
-    apps_root=apps_root,
+    repos_root=repos_root,
     run_root=run_root,
     snapshot_root=snapshot_root,
     master_key=master_key,
@@ -339,7 +344,7 @@ def load_config_file(config_file: str | Path) -> Config:
     harbor_address=parsed.harbor_address,
     default_route_provider=parsed.default_route_provider,
     route_providers=route_providers,
-    extra_app_sources=extra_app_sources,
+    extra_repos=extra_repos,
     host_volumes=host_volumes,
   )
 
@@ -406,56 +411,72 @@ def _validate_config(parsed: ConfigFile) -> list[str]:
   return errors
 
 
-def _resolve_app_sources(entries: Any, apps_root: Path, ep) -> dict[str, Path]:
-  """Resolve the `[[app_source]]` entries; names and locations must be unique.
+def _resolve_repos(entries: Any, repos_root: Path, ep) -> dict[str, Repo]:
+  """Resolve the `[[repo]]` entries; names and locations must be unique.
 
   Errors soft-fail: a typo here must not stop every harbor command.
   """
 
-  def refuse(problem: str) -> dict[str, Path]:
-    logger.error(
-      "%s. Ignoring every [[app_source]] until config.toml is fixed", problem
-    )
+  def refuse(problem: str) -> dict[str, Repo]:
+    logger.error("%s. Ignoring every [[repo]] until config.toml is fixed", problem)
     return {}
 
   if not isinstance(entries, list):
-    return refuse("app_source must be a list of [[app_source]] tables")
+    return refuse("repo must be a list of [[repo]] tables")
 
-  sources: dict[str, Path] = {}
-  names_by_path = {apps_root: DEFAULT_APP_SOURCE}
+  repos: dict[str, Repo] = {}
+  main_path = repos_root / MAIN_REPO
+  names_by_path = {main_path: MAIN_REPO}
 
   for entry in entries:
     try:
-      parsed = AppSourceEntry.model_validate(entry)
+      parsed = RepoEntry.model_validate(entry)
     except ValidationError:
       return refuse(
-        'each [[app_source]] needs a name and a location, e.g. name = "dev", '
-        'location = "~/code/happs"'
+        'each [[repo]] needs a name and one of path or url, e.g. name = "dev", '
+        'path = "~/code/happs"'
+      )
+
+    if (parsed.path is None) == (parsed.url is None):
+      return refuse(
+        f"repo {parsed.name!r} needs exactly one of path (a directory on this "
+        f"machine) or url (a GitHub folder to mirror)"
       )
 
     try:
       validate_identifier(parsed.name)
     except ValueError as e:
-      return refuse(f"app_source name {parsed.name!r} is not a valid name: {e}")
+      return refuse(f"repo name {parsed.name!r} is not a valid name: {e}")
 
-    if parsed.name == DEFAULT_APP_SOURCE or parsed.name in sources:
+    if parsed.name == MAIN_REPO or parsed.name in repos:
       return refuse(
-        f"app_source {parsed.name!r} is defined twice (or collides with the "
-        f"built-in {DEFAULT_APP_SOURCE!r} source at {apps_root}); give it "
-        f"another name"
+        f"repo {parsed.name!r} is defined twice (or collides with the built-in "
+        f"{MAIN_REPO!r} repo at {main_path}); give it another name"
       )
 
-    path = ep(parsed.location)
+    if parsed.url is not None:
+      try:
+        remote = parse_github_url(parsed.url)
+      except ValueError as e:
+        return refuse(f"repo {parsed.name!r} has an unusable url: {e}")
+      # A mirror lives under repos_root by name, so its location is not the
+      # operator's to choose -- only the remote it tracks is.
+      repos[parsed.name] = Repo(parsed.name, repos_root / parsed.name, "github", remote)
+      names_by_path[repos_root / parsed.name] = parsed.name
+      continue
+
+    assert parsed.path is not None
+    path = ep(parsed.path)
     if path in names_by_path:
       return refuse(
-        f"app_source {parsed.name!r} points at {path}, which is already the "
-        f"{names_by_path[path]!r} source; every app there would resolve twice"
+        f"repo {parsed.name!r} points at {path}, which is already the "
+        f"{names_by_path[path]!r} repo; every app there would resolve twice"
       )
 
     names_by_path[path] = parsed.name
-    sources[parsed.name] = path
+    repos[parsed.name] = Repo(parsed.name, path, "local")
 
-  return sources
+  return repos
 
 
 CONFIG_LOCATIONS = [

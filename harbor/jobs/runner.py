@@ -17,7 +17,6 @@ from typing import Any
 import schedule
 
 from harbor.jobs.cmd import CmdJob
-from harbor.jobs.fetch import FetchJob
 from harbor.jobs.install import InstallJob
 from harbor.jobs.job import DONE, FAILED, QUEUED, RUNNING, Job
 from harbor.jobs.metrics import HostMetricsJob, VolumeMetricsJob
@@ -33,14 +32,11 @@ logger = logging.getLogger("harbor.jobs")
 
 MAX_HISTORY = 200
 
-# Every verb here but `fetch` takes ids of things that already exist -- an app
-# id, or a `command` name the app's own manifest declares. Nothing accepts a
-# manifest or a filesystem path: those are the arguments that let a caller
-# define what an app *is*, and defining an app means arbitrary bind mounts,
-# which means root. Path-style `stage` stays CLI-only for exactly that reason.
-# `fetch` takes a github: URL and nothing else -- `parse_target` refuses
-# anything that is not one -- and it only copies files into the apps root;
-# staging and starting stay separate, deliberate steps.
+# Every verb here takes ids of things that already exist -- an app id, or a
+# `command` name the app's own manifest declares. Nothing accepts a manifest or
+# a filesystem path: those are the arguments that let a caller define what an
+# app *is*, and defining an app means arbitrary bind mounts, which means root.
+# Path-style `stage` stays CLI-only for exactly that reason.
 JOBS: dict[str, type[Job]] = {
   "start": StartJob,
   "stop": StopJob,
@@ -49,7 +45,6 @@ JOBS: dict[str, type[Job]] = {
   "snapshot": SnapshotJob,
   "restore": RestoreJob,
   "cmd": CmdJob,
-  "fetch": FetchJob,
   "uninstall": UninstallJob,
   "reset": ResetJob,
   "volume-metrics": VolumeMetricsJob,

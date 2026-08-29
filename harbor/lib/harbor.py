@@ -96,8 +96,8 @@ class CatalogEntry:
 def ambiguity_message(app: AppID | str, entries: tuple[CatalogEntry, ...]) -> str:
   locations = "\n".join(f"  {entry.source}: {entry.path}" for entry in entries)
   return (
-    f'Multiple apps matched app_id "{app}":\n{locations}\n'
-    f"Pass the full path to the one you mean, or remove the others."
+    f'More than one repo carries "{app}":\n{locations}\n'
+    f"Name the one you mean as {app}@<repo>, or pass its full path."
   )
 
 
@@ -261,10 +261,10 @@ class HarborCtx:
   def app_catalog(self) -> dict[str, tuple[CatalogEntry, ...]]:
     """Every bundle in every app source, keyed by app id, in source order."""
     found: dict[str, list[CatalogEntry]] = {}
-    for name, source_path in self.config.app_sources.items():
-      for app_id, rel_path in scan_happs(source_path):
+    for name, repo in self.config.repos.items():
+      for app_id, rel_path in scan_happs(repo.path):
         found.setdefault(app_id, []).append(
-          CatalogEntry(app_id, source_path / rel_path, name)
+          CatalogEntry(app_id, repo.path / rel_path, name)
         )
     return {app_id: tuple(entries) for app_id, entries in found.items()}
 
@@ -286,9 +286,26 @@ class HarborCtx:
       return False
     return source.read_bytes() != paths.manifest_path.read_bytes()
 
-  def known_bundles(self) -> dict[str, Path]:
-    """Map app_id -> the one catalog entry harbor would use for it."""
-    return {app_id: entries[0].path for app_id, entries in self.app_catalog().items()}
+  def resolved_bundles(self) -> dict[str, Path]:
+    """Map app_id -> its bundle, for ids exactly one repo carries.
+
+    A contested id is left out rather than resolved to the first repo that
+    happened to be scanned: harbor does not guess which repo owns an id, and
+    `bundle_path` raises for the same reason.
+    """
+    return {
+      app_id: entries[0].path
+      for app_id, entries in self.app_catalog().items()
+      if len(entries) == 1
+    }
+
+  def contested_app_ids(self) -> dict[str, tuple[str, ...]]:
+    """Ids more than one repo carries, and which repos those are."""
+    return {
+      app_id: tuple(entry.source for entry in entries)
+      for app_id, entries in self.app_catalog().items()
+      if len(entries) > 1
+    }
 
   def staged_app_ids(self) -> set[str]:
     """Every app id with a happ copy under run/."""
@@ -308,7 +325,7 @@ class HarborCtx:
   def known_apps(self) -> list[AppID]:
     # Staged apps stay resolvable by id even with no catalog entry, so an app
     # whose `apps/` folder was deleted can still be stopped and removed.
-    ids = dict.fromkeys(self.known_bundles())
+    ids = dict.fromkeys(self.app_catalog())
     ids.update(dict.fromkeys(sorted(self.staged_app_ids())))
     return [AppID(app_id) for app_id in ids]
 
@@ -326,7 +343,7 @@ class HarborCtx:
 
   def _observed_app_ids(self) -> set[str]:
     """Every app_id that has left a trace anywhere."""
-    ids = set(self.known_bundles())
+    ids = set(self.app_catalog())
     if self.config.run_root.is_dir():
       ids |= {path.name for path in self.config.run_root.iterdir() if path.is_dir()}
     ids |= set(load_harbor_run_unit_status())

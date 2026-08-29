@@ -12,20 +12,27 @@ CONFIG_TEMPLATE = """\
 # Harbor configuration — edit this file to change your setup.
 # Paths are relative to the directory containing this file unless absolute.
 
-apps_root = "apps"
+repos_root = "repos"
 run_root = "run"
 volume_root = "volumes"
 master_keyfile = "master.key"
 port_base = 41000
 
-# Optional: extra directories to look for happs in, on top of apps_root above
-# (which is always the "apps" source). Repeat the block for more. An app id
-# carried by two sources is ambiguous; `harbor doctor` reports those, and you
-# stage one by passing its full path.
+# Repos are where the catalog comes from. `repos/main` is always there and is
+# where you drop happs by hand. Add more with `harbor repo add`, which writes
+# the blocks below -- a directory on this machine, or a folder in a GitHub
+# repository that harbor mirrors into repos/<name>.
 #
-# [[app_source]]
-# name     = "dev"
-# location = "~/code/happs"
+# An app id carried by two repos is ambiguous: `harbor doctor` reports those,
+# and you install one by naming its repo, `harbor install <app>@<repo>`.
+#
+# [[repo]]
+# name = "dev"
+# path = "~/code/happs"
+#
+# [[repo]]
+# name = "harbor"
+# url  = "github://nepthar/harbor/main/apps"
 
 # The address by which harbor is reachable on your network, used for setting
 # up routes. Every route provider that proxies traffic points at it, so it is
@@ -102,7 +109,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
     conn.err("If you want to re-initialize, remove it first.")
     raise SystemExit(1)
 
-  (root / "apps").mkdir(parents=True, exist_ok=True)
+  (root / "repos" / "main").mkdir(parents=True, exist_ok=True)
   (root / "run").mkdir(parents=True, exist_ok=True)
   (root / "config").mkdir(parents=True, exist_ok=True)
   for kind in VOLUME_KINDS:
@@ -121,7 +128,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   load_config_file(config_path)
 
   conn.out(f"Initialized harbor root at {root}")
-  conn.out(f"  apps:        {root / 'apps'}")
+  conn.out(f"  repos:       {root / 'repos'}")
   conn.out(f"  run:         {root / 'run'}")
   conn.out(f"  config:      {root / 'config'}")
   conn.out(f"  volumes:     {root / 'volumes'} ({', '.join(VOLUME_KINDS)})")
@@ -129,7 +136,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   conn.out(f"  master.key:  {master_key_path}")
   conn.out(f"\nTo change your configuration, edit {config_path}")
   conn.out(
-    "\nNext: put a happ in apps/ (or `harbor fetch <target>`), then\n"
+    "\nNext: put a happ in repos/main/ (or `harbor repo add <url>`), then\n"
     "  harbor install <app>   install it without starting it\n"
     "  harbor start <app>     start it (installing first if needed)\n"
     "  harbor stop <app>      stop it\n"

@@ -1,8 +1,6 @@
 import argparse
-from pathlib import Path
 
 from harbor.cli.kv import parse_kv
-from harbor.lib.happ import app_id_from_path, is_pathlike
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import staging_target, start
 from harbor.lib.receipt import capability_receipt, location_receipt
@@ -35,20 +33,18 @@ def register(subparsers) -> None:
     metavar="VOLUME=HOST_VOLUME",
     help="Bind an app volume to a host_volume tag before starting (repeatable)",
   )
+  parser.add_argument(
+    "--force",
+    action="store_true",
+    help="Start even though this id was last installed from somewhere else",
+  )
   parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
-  app = (
-    app_id_from_path(Path(args.app).expanduser().resolve())
-    if is_pathlike(args.app)
-    else ctx.resolve_app(args.app)
-  )
+  target = staging_target(ctx, args.app, force=args.force)
+  app = target.app_id
   with ctx.locked(f"start {app}", app):
-    target = staging_target(ctx, args.app)
-    if target.linked_entry is not None:
-      conn.out(f"Linked {target.linked_entry} -> {target.linked_entry.resolve()}")
-
     sets = [parse_kv(item, "--set") for item in args.sets]
     binds = [parse_kv(item, "--bind") for item in args.binds]
     if target.bundle is not None:
@@ -58,7 +54,9 @@ def run(args: argparse.Namespace, ctx: HarborCtx, conn: Conn) -> None:
     else:
       # Catalog may be gone; start will use the run copy as-is.
       bundle = ctx.config.app_run_path(target.app_id)
-    result = start(target.app_id, bundle, ctx, sets=sets, binds=binds)
+    result = start(
+      target.app_id, bundle, ctx, sets=sets, binds=binds, bound=target.bound_to
+    )
 
     compact = capability_receipt(result.stack, result.run_data, ctx, compact=True)
     if compact.strip():
