@@ -71,35 +71,40 @@ def apps_table(apps):
 
 
 def lifecycle_bar(app):
-  """Start, stop, install, snapshot. Each opens the job modal."""
+  """Start or stop, then restart, snapshot, uninstall. Each opens the job modal."""
   app_id = app["app_id"]
   name = app.get("display_name") or app_id
   running = app["status"] == "running"
   installed = app.get("state") == "installed"
-  buttons = [
-    job_button(
-      "Start",
-      "start",
-      title=f"Start {name}",
-      desc=f"Starts {app_id}, installing it first if it is not installed yet.",
-      args={"app": app_id},
-      enabled=not running,
-    ),
+  # Exactly one of start/stop ever applies, so only that one is drawn, and it
+  # carries a word rather than a glyph -- it is the verb the page is for.
+  primary = (
     job_button(
       "Stop",
       "stop",
       title=f"Stop {name}",
       desc=f"Stops {app_id}'s containers. Its data and configuration are untouched.",
       args={"app": app_id},
-      enabled=running,
-    ),
+    )
+    if running
+    else job_button(
+      "Start",
+      "start",
+      title=f"Start {name}",
+      desc=f"Starts {app_id}, installing it first if it is not installed yet.",
+      args={"app": app_id},
+    )
+  )
+  buttons = [
+    primary,
     job_button(
-      "Reinstall",
-      "install",
-      title=f"Reinstall {name}",
+      "Restart",
+      "restart",
+      title=f"Restart {name}",
       desc=(
-        f"Rebuilds {app_id}'s installation from the catalog copy, picking up a "
-        f"changed manifest. Data, configuration and its address are kept."
+        f"Stops {app_id} if it is running, rebuilds its installation from the "
+        f"catalog copy (pending configuration and a changed manifest included), "
+        f"then starts it again if it was running. Data and its address are kept."
       ),
       args={"app": app_id},
     ),
@@ -116,8 +121,8 @@ def lifecycle_bar(app):
       enabled=installed,
     ),
     job_button(
-      "Uninstall",
-      title=f"Uninstall {name}",
+      "Remove",
+      title=f"Remove {name}",
       desc=(
         f"Pick how much of {app_id} to remove. To keep a copy of the data "
         f"first, close this and take a Snapshot."
@@ -152,6 +157,7 @@ def lifecycle_bar(app):
           ),
         },
       ],
+      danger=True,
     ),
   ]
   return '<div class="row actions">' + "".join(buttons) + "</div>"
@@ -396,10 +402,9 @@ def app_page(app, notice=""):
   skip = {"display_name", "description", "app_id"}
   pairs = [(k, v) for k, v in sorted(meta.items()) if k not in skip]
   return (
-    notice + f'<div class="apphead"><div>{status_cell(app)}'
+    notice + f'<div class="apphead">{status_cell(app)}'
     f'<p class="lede">{esc(app.get("description") or "")}</p>'
     f'<p class="muted mono">{esc(app["app_id"])}</p></div>'
-    f"{lifecycle_bar(app)}</div>"
     + pending_card(app)
     + issues_card(app)
     + "<h2>Manifest</h2>"
@@ -434,6 +439,11 @@ def detail_page(app_id, version, notice=""):
   try:
     app = api(f"/apps/{quote(app_id)}")
     title = app.get("display_name") or app_id
-    return title, app_page(app, notice), version
+    return (
+      title,
+      app_page(app, notice),
+      version,
+      (f'<span class="head-actions">{lifecycle_bar(app)}</span>'),
+    )
   except ApiError as e:
-    return app_id, error_card(e), version
+    return app_id, error_card(e), version, ""

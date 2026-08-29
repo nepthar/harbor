@@ -24,7 +24,7 @@ def _rows(snapshots):
       f'<td class="muted">{fmt_size(snap.get("bytes"))}</td>'
       f'<td class="act">'
       + job_button(
-        "Restore",
+        "restore",
         "restore",
         title=f"Restore {snap['app_id']}",
         desc=(
@@ -33,6 +33,7 @@ def _rows(snapshots):
           f"when there is something to overwrite."
         ),
         args={"app": snap["app_id"], "snapshot": snap["name"]},
+        icon="database-import",
       )
       + "</td>"
       "</tr>"
@@ -49,9 +50,8 @@ def page(notice=""):
   body = notice
   snapshots = api("/snapshots")["snapshots"]
   return (
-    body + '<p class="lede">Archives under <code>snapshots/</code>. Restore '
-    "replaces the app&rsquo;s current run state; a pre-restore snapshot is "
-    "taken first when there is something to overwrite.</p>"
+    body
+    + '<p class="lede">Application snapshots</p>'
     + f'<div class="card">{_rows(snapshots)}</div>'
     + job_modal()
   )

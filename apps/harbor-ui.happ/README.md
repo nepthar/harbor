@@ -15,6 +15,8 @@ no longer matches.
 | `uv.lock` | Frozen resolve for `uv sync --frozen` |
 | `api.py` | Client for harbord (unix socket or TCP) |
 | `layout.py` | Page chrome: CSS, JS, nav, shared fragments |
+| `dashboard.py` | Homepage: host CPU and memory charts |
+| `static/` | Vendored browser assets, served at `/static` |
 | `catalog.py` | Catalog listing, app cards, fetch, updates |
 | `installed.py` | Installed-apps list and the app detail page |
 | `volumes.py` | Host volumes and harbor-managed storage |

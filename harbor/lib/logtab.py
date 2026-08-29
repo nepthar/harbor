@@ -19,8 +19,13 @@ class LogTab:
     ts: str
     value: str
 
+    @property
     def datetime(self) -> datetime:
       return datetime.fromisoformat(self.ts)
+
+    @property
+    def unix_seconds(self) -> int:
+      return int(datetime.fromisoformat(self.ts).timestamp())
 
   FS = "\t"
   KEY_RE = re.compile(r"[a-zA-Z0-9_/.-]+\Z")

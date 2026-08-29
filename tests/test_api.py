@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from harbor.daemon.api import API_VERSION, create_app
 from harbor.jobs import JobRunner
 from harbor.lib.config import load_config
 from harbor.lib.harbor import HarborCtx
+from harbor.lib.metric import record_volume_sizes
 
 APP = "io.p2net.basic-features"
 
@@ -297,6 +299,52 @@ def test_stop_runs_as_a_job(harbor_env, client, jobs):
 
   assert client.get("/apps").json()["apps"][0]["status"] == "stopped"
   assert client.get(f"/jobs/{job['id']}").json() == job
+
+
+def _compose_calls(harbor_env) -> list[list[str]]:
+  return [
+    json.loads(line)["args"]
+    for line in harbor_env.docker_log.read_text().splitlines()
+    if json.loads(line)["args"][:1] == ["compose"]
+  ]
+
+
+def test_restart_stops_restages_and_starts_a_running_app(harbor_env, client, jobs):
+  harbor_env.run("start", APP, "--set", "admin_user=root")
+  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
+
+  job = submit(client, jobs, "restart", {"app": APP})
+  assert job["state"] == "done", job["error"]
+  assert f"Restarted {APP}" in read_log(job)
+  assert client.get(f"/apps/{APP}").json()["status"] == "running"
+  staged = (harbor_env.run_root / APP / "happ" / "manifest.toml").read_text()
+  assert 'version      = "0.2.0"' in staged
+  assert _compose_calls(harbor_env) == [
+    ["compose", "up", "-d"],
+    ["compose", "down"],
+    ["compose", "up", "-d"],
+  ]
+
+
+def test_restart_restages_a_stopped_app_without_starting(harbor_env, client, jobs):
+  harbor_env.run("install", APP)
+  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
+
+  job = submit(client, jobs, "restart", {"app": APP})
+  assert job["state"] == "done", job["error"]
+  assert f"Restaged {APP}" in read_log(job)
+  assert client.get("/apps").json()["apps"][0]["status"] == "stopped"
+  staged = (harbor_env.run_root / APP / "happ" / "manifest.toml").read_text()
+  assert 'version      = "0.2.0"' in staged
+  assert _compose_calls(harbor_env) == []
+
+
+def test_restart_unknown_app_is_refused(harbor_env, client):
+  response = client.post("/jobs", json={"verb": "restart", "args": {"app": "nope"}})
+  assert response.status_code == 400
+  assert "No app found" in response.json()["error"]
 
 
 def test_failed_job_carries_the_error(harbor_env, client, jobs):
@@ -663,16 +711,26 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   assert harbor_env.run("start", APP, "--set", "admin_user=root").returncode == 0
   (harbor_env.volumes_root / "data" / APP / "config" / "db.txt").write_text("xy")
 
-  volumes = {v["name"]: v for v in client.get("/volumes").json()["volumes"]}
+  body = client.get("/volumes").json()
+  volumes = {v["name"]: v for v in body["volumes"]}
   assert volumes["config"]["app_id"] == APP
   assert volumes["config"]["kind"] == "data"
   assert volumes["config"]["in_use"] is True
   assert volumes["config"]["declared"] is True
-  # Sizes are opt-in, because measuring walks every file under every volume.
   assert volumes["config"]["bytes"] is None
+  assert body["var_bytes"] is None
+  assert body["snapshots_bytes"] is None
 
-  sized = {v["name"]: v for v in client.get("/volumes?sizes=1").json()["volumes"]}
-  assert sized["config"]["bytes"] == 2
+  media_dir = harbor_env.root / "external-data"
+  media_dir.mkdir(exist_ok=True)
+  (media_dir / "clip").write_bytes(b"abcd")
+  record_volume_sizes(ctx())
+  body = client.get("/volumes").json()
+  volumes = {v["name"]: v for v in body["volumes"]}
+  assert volumes["config"]["bytes"] == 2
+  assert body["var_bytes"] > 0
+  media = {v["tag"]: v for v in client.get("/host-volumes").json()["host_volumes"]}
+  assert media["media"]["bytes"] == 4
 
 
 def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
@@ -843,3 +901,52 @@ def test_route_assignment_is_recorded_without_calling_the_provider(
   response = client.post("/apps/routes-demo/config", json={"route": {"main": "web"}})
   assert response.status_code == 200, response.text
   assert client.get("/apps/routes-demo").json()["config_pending"] is False
+
+
+# --- metrics ---------------------------------------------------------------
+
+
+def _gauge_line(ago_s: int, name: str, value: str) -> str:
+  ts = (
+    (datetime.now(UTC) - timedelta(seconds=ago_s))
+    .isoformat(timespec="seconds")
+    .replace("+00:00", "Z")
+  )
+  return f"{ts}\tset\tgauge/{name}\t{value}\n"
+
+
+def test_metrics_empty_when_nothing_recorded(harbor_env, client):
+  body = client.get("/metrics").json()
+  assert body["metrics"] == {}
+  assert body["until"] - body["since"] == 3600
+
+
+def test_metrics_returns_recent_gauge_history(harbor_env, client):
+  c = ctx()
+  c.record_gauge("host_cpu_used_ratio", 0.4)
+  c.record_gauge("host_mem_used_ratio", 0.5)
+  c.record_gauge("cpu_used_ratio/demo.app", 0.1)
+
+  body = client.get("/metrics?prefix=host_cpu_used_ratio&hours=1").json()
+  series = body["metrics"]["host_cpu_used_ratio"]
+  assert len(series) == 1
+  assert series[0]["v"] == 0.4
+  assert "t" in series[0]
+  assert "host_mem_used_ratio" not in body["metrics"]
+  assert "cpu_used_ratio/demo.app" not in body["metrics"]
+
+
+def test_metrics_drops_points_older_than_hours(harbor_env, client):
+  c = ctx()
+  with c.config.metrics_log.open("a") as f:
+    f.write(_gauge_line(7200, "host_cpu_used_ratio", "0.9"))
+  c.record_gauge("host_cpu_used_ratio", 0.2)
+
+  body = client.get("/metrics?prefix=host_cpu_used_ratio&hours=1").json()
+  assert [p["v"] for p in body["metrics"]["host_cpu_used_ratio"]] == [0.2]
+
+
+def test_metrics_refuses_hours_below_one(harbor_env, client):
+  response = client.get("/metrics?hours=0")
+  assert response.status_code == 400
+  assert "hours must be >= 1" in response.json()["error"]

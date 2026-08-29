@@ -4,3 +4,11 @@ Copyright 2026 The Harbor Authors
 Licensed under the Apache License, Version 2.0 (the "License"); you may not
 use this project except in compliance with the License. A copy of the License
 is in the LICENSE file, and at http://www.apache.org/licenses/LICENSE-2.0
+
+This product includes uPlot (https://github.com/leeoniya/uPlot),
+Copyright (c) 2022 Leon Sorokin, MIT License. The license text is in
+apps/harbor-ui.happ/ui/static/uplot-1.6.32/LICENSE.
+
+This product includes Material Design Icons
+(https://pictogrammers.com/library/mdi/), Copyright (c) Pictogrammers,
+Apache License 2.0.

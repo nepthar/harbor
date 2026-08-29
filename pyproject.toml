@@ -20,6 +20,7 @@ dependencies = [
     "tabulate>=0.10.0",
     "requests>=2.32.0",
     "tomlkit>=0.13.0",
+    "psutil>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,7 @@ dependencies = [
 # these -- see harbor/daemon/__init__.py.
 daemon = [
     "fastapi>=0.121.0",
+    "schedule>=1.2",
     "uvicorn>=0.34.0",
 ]
 
@@ -55,6 +57,7 @@ dev = [
     "fastapi>=0.121.0",
     "uvicorn>=0.34.0",
     "httpx2>=2.12.0",
+    "schedule>=1.2",
 ]
 
 [tool.pytest.ini_options]

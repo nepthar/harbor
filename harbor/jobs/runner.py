@@ -10,14 +10,19 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
+
+import schedule
 
 from harbor.jobs.cmd import CmdJob
 from harbor.jobs.fetch import FetchJob
 from harbor.jobs.install import InstallJob
-from harbor.jobs.job import DONE, FAILED, Job
+from harbor.jobs.job import DONE, FAILED, QUEUED, RUNNING, Job
+from harbor.jobs.metrics import HostMetricsJob, VolumeMetricsJob
 from harbor.jobs.remove import ResetJob, UninstallJob
+from harbor.jobs.restart import RestartJob
 from harbor.jobs.restore import RestoreJob
 from harbor.jobs.snapshot import SnapshotJob
 from harbor.jobs.start import StartJob
@@ -39,6 +44,7 @@ MAX_HISTORY = 200
 JOBS: dict[str, type[Job]] = {
   "start": StartJob,
   "stop": StopJob,
+  "restart": RestartJob,
   "install": InstallJob,
   "snapshot": SnapshotJob,
   "restore": RestoreJob,
@@ -46,7 +52,17 @@ JOBS: dict[str, type[Job]] = {
   "fetch": FetchJob,
   "uninstall": UninstallJob,
   "reset": ResetJob,
+  "volume-metrics": VolumeMetricsJob,
+  "host-metrics": HostMetricsJob,
 }
+
+
+def metric_schedule(submit: Callable[[str], None]) -> schedule.Scheduler:
+  """host-metrics every 5 minutes, volume-metrics every hour. In-process only."""
+  sched = schedule.Scheduler()
+  sched.every(5).minutes.do(submit, "host-metrics")
+  sched.every().hour.do(submit, "volume-metrics")
+  return sched
 
 
 class JobRunner:
@@ -58,12 +74,17 @@ class JobRunner:
     self._queue: queue.Queue[str] = queue.Queue()
     self._lock = threading.Lock()
     self._thread: threading.Thread | None = None
+    self._sched: threading.Thread | None = None
 
   def start(self) -> None:
     if self._thread is not None:
       raise RuntimeError("JobRunner is already running")
     self._thread = threading.Thread(target=self._work, name="harbor-jobs", daemon=True)
     self._thread.start()
+    self._sched = threading.Thread(
+      target=self._schedule, name="harbor-jobs-sched", daemon=True
+    )
+    self._sched.start()
 
   def submit(self, verb: str, args: dict[str, str], ctx: HarborCtx) -> dict[str, Any]:
     spec = JOBS.get(verb)
@@ -107,6 +128,27 @@ class JobRunner:
   def _work(self) -> None:
     while True:
       self._run(self._queue.get())
+
+  def _schedule(self) -> None:
+    sched = metric_schedule(self._submit_scheduled)
+    while True:
+      sched.run_pending()
+      time.sleep(1)
+
+  def _submit_scheduled(self, verb: str) -> None:
+    if self._busy_with(verb):
+      return
+    try:
+      self.submit(verb, {}, self._ctx_factory())
+    except Exception:  # noqa: BLE001 - a missed tick must not kill the scheduler
+      logger.exception("could not submit scheduled %s", verb)
+
+  def _busy_with(self, verb: str) -> bool:
+    with self._lock:
+      return any(
+        job.name == verb and job.state in (QUEUED, RUNNING)
+        for job in self._jobs.values()
+      )
 
   def _run(self, job_id: str) -> None:
     with self._lock:

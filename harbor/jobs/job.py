@@ -33,6 +33,7 @@ class Job:
   description: str
   required_args: tuple[str, ...] = ()
   optional_args: tuple[str, ...] = ()
+  record_activity: bool = True
   app: str | None = None
 
   def __init__(self) -> None:
@@ -78,9 +79,12 @@ class Job:
     return job
 
   def execute(self, ctx: HarborCtx, *, echo: TextIO | None = None) -> None:
-    """Run the work as one recorded Activity, then re-raise anything it hit."""
+    """Run the work, optionally as one recorded Activity, then re-raise."""
     self.state = RUNNING
     self.started_at = _now()
+    if not self.record_activity:
+      self._execute_quiet(ctx)
+      return
     activity = Activity(ctx, self.name, app=self.app, args=self.args, echo=echo)
     ok = False
     try:
@@ -93,6 +97,18 @@ class Job:
       self._activity = None
       self.log = activity.log
       self.error = activity.error
+      self.state = DONE if ok else FAILED
+      self.finished_at = _now()
+
+  def _execute_quiet(self, ctx: HarborCtx) -> None:
+    ok = False
+    try:
+      self.run(ctx)
+      ok = True
+    except Exception as e:
+      self.error = str(e)
+      raise
+    finally:
       self.state = DONE if ok else FAILED
       self.finished_at = _now()
 

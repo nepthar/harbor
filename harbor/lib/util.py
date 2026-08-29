@@ -24,6 +24,10 @@ def now_ts() -> str:
   return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def ts_to_seconds(ts: str) -> int:
+  return int(datetime.fromisoformat(ts).timestamp())
+
+
 # How harbor spells log levels: lower case, all the same width, so lines stay
 # in columns whether they land on a terminal or in a run log under var/logs.
 LOG_LEVEL_NAMES = {

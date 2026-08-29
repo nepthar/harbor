@@ -204,7 +204,11 @@ class Config:
 
   @property
   def activity_log(self) -> Path:
-    return self.harbor_root / "activity.logtab"
+    return self.var_root / "activity.logtab"
+
+  @property
+  def metrics_log(self) -> Path:
+    return self.var_root / "metrics.logtab"
 
   @property
   def activity_root(self) -> Path:

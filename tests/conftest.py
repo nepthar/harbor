@@ -124,6 +124,16 @@ elif args[:2] == ["ps", "-a"]:
                 f"harbor.run_unit={container['run_unit']}"
             ),
         }))
+elif args[0] == "stats":
+    for container in containers:
+        if container.get("state") != "running":
+            continue
+        print(json.dumps({
+            "ID": container["id"],
+            "Name": f"{container['app_id']}-{container['run_unit']}-1",
+            "CPUPerc": container.get("cpu_perc", "0.00%"),
+            "MemPerc": container.get("mem_perc", "0.00%"),
+        }))
 """
 
 

@@ -63,5 +63,5 @@ def read_app_actions(ctx: HarborCtx) -> dict[str, tuple[datetime, str]]:
   for key, entry in ctx.activity_log.scan(prefix="apps/", suffix="/status").items():
     app_id = key.removeprefix("apps/").removesuffix("/status")
     if app_id:
-      actions[app_id] = (entry.datetime(), entry.value)
+      actions[app_id] = (entry.datetime, entry.value)
   return actions

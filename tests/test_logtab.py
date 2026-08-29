@@ -29,7 +29,7 @@ def test_entry_carries_timestamp(tab):
   assert entry is not None
   assert entry.value == "1"
   assert entry.ts.endswith("Z")
-  assert entry.datetime().tzinfo is not None
+  assert entry.datetime.tzinfo is not None
 
 
 # ── write / read / overwrite ──────────────────────────────────────────────
@@ -254,7 +254,9 @@ def test_write_rejects_invalid_key(tab, key):
     tab.write(key, "v")
 
 
-@pytest.mark.parametrize("key", ["a", "A9", "apps/io.p2net.x/config/name", "a-b_c.d"])
+@pytest.mark.parametrize(
+  "key", ["a", "A9", "apps/io.p2net.x/config/name", "a-b_c.d", "gauge/vol/app/data/x"]
+)
 def test_write_accepts_valid_keys(tab, key):
   tab.write(key, "v")
   assert tab.read(key).value == "v"
