@@ -169,9 +169,11 @@ def test_record_host_stats_skips_unavailable_gauges(harbor_env, monkeypatch):
 def test_record_volume_sizes_skips_missing_host_paths(harbor_env):
   ctx = _ctx(harbor_env)
   n = record_volume_sizes(ctx)
-  assert n == 1
+  # var/ and repos/ exist in a fresh root; snapshots/ does not until one is taken.
+  assert n == 2
   assert ctx.read_gauges("volume_size_bytes/") == {}
   assert "gauge/var_size_bytes" in ctx.read_gauges("var_size_bytes")
+  assert "gauge/repos_size_bytes" in ctx.read_gauges("repos_size_bytes")
   assert ctx.read_gauges("snapshots_size_bytes") == {}
 
 

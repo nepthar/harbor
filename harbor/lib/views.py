@@ -221,13 +221,17 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   ]
 
 
+# The directories `record_volume_sizes` gauges by name, in display order.
+HARBOR_DIRS = ("var", "snapshots", "repos")
+
+
 def harbor_dir_sizes(ctx: HarborCtx) -> dict[str, int | None]:
-  """`$var` and `$snapshots` as last recorded by volume-metrics."""
+  """Harbor's own directories, as last recorded by volume-metrics."""
   return {
-    "var_bytes": _gauge_bytes(ctx.read_gauges("var_size_bytes"), "var_size_bytes"),
-    "snapshots_bytes": _gauge_bytes(
-      ctx.read_gauges("snapshots_size_bytes"), "snapshots_size_bytes"
-    ),
+    f"{name}_bytes": _gauge_bytes(
+      ctx.read_gauges(f"{name}_size_bytes"), f"{name}_size_bytes"
+    )
+    for name in HARBOR_DIRS
   }
 
 

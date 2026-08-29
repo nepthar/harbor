@@ -699,6 +699,7 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   assert volumes["config"]["bytes"] is None
   assert body["var_bytes"] is None
   assert body["snapshots_bytes"] is None
+  assert body["repos_bytes"] is None
 
   media_dir = harbor_env.root / "external-data"
   media_dir.mkdir(exist_ok=True)
@@ -708,6 +709,8 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   volumes = {v["name"]: v for v in body["volumes"]}
   assert volumes["config"]["bytes"] == 2
   assert body["var_bytes"] > 0
+  # repos/main holds the fixture happs, so it is gauged and non-empty.
+  assert body["repos_bytes"] > 0
   media = {v["tag"]: v for v in client.get("/host-volumes").json()["host_volumes"]}
   assert media["media"]["bytes"] == 4
 

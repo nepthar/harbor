@@ -44,7 +44,7 @@ from harbor.lib.stack import AppStack
 # 10: GET /metrics (gauge history).
 # 11: /volumes bytes come from gauges; sizes=1 is gone; host volumes carry bytes.
 # 12: restart is a job verb.
-API_VERSION = 13
+API_VERSION = 14
 
 CtxFactory = Callable[[], HarborCtx]
 
