@@ -42,7 +42,8 @@ to 0.25s.
 | `test_config_schema.py` | Config store, encryption, binds, metadata |
 | `test_stack.py` | Manifest bytes in, `AppStack` out |
 | `test_compose.py` | `AppStack` + run data out to a compose file; readiness |
-| `test_fetch.py` | `harbor fetch` against an in-process fake GitHub |
+| `test_repo.py` | Repos and mirroring, against an in-process fake GitHub |
+| `test_repo_catalog.py` | Several repos: the catalog, ambiguity, and bindings |
 | `test_layout.py` | Staging: the run dir, volume links, re-staging |
 | `test_cli.py` | The command surface — exit codes, output, disk state |
 | `test_lock.py` | Harbor + app locks; who holds them and for how long |
@@ -98,5 +99,5 @@ traceback.
 **`harbor init` on a fresh host.** Ownership and permissions of the volume
 roots as a non-root user, and on a filesystem that is not the developer's.
 
-**`harbor fetch` against real GitHub.** Rate-limit headers, redirects, and a
+**`harbor repo add` against real GitHub.** Rate-limit headers, redirects, and a
 large happ. The fake serves the two endpoints harbor uses and nothing else.

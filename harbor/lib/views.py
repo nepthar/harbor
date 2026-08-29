@@ -20,6 +20,7 @@ from harbor.lib.lifecycle.restore import snapshot_names, snapshotted_app_ids
 from harbor.lib.lifecycle.snapshot import snapshot_archive, split_snapshot_name
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
+from harbor.lib.repo import MAIN_REPO, bound_apps
 from harbor.lib.run_layout import AppRunData, load_run_data
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore
@@ -111,6 +112,37 @@ def config_status(stack: AppStack, store: AppStore | None) -> str:
       continue
     return "missing"
   return "ready"
+
+
+def repos_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """Every configured repo: what it is, and what it last mirrored."""
+  catalog = ctx.app_catalog()
+  out = []
+  for name, repo in ctx.config.repos.items():
+    state = ctx.harbor_db.get_repo_state(name) if repo.mirrored else None
+    out.append(
+      {
+        "name": name,
+        "kind": repo.kind,
+        "location": repo.describe(),
+        "url": repo.remote.url if repo.remote else None,
+        "path": str(repo.path),
+        "exists": repo.path.is_dir(),
+        "removable": name != MAIN_REPO,
+        "apps": sum(
+          1 for entries in catalog.values() for e in entries if e.source == name
+        ),
+        "bound_apps": list(bound_apps(ctx, name)),
+        "sha": state["sha"] if state else None,
+        "updated_at": state["at"] if state else None,
+      }
+    )
+  return out
+
+
+def contested_view(ctx: HarborCtx) -> dict[str, list[str]]:
+  """App ids more than one repo carries, and which repos those are."""
+  return {app_id: sorted(repos) for app_id, repos in ctx.contested_app_ids().items()}
 
 
 def _catalog_stack(entry: CatalogEntry) -> AppStack | None:

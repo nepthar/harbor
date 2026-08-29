@@ -20,19 +20,17 @@ port_base = 41000
 
 # Repos are where the catalog comes from. `repos/main` is always there and is
 # where you drop happs by hand. Add more with `harbor repo add`, which writes
-# the blocks below -- a directory on this machine, or a folder in a GitHub
+# the tables below -- a directory on this machine, or a folder in a GitHub
 # repository that harbor mirrors into repos/<name>.
 #
 # An app id carried by two repos is ambiguous: `harbor doctor` reports those,
 # and you install one by naming its repo, `harbor install <app>@<repo>`.
 #
-# [[repo]]
-# name = "dev"
+# [repo.dev]
 # path = "~/code/happs"
 #
-# [[repo]]
-# name = "harbor"
-# url  = "github://nepthar/harbor/main/apps"
+# [repo.harbor]
+# url = "github://nepthar/harbor/main/apps"
 
 # The address by which harbor is reachable on your network, used for setting
 # up routes. Every route provider that proxies traffic points at it, so it is

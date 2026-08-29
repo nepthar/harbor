@@ -19,6 +19,7 @@ import tomlkit
 from tomlkit import TOMLDocument
 
 from harbor.lib.config import _expand_path, load_config_file
+from harbor.lib.repo import MAIN_REPO
 from harbor.lib.util import validate_identifier
 
 logger = logging.getLogger("harbor.config_edit")
@@ -139,45 +140,46 @@ def remove_host_volume(ctx: HarborCtx, tag: str) -> None:
 
 
 def _repos(document: TOMLDocument):
-  """The `[[repo]]` array, created on first use."""
+  """The `[repo]` super table, created on first use."""
   if "repo" not in document:
-    document["repo"] = tomlkit.aot()
+    document["repo"] = tomlkit.table(is_super_table=True)
   return document["repo"]
 
 
 def add_repo(ctx: HarborCtx, name: str, *, path: str = "", url: str = "") -> None:
-  """Append a `[[repo]]` entry. Exactly one of path or url."""
+  """Write a `[repo.<name>]` table. Exactly one of path or url.
+
+  Existence is checked against the document, not `ctx.config`, which may
+  predate an earlier add.
+  """
   validate_identifier(name)
   if bool(path) == bool(url):
     raise ValueError("A repo needs exactly one of a local path or a github:// url")
-  if name in ctx.config.repos:
+  if name == MAIN_REPO:
     raise ValueError(
-      f"Repo {name!r} already exists ({ctx.config.repos[name].describe()}). "
-      f"Pass --name to add this one under a different name, or remove that one "
-      f"with `harbor repo remove {name}`."
+      f"{MAIN_REPO!r} is the built-in repo at {ctx.config.repos_root / MAIN_REPO}; "
+      f"give this one another name."
     )
   with edit_config(ctx) as document:
+    repos = _repos(document)
+    if name in repos:
+      raise ValueError(
+        f"Repo {name!r} already exists in {ctx.config.config_path}. Add this one "
+        f"under a different name, or remove that one with "
+        f"`harbor repo remove {name}`."
+      )
     table = tomlkit.table()
-    table["name"] = name
     if path:
       table["path"] = path
     else:
       table["url"] = url
-    _repos(document).append(table)
+    repos[name] = table
 
 
 def remove_repo(ctx: HarborCtx, name: str) -> None:
-  """Drop a `[[repo]]` entry. The mirrored directory is the caller's to clean."""
-  if name not in ctx.config.repos:
-    known = ", ".join(sorted(ctx.config.repos)) or "(none)"
-    raise ValueError(f"No repo {name!r}; configured repos: {known}.")
+  """Drop a `[repo.<name>]` table. The mirrored directory is the caller's."""
   with edit_config(ctx) as document:
-    entries = document.get("repo")
-    if entries is None:
+    repos = document.get("repo") or {}
+    if name not in repos:
       raise ValueError(f"Repo {name!r} is not in {ctx.config.config_path}")
-    for index, entry in enumerate(entries):
-      if entry.get("name") == name:
-        del entries[index]
-        break
-    else:
-      raise ValueError(f"Repo {name!r} is not in {ctx.config.config_path}")
+    del repos[name]

@@ -218,9 +218,7 @@ def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str,
   return run_data, dropped
 
 
-# Where an app records the source it was installed from. It lives in the app's
-# own config store, so it is destroyed by `--purge` and by nothing else -- the
-# same moment the secrets it belongs to are.
+# Lives in the app's config store, so `--purge` clears it and nothing else does.
 BOUND_TO_META = "bound_to"
 
 
@@ -231,13 +229,12 @@ class StagingTarget:
   app_id: AppID
   # None when the argument was a bare id; `ctx.bundle_path` answers that.
   bundle: Path | None
-  # The repo carrying the bundle. None means a bundle named by path, which
-  # belongs to no repo.
+  # None for a bundle named by path, which belongs to no repo.
   repo: str | None
 
   @property
   def bound_to(self) -> str | None:
-    """What to record as the source, or None to leave the recorded one alone."""
+    """The source to record, or None to leave the recorded one alone."""
     if self.repo:
       return f"repo {self.repo}"
     return str(self.bundle) if self.bundle else None
@@ -253,15 +250,13 @@ def bound_to(app: AppID | str, ctx: HarborCtx) -> str | None:
 def staging_target(
   ctx: HarborCtx, target: str, *, force: bool = False
 ) -> StagingTarget:
-  """Resolve a stage/start argument to one bundle and check it can claim the id.
+  """Resolve a stage/start argument -- a path, `<id>@<repo>`, or a bare id.
 
-  Three ways to name a bundle, each of them an explicit choice: a path, an
-  `<id>@<repo>`, or a bare id that only one repo carries.
+  Raises ValueError if the target is ambiguous, or if it would install over an
+  id already bound to another source and `force` is not set.
   """
   if is_pathlike(target):
     bundle = Path(target).expanduser().resolve()
-    # `app_id_from_path` is the validation: it says which way the path is not
-    # a happ, which a boolean check would throw away.
     resolved = StagingTarget(app_id_from_path(bundle), bundle, None)
   else:
     name, _, repo = target.partition("@")
@@ -286,8 +281,7 @@ def _from_catalog(ctx: HarborCtx, name: str, repo: str | None) -> StagingTarget:
     )
 
   if not entries:
-    # No catalog entry, but a staged copy: `start` runs that copy as-is, and
-    # whatever binding it already carries is still the truth.
+    # No catalog entry but a staged copy: `start` runs that copy as-is.
     if ctx.is_staged(app):
       return StagingTarget(app, None, None)
     raise ValueError(f'No app found for "{app}"')
@@ -297,13 +291,7 @@ def _from_catalog(ctx: HarborCtx, name: str, repo: str | None) -> StagingTarget:
 
 
 def _check_binding(ctx: HarborCtx, target: StagingTarget, *, force: bool) -> None:
-  """Refuse to install over an id whose config was written for another source.
-
-  Config, secrets and volume binds outlive an uninstall on purpose, and they
-  were generated for whatever was installed here before. A bundle from
-  somewhere else would inherit them -- the same mismatch `--purge` exists to
-  prevent, which is why it is the way out.
-  """
+  """Refuse an id whose surviving config and secrets were made for another source."""
   was = bound_to(target.app_id, ctx)
   now = target.bound_to
   if force or not was or not now or was == now:
@@ -424,8 +412,7 @@ def stage(
 ) -> StageSuccess:
   """Install `bundle` into `run/<id>/` without starting it.
 
-  `bound` is what the app should record as its source; None leaves whatever is
-  already recorded, which is what a restage wants.
+  `bound` is the source to record; None leaves the recorded one alone.
   """
   paths = ctx.staged_paths(app)
 

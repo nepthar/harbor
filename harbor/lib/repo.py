@@ -1,12 +1,11 @@
-"""Application repositories: where the catalog gets its happs.
+"""Application repositories: the directories the catalog scans for happs.
 
-A repo is a directory of happs. A `local` repo is a directory the operator
-already keeps; a `github` repo is a directory harbor mirrors out of GitHub into
-`repos/<name>/`. The catalog scans both identically -- the only difference is
-who writes the directory, so nothing below `Repo.path` knows which kind it has.
+A `local` repo is a directory the operator keeps; a `github` repo is one harbor
+mirrors into `repos/<name>/`. Nothing below `Repo.path` knows which kind it
+has. `main` is built in at `repos/main`.
 
-`main` is the built-in repo at `repos/main`, and is where an operator drops
-happs by hand.
+This module owns the repo model and the verbs over it. Talking to GitHub is
+`harbor.lib.github`.
 """
 
 from __future__ import annotations
@@ -123,10 +122,6 @@ def name_from_url(raw: str) -> str:
 
 
 # --- mirroring -------------------------------------------------------------
-#
-# A mirror is downloaded whole into a scratch directory and swapped in with one
-# rename. There is no partial state to reason about: either `repos/<name>` is
-# the previous commit or it is the new one.
 
 MAX_HAPPS = 128
 MAX_REPO_FILES = 1024
@@ -137,7 +132,7 @@ _SUFFIXES = (HAPP_TAR_SUFFIX, HAPP_MD_SUFFIX, HAPP_SUFFIX)
 
 @dataclass(frozen=True)
 class RemoteHapp:
-  """One happ found in a repo listing, and the blobs that make it up."""
+  """One happ in a repo listing, and the blobs that make it up."""
 
   app_id: str
   name: str  # the entry as it is named in the folder, suffix included
@@ -164,11 +159,9 @@ class MirrorResult:
 
 
 def group_happs(paths: Mapping[str, int]) -> tuple[RemoteHapp, ...]:
-  """Pick the happs out of a flat listing, ignoring everything else.
+  """Pick the happs out of a flat listing; anything else is skipped, not refused.
 
-  A repo is a folder that *contains* happs; a README, a LICENSE and any other
-  directory beside them are simply not happs, and are skipped rather than
-  refused.
+  Raises ValueError if a happ's name is not a usable app id.
   """
   dirs: dict[str, list[str]] = {}
   singles: dict[str, str] = {}
@@ -186,8 +179,6 @@ def group_happs(paths: Mapping[str, int]) -> tuple[RemoteHapp, ...]:
 
   found: list[RemoteHapp] = []
   for name, files in sorted(dirs.items()):
-    # A directory named `*.happ` without a manifest is not one. Skipping it
-    # keeps a repo usable when someone commits a stray folder.
     if f"{name}/manifest.toml" not in files:
       continue
     found.append(_happ(name, HAPP_SUFFIX, tuple(sorted(files)), paths))
@@ -214,10 +205,9 @@ def _happ(
 
 
 def mirror(repo: Repo, ctx) -> MirrorResult:
-  """Bring `repos/<name>` to whatever the remote holds now.
+  """Replace `repos/<name>` with whatever the remote holds now.
 
-  Always a full replacement: the local copy is an image of the remote, never a
-  merge with it, so there is nothing to reconcile and no prompt to answer.
+  Always a full replacement, never a merge. Raises ValueError for a local repo.
   """
   from harbor.lib import github
 
@@ -249,8 +239,7 @@ def mirror(repo: Repo, ctx) -> MirrorResult:
         total += github.download(
           github.raw_url(repo.remote, sha, *path.split("/")), dest
         )
-        # Preserve the executable bit: happs ship scripts that run in-container,
-        # and losing +x would fail only at runtime.
+        # Happs ship scripts that run in-container; losing +x fails only there.
         dest.chmod(0o755 if path in executable else 0o644)
         files += 1
     _swap(scratch, repo.path)
@@ -287,7 +276,7 @@ def _check_size(repo: Repo, happs: tuple[RemoteHapp, ...]) -> None:
 
 
 def _swap(incoming: Path, dest: Path) -> None:
-  """Put `incoming` where `dest` is, keeping the old copy until it lands."""
+  """Rename `incoming` onto `dest`, restoring the old copy if that fails."""
   if dest.is_symlink():
     raise ValueError(f"{dest} is a symlink; harbor will not mirror over it")
   outgoing = dest.parent / f".outgoing-{dest.name}"
@@ -303,3 +292,99 @@ def _swap(incoming: Path, dest: Path) -> None:
     raise ValueError(f"Could not update {dest}: {e}") from e
   finally:
     shutil.rmtree(outgoing, ignore_errors=True)
+
+
+# --- the repo verbs --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AddResult:
+  repo: Repo
+  mirrored: MirrorResult | None
+
+
+@dataclass(frozen=True)
+class RemoveResult:
+  name: str
+  bound: tuple[str, ...]
+
+
+def add(ctx, location: str, *, name: str = "") -> AddResult:
+  """Add a `github://` url or a local directory, mirroring a url immediately.
+
+  A local repo needs an explicit `name`; a url takes the repository's own.
+  """
+  from harbor.lib.config import load_config_file
+  from harbor.lib.config_edit import add_repo
+  from harbor.lib.harbor import HarborCtx
+
+  remote = location.startswith(GITHUB_SCHEME)
+  name = name or (name_from_url(location) if remote else "")
+  if not name:
+    raise ValueError(f"Repo {location} needs a name of its own; pass --name")
+
+  with ctx.locked(f"repo add {name}"):
+    add_repo(ctx, name, url=location) if remote else add_repo(ctx, name, path=location)
+    # `ctx.config` predates the entry just written.
+    fresh = HarborCtx(load_config_file(ctx.config.config_path))
+    repo = fresh.config.repos[name]
+    return AddResult(repo, mirror(repo, fresh) if remote else None)
+
+
+def update(ctx, name: str = "") -> tuple[MirrorResult, ...]:
+  """Mirror one repo, or every mirrored one. Raises if `name` is local."""
+  wanted = [get(ctx, name)] if name else list(ctx.config.repos.values())
+  mirrored = [repo for repo in wanted if repo.mirrored]
+  if name and not mirrored:
+    raise ValueError(f"Repo {name!r} is a local directory; there is nothing to update")
+  with ctx.locked("repo update"):
+    return tuple(mirror(repo, ctx) for repo in mirrored)
+
+
+def remove(ctx, name: str) -> RemoveResult:
+  """Drop a repo, and the mirrored copy if it had one."""
+  import shutil
+
+  from harbor.lib.config_edit import remove_repo
+
+  repo = get(ctx, name)
+  if repo.name == MAIN_REPO:
+    raise ValueError(f"{MAIN_REPO} is built in and cannot be removed")
+
+  bound = bound_apps(ctx, repo.name)
+  with ctx.locked(f"repo remove {name}"):
+    remove_repo(ctx, repo.name)
+    if repo.mirrored:
+      shutil.rmtree(repo.path, ignore_errors=True)
+      ctx.harbor_db.del_repo_state(repo.name)
+  return RemoveResult(repo.name, bound)
+
+
+def get(ctx, name: str) -> Repo:
+  repo = ctx.config.repos.get(name)
+  if repo is None:
+    known = ", ".join(sorted(ctx.config.repos))
+    raise ValueError(f"No repo {name!r}; configured repos: {known}.")
+  return repo
+
+
+def bound_apps(ctx, name: str) -> tuple[str, ...]:
+  """Every installed app recorded as coming from this repo."""
+  from harbor.lib.lifecycle import bound_to
+
+  return tuple(
+    sorted(
+      app_id
+      for app_id in ctx.config.app_config_ids()
+      if bound_to(app_id, ctx) == f"repo {name}"
+    )
+  )
+
+
+def contested_lines(ctx) -> list[str]:
+  """One line per app id that more than one repo carries."""
+  return [
+    f"{app_id} is in {len(repos)} repos ({', '.join(sorted(repos))}); "
+    f"install it as {app_id}@<repo>."
+    for app_id, repos in sorted(ctx.contested_app_ids().items())
+  ]

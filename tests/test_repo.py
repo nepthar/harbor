@@ -14,7 +14,9 @@ from urllib.parse import unquote, urlparse
 
 import pytest
 
+from harbor.jobs.repo import RepoAddJob, RepoRemoveJob, RepoUpdateJob
 from harbor.lib import github as github_lib
+from harbor.lib import repo as repo_lib
 from harbor.lib.config import load_config_file
 from harbor.lib.github import MAX_FILE_BYTES, list_tree, resolve_ref
 from harbor.lib.harbor import HarborCtx
@@ -502,7 +504,7 @@ def test_a_mirrored_happ_is_in_the_catalog(github, ctx, harbor_env):
   github.hello_world()
   mirror(a_repo(ctx), ctx)
   harbor_env.config.write_text(
-    f'{harbor_env.config.read_text()}\n[[repo]]\nname = "up"\nurl = "{URL}"\n'
+    f'{harbor_env.config.read_text()}\n[repo.up]\nurl = "{URL}"\n'
   )
   fresh = HarborCtx(load_config_file(harbor_env.config))
   assert "hello-world" in fresh.app_catalog()
@@ -538,3 +540,185 @@ def test_an_oversized_repo_is_refused(github, ctx):
     github.sizes[f"app{n}.happ.md"] = each
   with pytest.raises(ValueError, match="limit for one repo"):
     mirror(a_repo(ctx), ctx)
+
+
+# --- the repo verbs ---------------------------------------------------------
+
+
+def a_local_repo(harbor_env, name: str = "dev"):
+  path = harbor_env.root / name
+  path.mkdir()
+  with open(harbor_env.config, "a") as f:
+    f.write(f'\n[repo.{name}]\npath = "{path}"\n')
+  return path
+
+
+def test_add_writes_the_repo_and_mirrors_it(github, ctx, harbor_env):
+  github.hello_world()
+  result = repo_lib.add(ctx, URL)
+
+  assert result.repo.name == "harbor"
+  assert result.mirrored is not None
+  assert result.mirrored.happs == ("hello-world",)
+  assert "[repo.harbor]" in harbor_env.config.read_text()
+
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  assert fresh.app_catalog()["hello-world"][0].source == "harbor"
+
+
+def test_add_takes_a_name_of_its_own(github, ctx, harbor_env):
+  github.hello_world()
+  assert repo_lib.add(ctx, URL, name="mine").repo.name == "mine"
+
+
+def test_add_refuses_a_name_already_taken(github, ctx):
+  github.hello_world()
+  repo_lib.add(ctx, URL)
+  with pytest.raises(ValueError, match="already exists"):
+    repo_lib.add(ctx, URL)
+
+
+def test_a_local_repo_needs_a_name(ctx, harbor_env):
+  with pytest.raises(ValueError, match="needs a name"):
+    repo_lib.add(ctx, str(harbor_env.root / "somewhere"))
+
+
+def test_remove_drops_the_entry_and_the_mirror(github, ctx, harbor_env):
+  github.hello_world()
+  repo_lib.add(ctx, URL)
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  mirrored = fresh.config.repos["harbor"].path
+  assert mirrored.is_dir()
+
+  result = repo_lib.remove(fresh, "harbor")
+
+  assert result.name == "harbor"
+  assert not mirrored.exists()
+  assert fresh.harbor_db.get_repo_state("harbor") is None
+  assert "harbor" not in load_config_file(harbor_env.config).repos
+
+
+def test_main_cannot_be_removed(ctx):
+  with pytest.raises(ValueError, match="built in"):
+    repo_lib.remove(ctx, "main")
+
+
+def test_removing_an_unknown_repo_names_the_known_ones(ctx):
+  with pytest.raises(ValueError, match="configured repos: main"):
+    repo_lib.remove(ctx, "nope")
+
+
+def test_update_refuses_a_local_repo_by_name(ctx, harbor_env):
+  a_local_repo(harbor_env)
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  with pytest.raises(ValueError, match="local directory"):
+    repo_lib.update(fresh, "dev")
+
+
+def test_update_with_no_name_skips_local_repos(ctx, harbor_env):
+  a_local_repo(harbor_env)
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  assert repo_lib.update(fresh) == ()
+
+
+def test_contested_lines_name_every_repo_carrying_an_id(github, ctx, harbor_env):
+  github.hello_world()
+  repo_lib.add(ctx, URL)
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  repo_lib.add(fresh, URL, name="mirror")
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+
+  [line] = repo_lib.contested_lines(fresh)
+  assert "hello-world is in 2 repos (harbor, mirror)" in line
+  assert "hello-world@<repo>" in line
+
+
+# --- the repo jobs ----------------------------------------------------------
+
+
+def test_repo_add_job_mirrors_the_folder(github, ctx, harbor_env):
+  github.hello_world()
+  RepoAddJob.call({"url": URL}, ctx)
+
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  assert "hello-world" in fresh.app_catalog()
+
+
+@pytest.mark.parametrize(
+  "url", ["/etc", "~/happs", "./apps", "apps", "https://github.com/a/b"]
+)
+def test_repo_add_job_takes_a_url_and_never_a_path(ctx, url):
+  """Local repos are CLI-only; see the note above `runner.JOBS`."""
+  with pytest.raises(ValueError, match="takes a github:// url"):
+    RepoAddJob.prepare({"url": url}, ctx)
+
+
+def test_repo_add_job_refuses_a_malformed_url_before_writing(ctx, harbor_env):
+  before = harbor_env.config.read_text()
+  with pytest.raises(ValueError, match="Malformed repo url"):
+    RepoAddJob.prepare({"url": "github://nepthar"}, ctx)
+  assert harbor_env.config.read_text() == before
+
+
+def test_repo_update_job_brings_the_mirror_forward(github, ctx, harbor_env):
+  github.hello_world()
+  RepoAddJob.call({"url": URL}, ctx)
+
+  github.add("second.happ.md", MD_HAPP)
+  github.sha = NEW_SHA
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  RepoUpdateJob.call({"name": "harbor"}, fresh)
+
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  assert set(fresh.app_catalog()) >= {"hello-world", "second"}
+  assert fresh.harbor_db.get_repo_state("harbor")["sha"] == NEW_SHA
+
+
+def test_repo_update_job_refuses_an_unknown_repo(ctx):
+  with pytest.raises(ValueError, match="No repo 'nope'"):
+    RepoUpdateJob.prepare({"name": "nope"}, ctx)
+
+
+def test_repo_remove_job_drops_it(github, ctx, harbor_env):
+  github.hello_world()
+  RepoAddJob.call({"url": URL}, ctx)
+
+  fresh = HarborCtx(load_config_file(harbor_env.config))
+  RepoRemoveJob.call({"name": "harbor"}, fresh)
+
+  assert "harbor" not in load_config_file(harbor_env.config).repos
+
+
+def test_repo_remove_job_refuses_main(ctx):
+  with pytest.raises(ValueError, match="built in"):
+    RepoRemoveJob.call({"name": "main"}, ctx)
+
+
+def test_repo_jobs_are_recorded_as_activity(github, ctx):
+  github.hello_world()
+  job = RepoAddJob.call({"url": URL}, ctx)
+
+  assert job.state == "done"
+  assert job.log
+  assert "Mirrored 1 happs" in (ctx.config.activity_root / job.log).read_text()
+
+
+def test_a_duplicate_name_never_reaches_the_config_file(github, ctx, harbor_env):
+  """The name is a table key, so a second write would overwrite the first."""
+  github.hello_world()
+  repo_lib.add(ctx, URL)
+  written = harbor_env.config.read_text()
+
+  # A stale ctx is the realistic case: the caller loaded config before the add.
+  with pytest.raises(ValueError, match="already exists"):
+    repo_lib.add(ctx, URL)
+
+  assert harbor_env.config.read_text() == written
+  assert "harbor" in load_config_file(harbor_env.config).repos
+
+
+def test_main_cannot_be_shadowed_by_a_configured_repo(ctx, harbor_env):
+  before = harbor_env.config.read_text()
+  with pytest.raises(ValueError, match="built-in repo"):
+    repo_lib.add(ctx, URL, name="main")
+  assert harbor_env.config.read_text() == before

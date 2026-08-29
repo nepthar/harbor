@@ -289,9 +289,7 @@ class HarborCtx:
   def resolved_bundles(self) -> dict[str, Path]:
     """Map app_id -> its bundle, for ids exactly one repo carries.
 
-    A contested id is left out rather than resolved to the first repo that
-    happened to be scanned: harbor does not guess which repo owns an id, and
-    `bundle_path` raises for the same reason.
+    Contested ids are absent rather than resolved to an arbitrary repo.
     """
     return {
       app_id: entries[0].path

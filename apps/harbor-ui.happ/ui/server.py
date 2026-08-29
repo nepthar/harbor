@@ -23,7 +23,7 @@ NO_STORE = {"Cache-Control": "no-store"}
 # The harbord API this UI is written against. harbord bumps its own number
 # when a response shape changes, so a mismatch means one of the two was
 # installed without the other and fields this UI reads may be missing.
-NEEDS_API = 12
+NEEDS_API = 13
 _daemon_api = None
 
 
@@ -136,28 +136,12 @@ def volumes_get(ok: str | None = None, err: str | None = None):
 
 
 @app.get("/catalog")
-def catalog_get(
-  fetch: str | None = None,
-  target: str = "",
-  app: str = "",
-  confirm: str | None = None,
-  check: str | None = None,
-  ok: str | None = None,
-  err: str | None = None,
-):
+def catalog_get(app: str = "", ok: str | None = None, err: str | None = None):
   version, unreachable = harbor_version("/catalog", "Catalog")
   if unreachable:
     return unreachable
-  title, body, version = catalog.page(
-    version,
-    banner(ok, err),
-    fetch=fetch is not None,
-    target=target,
-    app=app,
-    confirm=confirm == "1",
-    check=check == "1",
-  )
-  return html("/catalog", title, body, version)
+  title, body, version, actions = catalog.page(version, banner(ok, err), app=app)
+  return html("/catalog", title, body, version, actions=actions)
 
 
 @app.get("/logs")

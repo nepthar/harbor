@@ -54,11 +54,10 @@ def _expand_path(
 
 
 class RepoEntry(BaseModel):
-  """One `[[repo]]` table: a local directory, or a GitHub folder to mirror."""
+  """One `[repo.<name>]` table: a local directory, or a GitHub folder."""
 
   model_config = ConfigDict(extra="forbid")
 
-  name: str
   path: str | None = None
   url: str | None = None
 
@@ -271,12 +270,15 @@ def load_config_file(config_file: str | Path) -> Config:
   config_dir = config_path.parent
   harbor_root = config_dir
 
-  with open(config_path, "rb") as f:
-    data = tomllib.load(f)
+  try:
+    with open(config_path, "rb") as f:
+      data = tomllib.load(f)
+  except tomllib.TOMLDecodeError as e:
+    raise ValueError(f"config {config_path}: not valid TOML\n  {e}") from e
 
   # Soft-fail section: validated after the hard schema so a typo here cannot
   # take down every harbor command (see `_resolve_repos`).
-  repo_raw = data.get("repo", [])
+  repo_raw = data.get("repo", {})
   parse_data = {k: v for k, v in data.items() if k != "repo"}
 
   try:
@@ -412,69 +414,69 @@ def _validate_config(parsed: ConfigFile) -> list[str]:
 
 
 def _resolve_repos(entries: Any, repos_root: Path, ep) -> dict[str, Repo]:
-  """Resolve the `[[repo]]` entries; names and locations must be unique.
+  """Resolve the `[repo.<name>]` tables; two may not name one location.
 
   Errors soft-fail: a typo here must not stop every harbor command.
   """
 
   def refuse(problem: str) -> dict[str, Repo]:
-    logger.error("%s. Ignoring every [[repo]] until config.toml is fixed", problem)
+    logger.error("%s. Ignoring every [repo] until config.toml is fixed", problem)
     return {}
 
-  if not isinstance(entries, list):
-    return refuse("repo must be a list of [[repo]] tables")
+  if not isinstance(entries, dict):
+    return refuse("repo must be a table of [repo.<name>] entries")
 
   repos: dict[str, Repo] = {}
   main_path = repos_root / MAIN_REPO
   names_by_path = {main_path: MAIN_REPO}
 
-  for entry in entries:
+  for name, entry in entries.items():
     try:
       parsed = RepoEntry.model_validate(entry)
     except ValidationError:
       return refuse(
-        'each [[repo]] needs a name and one of path or url, e.g. name = "dev", '
-        'path = "~/code/happs"'
+        f"repo {name!r} takes one of path or url, e.g. "
+        f'[repo.dev] with path = "~/code/happs"'
       )
 
     if (parsed.path is None) == (parsed.url is None):
       return refuse(
-        f"repo {parsed.name!r} needs exactly one of path (a directory on this "
+        f"repo {name!r} needs exactly one of path (a directory on this "
         f"machine) or url (a GitHub folder to mirror)"
       )
 
     try:
-      validate_identifier(parsed.name)
+      validate_identifier(name)
     except ValueError as e:
-      return refuse(f"repo name {parsed.name!r} is not a valid name: {e}")
+      return refuse(f"repo name {name!r} is not a valid name: {e}")
 
-    if parsed.name == MAIN_REPO or parsed.name in repos:
+    if name == MAIN_REPO:
       return refuse(
-        f"repo {parsed.name!r} is defined twice (or collides with the built-in "
-        f"{MAIN_REPO!r} repo at {main_path}); give it another name"
+        f"repo {name!r} collides with the built-in {MAIN_REPO!r} repo at "
+        f"{main_path}; give it another name"
       )
 
     if parsed.url is not None:
       try:
         remote = parse_github_url(parsed.url)
       except ValueError as e:
-        return refuse(f"repo {parsed.name!r} has an unusable url: {e}")
+        return refuse(f"repo {name!r} has an unusable url: {e}")
       # A mirror lives under repos_root by name, so its location is not the
       # operator's to choose -- only the remote it tracks is.
-      repos[parsed.name] = Repo(parsed.name, repos_root / parsed.name, "github", remote)
-      names_by_path[repos_root / parsed.name] = parsed.name
+      repos[name] = Repo(name, repos_root / name, "github", remote)
+      names_by_path[repos_root / name] = name
       continue
 
     assert parsed.path is not None
     path = ep(parsed.path)
     if path in names_by_path:
       return refuse(
-        f"repo {parsed.name!r} points at {path}, which is already the "
+        f"repo {name!r} points at {path}, which is already the "
         f"{names_by_path[path]!r} repo; every app there would resolve twice"
       )
 
-    names_by_path[path] = parsed.name
-    repos[parsed.name] = Repo(parsed.name, path, "local")
+    names_by_path[path] = name
+    repos[name] = Repo(name, path, "local")
 
   return repos
 

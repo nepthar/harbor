@@ -21,6 +21,7 @@ from harbor.jobs.install import InstallJob
 from harbor.jobs.job import DONE, FAILED, QUEUED, RUNNING, Job
 from harbor.jobs.metrics import HostMetricsJob, VolumeMetricsJob
 from harbor.jobs.remove import ResetJob, UninstallJob
+from harbor.jobs.repo import RepoAddJob, RepoRemoveJob, RepoUpdateJob
 from harbor.jobs.restart import RestartJob
 from harbor.jobs.restore import RestoreJob
 from harbor.jobs.snapshot import SnapshotJob
@@ -32,11 +33,13 @@ logger = logging.getLogger("harbor.jobs")
 
 MAX_HISTORY = 200
 
-# Every verb here takes ids of things that already exist -- an app id, or a
-# `command` name the app's own manifest declares. Nothing accepts a manifest or
-# a filesystem path: those are the arguments that let a caller define what an
-# app *is*, and defining an app means arbitrary bind mounts, which means root.
-# Path-style `stage` stays CLI-only for exactly that reason.
+# Every verb here takes the name of something that already exists -- an app id,
+# a repo name, or a `command` the app's own manifest declares -- or, for
+# `repo-add`, a github:// url. Nothing accepts a manifest or a filesystem path:
+# those are the arguments that let a caller define what an app *is*, and
+# defining an app means arbitrary bind mounts, which means root. Path-style
+# `install`, and adding a local directory as a repo, stay CLI-only for exactly
+# that reason; `job.app_target` is where the app-side refusal happens.
 JOBS: dict[str, type[Job]] = {
   "start": StartJob,
   "stop": StopJob,
@@ -47,6 +50,9 @@ JOBS: dict[str, type[Job]] = {
   "cmd": CmdJob,
   "uninstall": UninstallJob,
   "reset": ResetJob,
+  "repo-add": RepoAddJob,
+  "repo-update": RepoUpdateJob,
+  "repo-remove": RepoRemoveJob,
   "volume-metrics": VolumeMetricsJob,
   "host-metrics": HostMetricsJob,
 }

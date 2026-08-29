@@ -154,7 +154,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.get("/catalog", tags=["catalog"])
   def list_catalog(ctx: Ctx) -> dict:
-    return {"catalogs": views.catalog_view(ctx)}
+    return {
+      "catalogs": views.catalog_view(ctx),
+      "contested": views.contested_view(ctx),
+    }
+
+  @app.get("/repos", tags=["catalog"])
+  def list_repos(ctx: Ctx) -> dict:
+    return {"repos": views.repos_view(ctx)}
 
   @app.get("/apps/{app_id}", tags=["apps"])
   def get_app(app_id: str, ctx: Ctx) -> dict:

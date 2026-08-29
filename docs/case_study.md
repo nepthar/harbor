@@ -18,7 +18,7 @@ Feel free to skip to the completed harbor app at [apps/unifi-network-application
 
 
 ## Step 1. Make the bare harbor app:
-Let's start with a barebones app containing what we already know, placed in our `$harbor/apps` folder:
+Let's start with a barebones app containing what we already know, placed in our `$harbor/repos/main` folder:
 ```
 # unifi-network-app.happ/manifest.toml
 [app]
@@ -274,4 +274,4 @@ volumes = { app_config = "/config" }
 ```
 
 ## Step 5. Publish!
-Now that we've got a working happ we can share, we can throw it up on github so other users can `harbor fetch` it!
+Now that we've got a working happ we can share, we can throw it up on github so other users can `harbor repo add` the folder it lives in!

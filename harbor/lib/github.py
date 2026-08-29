@@ -1,8 +1,8 @@
 """Read files out of a GitHub repository, safely.
 
-Resolving a ref and listing a tree are API calls -- two per mirror, whatever
-the app count. Blobs come from raw.githubusercontent.com, which is not on the
-API quota, so the download loop is free of it.
+Resolving a ref and listing a tree are API calls, and cost two per mirror
+whatever the file count; blobs come from raw.githubusercontent.com, which is
+not on the API quota.
 
 Nothing here knows what a happ or a repo is; see `harbor.lib.repo`.
 """
@@ -47,7 +47,7 @@ _SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 
 @dataclass(frozen=True)
 class TreeEntry:
-  """One blob under the folder being listed, path relative to that folder."""
+  """One blob under the listed folder, its path relative to that folder."""
 
   path: str
   mode: str

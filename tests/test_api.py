@@ -118,7 +118,7 @@ def test_catalog_groups_a_second_repo(harbor_env, client):
     '[run.main]\nimage = "alpine:latest"\n'
   )
   with open(harbor_env.config, "a") as f:
-    f.write(f'\n[[repo]]\nname = "dev"\npath = "{extra}"\n')
+    f.write(f'\n[repo.dev]\npath = "{extra}"\n')
 
   catalogs = {c["name"]: c["apps"] for c in client.get("/catalog").json()["catalogs"]}
   assert list(catalogs) == ["main", "dev"]

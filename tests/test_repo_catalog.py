@@ -1,4 +1,4 @@
-"""Extra repos: `[[repo]]` directories beyond `repos/main`.
+"""Extra repos: `[repo.<name>]` entries beyond `repos/main`.
 
 Several repos can carry the same app id. Harbor never picks between them:
 `bundle_path` refuses, `doctor` reports, and `<app>@<repo>` or a full path is
@@ -28,7 +28,7 @@ restart = "no"
 
 def add_repo_block(harbor_env, name: str, path: Path) -> None:
   with open(harbor_env.config, "a") as f:
-    f.write(f'\n[[repo]]\nname = "{name}"\npath = "{path}"\n')
+    f.write(f'\n[repo."{name}"]\npath = "{path}"\n')
 
 
 def a_happ(parent: Path, app_id: str, display: str = "Extra") -> Path:
@@ -82,15 +82,12 @@ def test_the_default_config_has_only_main(harbor_env):
 @pytest.mark.parametrize(
   ("block", "problem"),
   [
-    ('[[repo]]\nname = "main"\npath = "elsewhere"\n', "defined twice"),
-    ('[[repo]]\nname = "dev"\npath = "repos/main"\n', "already the 'main' repo"),
-    ('[[repo]]\npath = "elsewhere"\n', "needs a name and one of path or url"),
-    ('[[repo]]\nname = "dev"\n', "exactly one of path"),
-    (
-      '[[repo]]\nname = "dev"\npath = "d"\nurl = "github://a/b/main"\n',
-      "exactly one of path",
-    ),
-    ('[[repo]]\nname = "b a d"\npath = "elsewhere"\n', "not a valid name"),
+    ('[repo.main]\npath = "elsewhere"\n', "collides with the built-in"),
+    ('[repo.dev]\npath = "repos/main"\n', "already the 'main' repo"),
+    ("[repo.dev]\n", "exactly one of path"),
+    ('[repo.dev]\npath = "d"\nurl = "github://a/b/main"\n', "exactly one of path"),
+    ('[repo."b a d"]\npath = "elsewhere"\n', "not a valid name"),
+    ('[repo.dev]\npath = "d"\nnope = 1\n', "takes one of path or url"),
   ],
 )
 def test_a_bad_repo_is_reported_and_ignored(harbor_env, caplog, block, problem):
@@ -103,7 +100,7 @@ def test_a_bad_repo_is_reported_and_ignored(harbor_env, caplog, block, problem):
 
   assert list(config.repos) == ["main"]
   assert problem in caplog.text
-  assert "Ignoring every [[repo]]" in caplog.text
+  assert "Ignoring every [repo]" in caplog.text
 
 
 def test_one_bad_repo_drops_the_good_ones_too(harbor_env, caplog):
@@ -129,15 +126,16 @@ def test_a_bad_repo_still_lets_commands_run(harbor_env):
   assert "ports-demo" in result.stdout
 
 
-def test_two_extra_repos_may_not_share_a_name(harbor_env, caplog):
+def test_two_extra_repos_may_not_share_a_name(harbor_env):
+  """The name is a table key, so TOML refuses the second one."""
   add_repo_block(harbor_env, "dev", harbor_env.root / "one")
   add_repo_block(harbor_env, "dev", harbor_env.root / "two")
 
-  with caplog.at_level(logging.ERROR, logger="harbor.config"):
-    config = load_config_file(harbor_env.config)
+  with pytest.raises(ValueError, match="not valid TOML") as caught:
+    load_config_file(harbor_env.config)
 
-  assert list(config.repos) == ["main"]
-  assert "defined twice" in caplog.text
+  assert "twice" in str(caught.value)
+  assert str(harbor_env.config) in str(caught.value)
 
 
 # --- using an extra source --------------------------------------------------
@@ -232,10 +230,8 @@ def test_status_follows_the_bundle_that_is_actually_installed(harbor_env):
 def test_a_bundle_reachable_through_two_repos_counts_twice(harbor_env):
   """Two entries are two catalog rows, even when they name one directory.
 
-  A checkout can be a repo of its own and be linked into another, so the id is
-  ambiguous like any other. Installing by path resolves the link, though, so
-  both routes to the bundle are one binding rather than a rebinding, and the
-  status lands on the bundle actually staged.
+  Installing by path resolves the link, so both routes to the bundle are one
+  binding rather than a rebinding.
   """
   dev = harbor_env.root / "dev-apps"
   bundle = a_happ(dev, "dev-app")
@@ -377,8 +373,7 @@ def test_naming_a_repo_that_does_not_carry_the_app_says_which_do(harbor_env):
 
 
 def test_a_binding_outlives_an_uninstall(harbor_env):
-  """Config and secrets survive an uninstall, so the source they were made for
-  has to survive with them."""
+  """Config and secrets survive an uninstall; so does the source they suit."""
   dev = harbor_env.root / "dev-apps"
   a_happ(dev, "ports-demo", display="From dev")
   add_repo_block(harbor_env, "hrbr-dev", dev)
