@@ -34,14 +34,16 @@ _CHART_JS = """
       },
       axes: [
         {
-          stroke: "#8b95a1",
-          grid: { stroke: "#1e2c3c" },
-          ticks: { stroke: "#1e2c3c" }
+          stroke: "#bfb5a8",
+          font: '11px "IBM Plex Mono", ui-monospace, monospace',
+          grid: { stroke: "#232020", width: 1 },
+          ticks: { stroke: "#2e2925" }
         },
         {
-          stroke: "#8b95a1",
-          grid: { stroke: "#1e2c3c" },
-          ticks: { stroke: "#1e2c3c" },
+          stroke: "#bfb5a8",
+          font: '11px "IBM Plex Mono", ui-monospace, monospace',
+          grid: { stroke: "#232020", width: 1 },
+          ticks: { stroke: "#2e2925" },
           values: function (u, splits) {
             return splits.map(function (v) { return Math.round(v * 100) + "%"; });
           }
@@ -50,10 +52,10 @@ _CHART_JS = """
       series: [
         {},
         {
-          stroke: "#3a6a94",
+          stroke: "#fc795f",
           width: 2,
-          fill: "rgba(58, 106, 148, 0.12)",
-          points: { show: true, size: 6, fill: "#3a6a94" }
+          fill: "rgba(252, 121, 95, 0.10)",
+          points: { show: true, size: 5, fill: "#fc795f" }
         }
       ]
     }, [xs, ys], mount);

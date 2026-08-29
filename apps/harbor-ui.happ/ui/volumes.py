@@ -31,7 +31,7 @@ def host_volume_rows(entries):
       f'touched.">'
       f'<input type="hidden" name="action" value="delete">'
       f'<input type="hidden" name="tag" value="{esc(entry["tag"])}">'
-      f"{icon_button('delete', 'delete-outline', submit=True)}</form></td>"
+      f"{icon_button('delete', 'delete-outline', submit=True, danger=True)}</form></td>"
       "</tr>"
     )
   return (

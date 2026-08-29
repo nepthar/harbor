@@ -13,299 +13,424 @@ NAV = (
 )
 
 STYLE = """
+/* ---------------------------------------------------------------------------
+   Tokens. Two surfaces, three text weights, one radius, one spacing scale.
+   The ground is neutral-warm rather than navy so the signal colours (which are
+   all warm) sit on it instead of fighting a blue cast.
+   --------------------------------------------------------------------------- */
 :root {
-  --void: #05070a; --bg: #0c1520; --panel: #121c2a; --border: #1e2c3c;
-  --fg: #d8dee6; --muted: #8b95a1; --accent: #3a6a94; --accent-fg: #e8eef4;
-  --ok: #5ecf8a; --warn: #fdd305; --off: #4a5562; --bad: #c72057;
-  --rosewood: #c72057; --coral: #fc795f; --gold: #fdd305;
+  --void: #100f0e;    /* the gutter the ribbon runs through */
+  --bg: #171614;      /* the app ground */
+  --panel: #1f1c19;   /* raised: wells, inputs, modals */
+  --line: #2e2925;    /* hairline that separates */
+  --hair: #232020;    /* hairline that is barely there (table rows) */
+
+  /* Three text weights, each with exactly one job. Never pure white. */
+  --fg: #ece5dc;      /* content */
+  --dim: #bfb5a8;     /* labels, secondary */
+  --muted: #9a9082;   /* metadata, disabled */
+
+  /* The ribbon, reused as meaning. Nothing in the UI is coloured off-palette. */
+  --rosewood: #c72057;
+  --coral: #fc795f;
+  --gold: #fdd305;
+  --ok: #8aa85e;
+
+  --accent: var(--coral);
+  --ink: #17110e;     /* dark type on a warm fill */
+  --bad: var(--rosewood);
+  --warn: var(--gold);
+  --off: #4a433d;
+
+  --r: 2px;           /* one radius, near-square */
+  --gutter: 20px;     /* what you see of the ribbon */
+  --chamfer: 54px;    /* the cut corner the ribbon runs through */
+  --ribbon: 30px;
+  --ribbon-top: 45px;
 }
 html { color-scheme: dark; height: 100%; background: var(--void); }
 * { box-sizing: border-box; }
 body {
-  margin: 0; padding: 15px; display: flex; height: 100%; overflow: hidden;
+  margin: 0; padding: var(--gutter); display: flex; height: 100%; overflow: hidden;
   background: var(--void); color: var(--fg);
-  font: 15px/1.5 "Source Sans 3", "Source Sans Pro", sans-serif;
+  font: 14px/1.55 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-/* From mid-left, 45° up and to the right. The 15px gutter is what you
-   actually see of it -- it cuts off the top-left of the panel. */
+/* The ribbon cuts the top-left corner at 45°, entering the left gutter and
+   leaving through the top one. Its centreline runs (0, C) -> (C, 0) where
+   C = ribbon-top + ribbon/2; the panel's chamfer is cut wide enough to clear
+   it, so the whole run reads as one gesture instead of two stray slivers. */
 body::before {
-  content: ""; position: fixed; left: 0; top: 50%; width: 200vw;
-  height: 5.7375rem; pointer-events: none;
+  content: ""; position: fixed; left: 0; top: var(--ribbon-top);
+  width: 200vw; height: var(--ribbon); pointer-events: none;
   transform-origin: 0 50%;
   transform: rotate(-45deg) translateY(-50%);
+  /* Three bands of 26.67% and two gaps of 10%. Splitting on thirds and then
+     insetting the gaps takes two edges off the middle band and one off each
+     of its neighbours, which leaves it visibly thinner. */
   background: linear-gradient(to bottom,
-    var(--rosewood) 0 calc(33.33% - 4px),
-    transparent calc(33.33% - 4px) calc(33.33% + 4px),
-    var(--coral) calc(33.33% + 4px) calc(66.67% - 4px),
-    transparent calc(66.67% - 4px) calc(66.67% + 4px),
-    var(--gold) calc(66.67% + 4px) 100%);
+    var(--rosewood) 0 26.67%,
+    transparent 26.67% 36.67%,
+    var(--coral) 36.67% 63.33%,
+    transparent 63.33% 73.33%,
+    var(--gold) 73.33% 100%);
 }
 .app {
   position: relative; z-index: 1; flex: 1; display: flex;
   min-width: 0; min-height: 0; background: var(--bg); overflow: hidden;
-  border-radius: 12px;
+  clip-path: polygon(0 var(--chamfer), var(--chamfer) 0,
+                     100% 0, 100% 100%, 0 100%);
 }
+
+/* --- nav ---------------------------------------------------------------- */
 nav {
-  width: 165px; flex: 0 0 165px; background: var(--bg);
-  border-right: 1px solid var(--border); padding: 20px 12px;
+  width: 168px; flex: 0 0 168px; background: var(--bg);
+  border-right: 1px solid var(--line);
+  padding: calc(var(--chamfer) + 4px) 16px 16px;
   overflow: auto; display: flex; flex-direction: column;
 }
-.brand {
-  font-weight: 600; font-size: 16px; padding: 0 10px 18px; letter-spacing: -0.01em;
+.brand { padding: 0 0 24px; letter-spacing: -0.005em; }
+.brand .name { font-size: 17px; font-weight: 600; display: block; }
+.brand .ver {
+  display: block; font-size: 11px; color: var(--muted);
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  margin-top: 1px;
 }
-.brand .ver { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+/* The ribbon again, flat: the mark and the corner are the same object. */
 .brand .mark, nav a .mark { display: none; }
+/* Active is a coral edge and coral type -- not a filled pill. The 2px inset
+   border keeps every item on the same baseline grid whether lit or not. */
 nav a {
-  display: block; padding: 7px 10px; margin-bottom: 2px; border-radius: 6px;
-  color: var(--muted); text-decoration: none;
+  display: block; padding: 5px 10px; margin-bottom: 1px;
+  border-left: 2px solid transparent;
+  color: var(--dim); text-decoration: none; text-transform: lowercase;
+  font-size: 14px;
 }
-nav a:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--fg);
-}
-nav a.active { background: var(--accent); color: var(--accent-fg); }
+nav a:hover { color: var(--fg); border-left-color: var(--line); }
+nav a.active { color: var(--coral); border-left-color: var(--coral); font-weight: 500; }
 .nav-toggle {
-  background: none; color: var(--muted); border: 0; border-radius: 6px;
-  padding: 7px; margin-top: auto; cursor: pointer; font: inherit; width: 100%;
+  background: none; color: var(--muted); border: 0; border-radius: var(--r);
+  padding: 6px; margin-top: auto; cursor: pointer; font: inherit; width: 100%;
 }
-.nav-toggle:hover {
-  color: var(--fg);
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-}
-html.nav-collapsed nav { width: 48px; flex-basis: 48px; padding: 16px 6px; }
-html.nav-collapsed .brand { padding: 0 0 18px; text-align: center; }
+.nav-toggle:hover { color: var(--fg); background: var(--panel); }
+html.nav-collapsed nav { width: 52px; flex-basis: 52px; padding: calc(var(--chamfer) + 4px) 8px 16px; }
+html.nav-collapsed .brand { padding: 0 0 24px; }
 html.nav-collapsed .brand .name, html.nav-collapsed .brand .ver,
 html.nav-collapsed nav a .label { display: none; }
-html.nav-collapsed .brand .mark { display: block; }
-html.nav-collapsed nav a { text-align: center; padding: 7px 0; }
+html.nav-collapsed .brand .mark { display: block; font-weight: 600; font-size: 17px; }
+html.nav-collapsed nav a { padding: 5px 0 5px 8px; }
 html.nav-collapsed nav a .mark { display: inline; }
-main { flex: 1; padding: 28px 32px; min-width: 0; overflow: auto; }
-.head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
-.head .head-actions { margin-left: auto; }
-.head .head-actions a.btn {
-  color: var(--fg); font-size: 13px; text-decoration: none;
-  border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px;
-  background: var(--panel);
+
+/* --- page head ---------------------------------------------------------- */
+main { flex: 1; padding: 28px 32px 48px; min-width: 0; overflow: auto; }
+.head {
+  position: relative;
+  display: flex; align-items: baseline; gap: 16px; margin-bottom: 24px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--line);
 }
-.head .head-actions a.btn:hover {
-  border-color: var(--accent); text-decoration: none;
+/* The ribbon, flattened onto the head rule: the first 44px of the line is the
+   mark. `bottom: -2px` centres 3px on the 1px border, and absolute positioning
+   keeps it out of both the flex flow and the page's vertical rhythm. */
+.head::after {
+  content: ""; position: absolute; left: 0; bottom: -2px;
+  width: 44px; height: 3px;
+  transform: skewX(-45deg); transform-origin: bottom left;
+  background: linear-gradient(to right,
+    var(--rosewood) 0 30%, transparent 30% 35%,
+    var(--coral) 35% 65%, transparent 65% 70%, var(--gold) 70% 100%);
 }
-.fetchbar {
-  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-  border: 1px solid var(--border); border-radius: 8px;
-  background: var(--panel); padding: 12px 14px; margin-bottom: 16px;
+h1 { font-size: 19px; margin: 0; font-weight: 600; letter-spacing: -0.012em; }
+.head a { color: var(--dim); text-decoration: none; font-size: 12px; }
+.head a:hover { color: var(--coral); }
+.head .head-actions { order: 1; align-self: center; }
+.head > a { order: 2; margin-left: auto; }
+
+/* --- section labels ------------------------------------------------------
+   A small lowercase label with a rule running to the right edge. Hierarchy
+   comes from this and from space, so most content needs no box at all. */
+h2 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: lowercase; color: var(--dim);
+  margin: 32px 0 12px; display: flex; align-items: center; gap: 12px;
 }
-.fetchbar input[name=target] { flex: 1 1 28rem; min-width: 16rem; }
-.fetchbar .hint {
-  flex-basis: 100%; color: var(--muted); font-size: 12px; margin: 0;
+h2::after { content: ""; order: 1; flex: 1; height: 1px; background: var(--line); }
+h2:first-child { margin-top: 0; }
+h2 .act { order: 2; font-weight: 400; font-size: 12px; letter-spacing: 0; text-transform: none; }
+h2 .act a { color: var(--muted); text-decoration: none; }
+h2 .act a:hover { color: var(--coral); }
+h3 {
+  font-size: 11px; letter-spacing: .08em; text-transform: lowercase;
+  color: var(--muted); margin: 20px 0 8px; font-weight: 600;
 }
-h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
-.head a { color: var(--muted); text-decoration: none; font-size: 13px; }
-.head a:hover { color: var(--fg); text-decoration: underline; }
-.card {
-  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
-  background: var(--panel);
+.lede { color: var(--dim); margin: -4px 0 12px; max-width: 68ch; font-size: 13px; }
+
+/* --- surfaces ------------------------------------------------------------
+   `.card` around a table is just a pair of rules; only `.pad` fills. */
+.card { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.card.pad {
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel); padding: 16px;
 }
+.card.entry { padding: 6px 0; border-bottom: none; }
 .scroll { overflow-x: auto; }
+
+/* --- tables --------------------------------------------------------------
+   Headers are small lowercase mono, not uppercase tracked grey. Identifiers,
+   versions, sizes and counts are mono so columns actually line up. */
 table { width: 100%; border-collapse: collapse; }
 th {
-  text-align: left; font-size: 11px; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--muted); font-weight: 500;
-  padding: 6px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
-  vertical-align: middle;
+  text-align: left; font-size: 11px; font-weight: 400; color: var(--muted);
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  text-transform: lowercase; letter-spacing: 0; font-size: 11.5px;
+  padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line);
+  white-space: nowrap; vertical-align: middle;
 }
 td {
-  padding: 5px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
-  vertical-align: middle;
+  padding: 9px 14px 9px 0; border-bottom: 1px solid var(--hair);
+  white-space: nowrap; vertical-align: middle;
 }
+th:first-child, td:first-child { padding-left: 2px; }
 tr:last-child td { border-bottom: none; }
-td.name { font-weight: 500; }
-/* Trailing action: hug the right edge. Other columns share the leftover width. */
-th.act, td.act { width: 1%; text-align: right; }
-.sub { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
-.pill {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  color: var(--muted);
+td.name { font-weight: 500; color: var(--fg); }
+th.act, td.act { width: 1%; text-align: right; padding-right: 2px; }
+.sub {
+  display: block; font-size: 11.5px; color: var(--muted); font-weight: 400;
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
-.dot.running { background: var(--ok); }
-.dot.exited { background: var(--warn); }
-.dot.bad { background: var(--bad); }
-.muted { color: var(--muted); }
+tbody tr:hover td { background: color-mix(in srgb, var(--coral) 5%, transparent); }
 /* Paths are long and matter; let them wrap rather than push the row's
    controls off the edge. */
 td.path { white-space: normal; word-break: break-all; min-width: 16ch; }
 td.wrap { white-space: normal; min-width: 20ch; }
-h2 { font-size: 15px; margin: 26px 0 6px; font-weight: 600; }
-h2:first-child { margin-top: 0; }
-h2 .act { font-weight: 400; font-size: 13px; margin-left: 10px; }
-h2 .act a { color: var(--muted); text-decoration: none; }
-h2 .act a:hover { color: var(--fg); text-decoration: underline; }
-.lede { color: var(--muted); margin: 0 0 10px; max-width: 62ch; }
-.card.pad { padding: 14px; }
-.card.entry { padding: 5px 12px; }
-.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-/* `display: flex` outranks the UA stylesheet's [hidden] { display: none }. */
-.row[hidden] { display: none; }
-.row .grow { flex: 1; min-width: 200px; }
-input[type=text], input[type=password], input:not([type]) {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px 9px; font: inherit;
+td.name a { color: inherit; text-decoration: none; }
+td.name a:hover { color: var(--coral); }
+td.path a { color: inherit; }
+td.path a:hover { color: var(--coral); }
+
+/* Secondary table columns are data, not chrome: readable, and mono so that
+   versions, sizes, ids and paths line up down the column. `.wrap` is prose
+   (descriptions, hints) and stays in the text face. */
+td.muted { color: var(--dim); }
+td.muted:not(.wrap), td.path {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12.5px;
 }
-label { color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
+td.muted.wrap { color: var(--muted); font-size: 13px; }
+
+/* --- status --------------------------------------------------------------
+   Square markers, matching the geometry everywhere else. */
+.pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); }
+.dot { width: 6px; height: 6px; border-radius: 1px; background: var(--off); flex: none; }
+.dot.running { background: var(--ok); }
+.dot.exited { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+.muted { color: var(--muted); }
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* --- controls ------------------------------------------------------------
+   Default is quiet: a hairline and dim type. Fill is reserved for the one
+   action on a page that commits something, and it is warm with dark ink --
+   not white-on-blue. */
+input[type=text], input[type=password], input:not([type]), select {
+  background: var(--void); color: var(--fg); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 6px 9px; font: inherit; font-size: 13px;
+}
+input:focus, select:focus, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--coral); outline-offset: 1px;
+}
+input::placeholder { color: var(--muted); }
+label { color: var(--dim); display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
 button {
-  background: var(--accent); color: var(--accent-fg); border: 0;
-  border-radius: 6px; padding: 3px 10px; font: inherit; line-height: 1.3;
-  cursor: pointer;
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 4px 11px; font: inherit; font-size: 13px; line-height: 1.5;
+  cursor: pointer; transition: color 120ms, border-color 120ms;
 }
+button:hover:not(:disabled) { color: var(--fg); border-color: var(--dim); }
+button[disabled] { opacity: .35; cursor: not-allowed; }
 button.link {
-  background: none; color: var(--muted); padding: 0; text-decoration: underline;
+  background: none; border: 0; color: var(--muted); padding: 0;
+  text-decoration: underline; text-underline-offset: 2px;
 }
-button.link:hover { color: var(--bad); }
-.apphead { margin-bottom: 6px; }
-.apphead h2 { margin: 0; font-size: 17px; }
-.apphead .lede { margin: 6px 0 2px; }
-.row.between { justify-content: space-between; width: 100%; }
+button.link:hover:not(:disabled) { color: var(--bad); border: 0; }
+/* The committing action -- one filled control per surface, warm with dark
+   ink. Everything else on the page stays a hairline. */
+.cfg-save, #job-go, #ask-go,
+.app-card-head > .actions > .job-open:first-child {
+  background: var(--coral); border-color: var(--coral); color: var(--ink);
+  font-weight: 600;
+}
+.cfg-save:hover:not(:disabled),
+#job-go:hover:not(:disabled), #ask-go:hover:not(:disabled),
+.app-card-head > .actions > .job-open:first-child:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--coral) 86%, white);
+  border-color: color-mix(in srgb, var(--coral) 86%, white); color: var(--ink);
+}
+.cfg-save { visibility: hidden; }
+.cfg-edit.is-dirty .cfg-save { visibility: visible; }
+.cfg-edit { display: flex; align-items: center; gap: 10px; }
+.cfg-edit input { width: 16em; max-width: 100%; }
+/* Icon buttons are ghosts that take on their verb's colour on hover. */
+button.icon { padding: 5px 7px; line-height: 0; color: var(--dim); }
+button.icon svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+button.icon:hover:not(:disabled) { color: var(--fg); border-color: var(--dim); }
+button.danger:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
+.head-actions .actions { gap: 8px; }
+.head .head-actions a.btn {
+  color: var(--fg); font-size: 13px; text-decoration: none;
+  border: 1px solid var(--line); border-radius: var(--r); padding: 4px 11px;
+  background: transparent;
+}
+.head .head-actions a.btn:hover { color: var(--coral); border-color: var(--coral); }
 .actions form { display: inline; }
 .actions a.link, .fetchbar a.link {
   color: var(--muted); font-size: 13px; text-decoration: none;
 }
-.actions a.link:hover, .fetchbar a.link:hover { color: var(--fg); }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
-     color: var(--muted); margin: 14px 0 6px; font-weight: 500; }
+.actions a.link:hover, .fetchbar a.link:hover { color: var(--coral); }
+
+/* --- rows and wells ------------------------------------------------------ */
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+/* `display: flex` outranks the UA stylesheet's [hidden] { display: none }. */
+.row[hidden] { display: none; }
+.row .grow { flex: 1; min-width: 200px; }
+.row.between { justify-content: space-between; width: 100%; }
+.fetchbar {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel); padding: 14px; margin-bottom: 20px;
+}
+.fetchbar input[name=target] { flex: 1 1 28rem; min-width: 16rem; }
+.fetchbar .hint { flex-basis: 100%; color: var(--muted); font-size: 12px; margin: 0; }
+.apphead { margin-bottom: 10px; }
+.apphead h2 {
+  margin: 0; font-size: 19px; font-weight: 600; text-transform: none;
+  letter-spacing: -0.012em; color: var(--fg); display: block;
+}
+.apphead h2::after { display: none; }
+.apphead .lede { margin: 8px 0 2px; }
 table.kv td { vertical-align: middle; }
-table.kv td.key { font-weight: 500; white-space: nowrap; width: 1%; }
+table.kv td.key { font-weight: 500; white-space: nowrap; width: 1%; padding-right: 28px; }
 table.kv td.key .sub { font-weight: 400; }
 table.kv td.field { width: 1%; white-space: nowrap; }
-.cfg-edit { display: flex; align-items: center; gap: 8px; }
-.cfg-edit input { width: 16em; max-width: 100%; }
-.cfg-save { visibility: hidden; padding: 3px 10px; }
-.cfg-edit.is-dirty .cfg-save { visibility: visible; }
-select {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px 9px; font: inherit;
-}
-button[disabled] { opacity: .4; cursor: not-allowed; }
-button.icon {
-  background: var(--accent); color: var(--accent-fg); padding: 4px 8px;
-  line-height: 0;
-}
-button.icon:hover:not(:disabled) {
-  color: var(--accent-fg);
-  background: color-mix(in srgb, var(--accent) 82%, white);
-}
-button.icon svg { width: 22px; height: 22px; fill: currentColor; display: block; }
-.head-actions .actions { gap: 6px; }
 pre {
-  margin: 8px 0 0; padding: 10px; background: var(--bg); border-radius: 6px;
+  margin: 10px 0 0; padding: 12px 14px; background: var(--void);
+  border: 1px solid var(--line); border-radius: var(--r);
   overflow-x: auto; font-size: 12px; white-space: pre-wrap;
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
-.error ul { margin: 6px 0 0; padding-left: 18px; }
-.error li { margin-bottom: 4px; }
-td.name a { color: inherit; text-decoration: none; }
-td.name a:hover { text-decoration: underline; }
-td.path a { color: inherit; }
-td.path a:hover { color: var(--fg); }
-.notice {
-  border: 1px solid var(--ok); border-radius: 8px; padding: 10px 14px;
-  margin-bottom: 16px; background: var(--panel);
+code {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px;
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 0 5px; border-radius: var(--r); color: var(--dim);
 }
-.empty, .note { padding: 28px; color: var(--muted); text-align: center; }
-.error {
-  border: 1px solid var(--bad); border-radius: 8px; padding: 16px 18px;
+.empty, .note { padding: 48px 0; color: var(--muted); text-align: center; font-size: 13px; }
+
+/* --- notices -------------------------------------------------------------
+   A colour-bearing left rule rather than a coloured box. */
+.notice, .error {
+  border: 1px solid var(--line); border-left: 2px solid var(--ok);
+  border-radius: var(--r); padding: 12px 16px; margin-bottom: 20px;
   background: var(--panel);
 }
-.error h2 { margin: 0 0 6px; font-size: 15px; color: var(--bad); }
-.error p { margin: 0 0 4px; }
-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
-  background: var(--border); padding: 1px 5px; border-radius: 4px;
+.error { border-left-color: var(--bad); }
+.error h2 {
+  margin: 0 0 8px; font-size: 13px; color: var(--bad); display: block;
+  text-transform: none; letter-spacing: 0;
 }
+.error h2::after { display: none; }
+.error p { margin: 0 0 4px; font-size: 13px; }
+.error ul { margin: 6px 0 0; padding-left: 18px; }
+.error li { margin-bottom: 4px; }
+
+/* --- disclosure ---------------------------------------------------------- */
 details.reveal > summary {
-  cursor: pointer; color: var(--muted); font-size: 13px; padding: 10px 14px;
+  cursor: pointer; color: var(--muted); font-size: 12px; padding: 10px 0;
+  list-style-position: outside;
 }
-details.reveal > summary:hover { color: var(--fg); }
-.card > details.reveal { border-top: 1px solid var(--border); }
-.card.pad > details.reveal {
-  border-top: none; margin-top: 10px;
-}
-.card.pad > details.reveal > summary { padding: 6px 0; }
+details.reveal > summary:hover { color: var(--coral); }
+.card > details.reveal { border-top: 1px solid var(--hair); }
+.card.pad > details.reveal { border-top: none; margin-top: 12px; }
+
+/* --- catalog / overlays --------------------------------------------------- */
 .catalog-row { cursor: pointer; }
-.catalog-row:hover td {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
+.catalog-row:hover td { background: color-mix(in srgb, var(--coral) 8%, transparent); }
 .shade {
   position: fixed; inset: 0; z-index: 20;
   display: flex; align-items: center; justify-content: center;
-  padding: 24px 32px;
-  background: color-mix(in srgb, var(--void) 62%, transparent);
+  padding: 32px;
+  background: color-mix(in srgb, var(--void) 72%, transparent);
 }
 .shade[hidden] { display: none; }
 .job-modal {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; width: min(36rem, 100%);
-  padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r); width: min(36rem, 100%);
+  padding: 20px; display: flex; flex-direction: column; gap: 12px;
   max-height: min(80vh, 100%);
 }
-.job-modal h2 { margin: 0; font-size: 17px; }
-.job-modal p { margin: 0; }
+.job-modal h2 {
+  margin: 0; font-size: 16px; font-weight: 600; display: block;
+  text-transform: none; letter-spacing: -0.01em; color: var(--fg);
+}
+.job-modal h2::after { display: none; }
+.job-modal p { margin: 0; font-size: 13px; color: var(--dim); }
 .job-bar { width: 100%; }
-.job-bar input::placeholder { color: var(--muted); }
-.job-fields { width: 100%; gap: 8px; }
+.job-fields { width: 100%; gap: 10px; }
 .job-out {
   margin: 0; min-height: 12rem; max-height: 40vh; overflow: auto;
-  padding: 10px; background: var(--bg); border-radius: 6px;
+  padding: 12px; background: var(--void); border-radius: var(--r);
   font-size: 12px; white-space: pre-wrap;
-  border: 1px solid transparent; transition: border-color 400ms ease;
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  border: 1px solid var(--line); border-left: 2px solid var(--line);
+  transition: border-color 400ms ease;
 }
+.job-out.ok { border-left-color: var(--ok); }
+.job-out.bad { border-left-color: var(--bad); }
 .job-choices { display: flex; flex-direction: column; gap: 8px; }
 .job-choices[hidden] { display: none; }
 .job-choice {
-  display: flex; gap: 9px; align-items: flex-start; color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
-  cursor: pointer;
+  display: flex; gap: 10px; align-items: flex-start; color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px;
+  cursor: pointer; font-size: 13px;
 }
-.job-choice:has(input:checked) { border-color: var(--accent); }
+.job-choice:hover { border-color: var(--dim); }
+.job-choice:has(input:checked) { border-color: var(--coral); }
 .job-choice .sub { margin-top: 2px; }
-.job-out.ok { border-color: var(--ok); }
-.job-out.bad { border-color: var(--bad); }
+
+/* --- app card ------------------------------------------------------------- */
 .app-card {
   display: flex; flex-direction: row; align-items: stretch;
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; width: min(88rem, 100%);
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r); width: min(88rem, 100%);
   max-height: min(92vh, 100%); overflow: hidden;
-  padding: 14px; gap: 12px;
+  padding: 16px; gap: 16px;
 }
 .app-card[hidden] { display: none; }
 .app-card-head {
-  flex: 0 0 20rem; width: 20rem;
+  flex: 0 0 21rem; width: 21rem;
   display: flex; flex-direction: column;
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px 14px; background: var(--bg);
+  border-right: 1px solid var(--line); padding-right: 16px;
   overflow: auto;
 }
-.app-card h2 { margin: 0 0 2px; font-size: 17px; }
-.app-card .lede { margin: 4px 0 8px; }
+.app-card h2 {
+  margin: 0 0 2px; font-size: 17px; font-weight: 600; display: block;
+  text-transform: none; letter-spacing: -0.01em; color: var(--fg);
+}
+.app-card h2::after { display: none; }
+.app-card .lede { margin: 8px 0 12px; }
 .app-card-intro > :last-child { margin-bottom: 0; }
 /* margin-top:auto rather than a fixed footer: the head scrolls, and buttons
    that scrolled away with it would be unreachable on a long description. */
 .app-card-head > .actions {
-  margin-top: auto; padding-top: 12px;
-  border-top: 1px solid var(--border);
+  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line);
 }
-.app-card .conflict {
-  margin: 8px 0 0; padding: 8px 10px; font-size: 13px;
-  color: var(--fg); background: var(--panel);
-  border-left: 2px solid var(--bad); border-radius: 4px;
+.app-card .conflict, .app-card .stale {
+  margin: 10px 0 0; padding: 8px 12px; font-size: 12.5px;
+  color: var(--dim); background: var(--panel);
+  border-left: 2px solid var(--bad); border-radius: var(--r);
 }
-.app-card .stale {
-  margin: 8px 0 0; padding: 8px 10px; font-size: 13px;
-  color: var(--fg); background: var(--panel);
-  border-left: 2px solid var(--warn); border-radius: 4px;
-}
+.app-card .stale { border-left-color: var(--warn); }
 .app-card .update {
-  margin-top: 10px; padding-top: 10px;
-  border-top: 1px solid var(--border); font-size: 13px;
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--line); font-size: 12.5px;
 }
 .app-card .update p { margin: 0 0 4px; }
 .app-card .update p:last-child { margin-bottom: 0; }
@@ -315,29 +440,37 @@ details.reveal > summary:hover { color: var(--fg); }
 .app-card-diff .diff-hunk { color: var(--muted); }
 .app-card-manifest {
   flex: 1 1 auto; min-width: 0; min-height: 16rem; overflow: auto;
-  margin: 0; padding: 14px 16px;
-  background: var(--bg); border-radius: 8px;
-  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre; color: var(--fg);
+  margin: 0; padding: 4px 0 0;
+  background: none; border: 0; border-radius: 0;
+  font: 12.5px/1.6 "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  white-space: pre; color: var(--dim);
 }
 .app-card-manifest code {
-  background: none; padding: 0; font: inherit; color: inherit;
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
 }
-.hljs-comment { color: var(--muted); }
-.hljs-section { color: var(--coral); }
+.hljs-comment { color: var(--muted); font-style: italic; }
+.hljs-section { color: var(--coral); font-weight: 500; }
 .hljs-attr { color: var(--fg); }
 .hljs-string { color: var(--gold); }
 .hljs-number, .hljs-literal { color: var(--ok); }
 .hljs-punctuation { color: var(--muted); }
-.charts { display: flex; gap: 16px; align-items: stretch; }
+
+/* --- charts --------------------------------------------------------------- */
+.charts { display: flex; gap: 20px; align-items: stretch; }
 .charts > .card { flex: 1; min-width: 0; }
-.charts h2 { margin: 0 0 8px; }
+.charts h2 { margin: 0 0 10px; display: block; }
+.charts h2::after { display: none; }
 .chart { height: 220px; }
-.chart .muted { margin: 0; padding: 48px 12px 0; text-align: center; }
+.chart .muted { margin: 0; padding: 48px 12px 0; text-align: center; font-size: 13px; }
 .uplot { font-family: inherit; }
+
 @media (max-width: 52rem) {
   .app-card { flex-direction: column; }
-  .app-card-head { flex: 0 0 auto; width: auto; }
+  .app-card-head {
+    flex: 0 0 auto; width: auto;
+    border-right: 0; padding-right: 0;
+    border-bottom: 1px solid var(--line); padding-bottom: 14px;
+  }
   .charts { flex-direction: column; }
 }
 """
@@ -373,7 +506,7 @@ def head_actions(path):
     return ""
   return (
     '<span class="head-actions">'
-    '<a class="btn" href="/catalog?fetch=1">Fetch App</a></span>'
+    '<a class="btn" href="/catalog?fetch=1">+ Fetch App</a></span>'
   )
 
 
@@ -400,7 +533,7 @@ def page(path, title, body, version="", actions=""):
 <script>if (localStorage.getItem("harbor-nav") === "collapsed") document.documentElement.classList.add("nav-collapsed");</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>{STYLE}</style></head>
 <body>
 <div class="app">
@@ -557,10 +690,11 @@ def mdi(name):
   )
 
 
-def icon_button(label, icon, *, submit=False):
+def icon_button(label, icon, *, submit=False, danger=False):
   kind = "submit" if submit else "button"
+  klass = "icon danger" if danger else "icon"
   return (
-    f'<button type="{kind}" class="icon" title="{esc(label)}" '
+    f'<button type="{kind}" class="{klass}" title="{esc(label)}" '
     f'aria-label="{esc(label)}">{mdi(icon)}</button>'
   )
 
@@ -578,6 +712,7 @@ def job_button(
   autorun=False,
   done="",
   icon="",
+  danger=False,
 ):
   """A button that opens the job modal. See `job_modal` for the attributes.
 
@@ -595,6 +730,8 @@ def job_button(
     klass = "job-open"
     tip = ""
     content = esc(label)
+  if danger:
+    klass += " danger"
   return (
     f'<button type="button" class="{klass}"{extra}{tip}'
     f' data-verb="{esc(verb)}" data-title="{esc(title)}" data-desc="{esc(desc)}"'

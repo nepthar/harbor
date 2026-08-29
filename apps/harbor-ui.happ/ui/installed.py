@@ -71,32 +71,34 @@ def apps_table(apps):
 
 
 def lifecycle_bar(app):
-  """Start, stop, restart, snapshot, uninstall. Each opens the job modal."""
+  """Start or stop, then restart, snapshot, uninstall. Each opens the job modal."""
   app_id = app["app_id"]
   name = app.get("display_name") or app_id
   running = app["status"] == "running"
   installed = app.get("state") == "installed"
-  buttons = [
+  # Exactly one of start/stop ever applies, so only that one is drawn, and it
+  # carries a word rather than a glyph -- it is the verb the page is for.
+  primary = (
     job_button(
-      "start",
-      "start",
-      title=f"Start {name}",
-      desc=f"Starts {app_id}, installing it first if it is not installed yet.",
-      args={"app": app_id},
-      enabled=not running,
-      icon="play",
-    ),
-    job_button(
-      "stop",
+      "Stop",
       "stop",
       title=f"Stop {name}",
       desc=f"Stops {app_id}'s containers. Its data and configuration are untouched.",
       args={"app": app_id},
-      enabled=running,
-      icon="stop",
-    ),
+    )
+    if running
+    else job_button(
+      "Start",
+      "start",
+      title=f"Start {name}",
+      desc=f"Starts {app_id}, installing it first if it is not installed yet.",
+      args={"app": app_id},
+    )
+  )
+  buttons = [
+    primary,
     job_button(
-      "restart",
+      "Restart",
       "restart",
       title=f"Restart {name}",
       desc=(
@@ -105,10 +107,9 @@ def lifecycle_bar(app):
         f"then starts it again if it was running. Data and its address are kept."
       ),
       args={"app": app_id},
-      icon="refresh",
     ),
     job_button(
-      "snapshot",
+      "Snapshot",
       "snapshot",
       title=f"Snapshot {name}",
       desc=(
@@ -118,11 +119,10 @@ def lifecycle_bar(app):
       args={"app": app_id},
       fields=[{"name": "label", "placeholder": "label (optional)"}],
       enabled=installed,
-      icon="database-export",
     ),
     job_button(
-      "remove",
-      title=f"Uninstall {name}",
+      "Remove",
+      title=f"Remove {name}",
       desc=(
         f"Pick how much of {app_id} to remove. To keep a copy of the data "
         f"first, close this and take a Snapshot."
@@ -157,7 +157,7 @@ def lifecycle_bar(app):
           ),
         },
       ],
-      icon="trash-can",
+      danger=True,
     ),
   ]
   return '<div class="row actions">' + "".join(buttons) + "</div>"
