@@ -1,0 +1,491 @@
+/* ---------------------------------------------------------------------------
+   Tokens. Two surfaces, three text weights, one radius, one spacing scale.
+   The ground is neutral-warm rather than navy so the signal colours (which are
+   all warm) sit on it instead of fighting a blue cast.
+   --------------------------------------------------------------------------- */
+:root {
+  --void: #100f0e;    /* the gutter the ribbon runs through */
+  --bg: #171614;      /* the app ground */
+  --panel: #1f1c19;   /* raised: wells, inputs, modals */
+  --line: #2e2925;    /* hairline that separates */
+  --hair: #232020;    /* hairline that is barely there (table rows) */
+
+  /* Three text weights, each with exactly one job. Never pure white. */
+  --fg: #ece5dc;      /* content */
+  --dim: #bfb5a8;     /* labels, secondary */
+  --muted: #9a9082;   /* metadata, disabled */
+
+  /* The ribbon, reused as meaning. Nothing in the UI is coloured off-palette. */
+  --rosewood: #c72057;
+  --coral: #fc795f;
+  --gold: #fdd305;
+  --ok: #8aa85e;
+
+  --accent: var(--coral);
+  --ink: #17110e;     /* dark type on a warm fill */
+  --bad: var(--rosewood);
+  --warn: var(--gold);
+  --off: #4a433d;
+
+  --r: 2px;           /* one radius, near-square */
+  --gutter: 20px;     /* what you see of the ribbon */
+  --chamfer: 54px;    /* the cut corner the ribbon runs through */
+  --ribbon: 30px;
+  --ribbon-top: 45px;
+}
+html { color-scheme: dark; height: 100%; background: var(--void); }
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: var(--gutter); display: flex; height: 100%; overflow: hidden;
+  background: var(--void); color: var(--fg);
+  font: 14px/1.55 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+/* The ribbon cuts the top-left corner at 45°, entering the left gutter and
+   leaving through the top one. Its centreline runs (0, C) -> (C, 0) where
+   C = ribbon-top + ribbon/2; the panel's chamfer is cut wide enough to clear
+   it, so the whole run reads as one gesture instead of two stray slivers. */
+body::before {
+  content: ""; position: fixed; left: 0; top: var(--ribbon-top);
+  width: 200vw; height: var(--ribbon); pointer-events: none;
+  transform-origin: 0 50%;
+  transform: rotate(-45deg) translateY(-50%);
+  /* Three bands of 26.67% and two gaps of 10%. Splitting on thirds and then
+     insetting the gaps takes two edges off the middle band and one off each
+     of its neighbours, which leaves it visibly thinner. */
+  background: linear-gradient(to bottom,
+    var(--rosewood) 0 26.67%,
+    transparent 26.67% 36.67%,
+    var(--coral) 36.67% 63.33%,
+    transparent 63.33% 73.33%,
+    var(--gold) 73.33% 100%);
+}
+.app {
+  position: relative; z-index: 1; flex: 1; display: flex;
+  min-width: 0; min-height: 0; background: var(--bg); overflow: hidden;
+  clip-path: polygon(0 var(--chamfer), var(--chamfer) 0,
+                     100% 0, 100% 100%, 0 100%);
+}
+
+/* --- nav ---------------------------------------------------------------- */
+nav {
+  width: 168px; flex: 0 0 168px; background: var(--bg);
+  border-right: 1px solid var(--line);
+  padding: calc(var(--chamfer) + 4px) 16px 16px;
+  overflow: auto; display: flex; flex-direction: column;
+}
+.brand { padding: 0 0 24px; letter-spacing: -0.005em; }
+.brand .name { font-size: 17px; font-weight: 600; display: block; }
+.brand .ver {
+  display: block; font-size: 11px; color: var(--muted);
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  margin-top: 1px;
+}
+/* The ribbon again, flat: the mark and the corner are the same object. */
+.brand .mark, nav a .mark { display: none; }
+/* Active is a coral edge and coral type -- not a filled pill. The 2px inset
+   border keeps every item on the same baseline grid whether lit or not. */
+nav a {
+  display: block; padding: 5px 10px; margin-bottom: 1px;
+  border-left: 2px solid transparent;
+  color: var(--dim); text-decoration: none; text-transform: lowercase;
+  font-size: 14px;
+}
+nav a:hover { color: var(--fg); border-left-color: var(--line); }
+nav a.active { color: var(--coral); border-left-color: var(--coral); font-weight: 500; }
+.nav-toggle {
+  background: none; color: var(--muted); border: 0; border-radius: var(--r);
+  padding: 6px; margin-top: auto; cursor: pointer; font: inherit; width: 100%;
+}
+.nav-toggle:hover { color: var(--fg); background: var(--panel); }
+html.nav-collapsed nav { width: 52px; flex-basis: 52px; padding: calc(var(--chamfer) + 4px) 8px 16px; }
+html.nav-collapsed .brand { padding: 0 0 24px; }
+html.nav-collapsed .brand .name, html.nav-collapsed .brand .ver,
+html.nav-collapsed nav a .label { display: none; }
+html.nav-collapsed .brand .mark { display: block; font-weight: 600; font-size: 17px; }
+html.nav-collapsed nav a { padding: 5px 0 5px 8px; }
+html.nav-collapsed nav a .mark { display: inline; }
+
+/* --- page head ---------------------------------------------------------- */
+main { flex: 1; padding: 28px 32px 48px; min-width: 0; overflow: auto; }
+.head {
+  position: relative;
+  display: flex; align-items: baseline; gap: 16px; margin-bottom: 24px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--line);
+}
+/* The ribbon, flattened onto the head rule: the first 44px of the line is the
+   mark. `bottom: -2px` centres 3px on the 1px border, and absolute positioning
+   keeps it out of both the flex flow and the page's vertical rhythm. */
+.head::after {
+  content: ""; position: absolute; left: 0; bottom: -2px;
+  width: 44px; height: 3px;
+  transform: skewX(-45deg); transform-origin: bottom left;
+  background: linear-gradient(to right,
+    var(--rosewood) 0 30%, transparent 30% 35%,
+    var(--coral) 35% 65%, transparent 65% 70%, var(--gold) 70% 100%);
+}
+h1 { font-size: 19px; margin: 0; font-weight: 600; letter-spacing: -0.012em; }
+/* Beside the title on the head's baseline: what the page is, in one phrase. */
+.head-sub { color: var(--dim); font-size: 13px; margin: 0; }
+.head a { color: var(--dim); text-decoration: none; font-size: 12px; }
+.head a:hover { color: var(--coral); }
+.head .head-actions { order: 1; align-self: center; }
+.head > a { order: 2; margin-left: auto; }
+
+/* --- section labels ------------------------------------------------------
+   A small lowercase label with a rule running to the right edge. Hierarchy
+   comes from this and from space, so most content needs no box at all. */
+h2 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: lowercase; color: var(--dim);
+  margin: 32px 0 12px; display: flex; align-items: center; gap: 12px;
+}
+h2::after { content: ""; order: 1; flex: 1; height: 1px; background: var(--line); }
+h2:first-child { margin-top: 0; }
+/* Beside the label, before the rule -- the same reading path as `.head`. */
+h2 .act {
+  order: 0; display: flex; gap: 8px; font-weight: 400; font-size: 12px;
+  letter-spacing: 0; text-transform: none;
+}
+h2 .act button { padding: 2px 9px; font-size: 12px; }
+h2 .act a { color: var(--muted); text-decoration: none; }
+h2 .act a:hover { color: var(--coral); }
+h3 {
+  font-size: 11px; letter-spacing: .08em; text-transform: lowercase;
+  color: var(--muted); margin: 20px 0 8px; font-weight: 600;
+}
+.lede { color: var(--dim); margin: -4px 0 12px; max-width: 68ch; font-size: 13px; }
+/* A repo's provenance line: long enough to want the full width. */
+.lede.repo-meta { max-width: none; color: var(--muted); font-size: 12px; }
+.lede.repo-meta .mono { font-size: 12px; }
+.warnish { color: var(--warn); }
+
+/* --- surfaces ------------------------------------------------------------
+   `.card` around a table is just a pair of rules; only `.pad` fills. */
+.card { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.card.pad {
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel); padding: 16px;
+}
+.card.entry { padding: 6px 0; border-bottom: none; }
+.scroll { overflow-x: auto; }
+
+/* --- tables --------------------------------------------------------------
+   Headers are small lowercase mono, not uppercase tracked grey. Identifiers,
+   versions, sizes and counts are mono so columns actually line up. */
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; font-size: 11px; font-weight: 400; color: var(--muted);
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  text-transform: lowercase; letter-spacing: 0; font-size: 11.5px;
+  padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line);
+  white-space: nowrap; vertical-align: middle;
+}
+td {
+  padding: 9px 14px 9px 0; border-bottom: 1px solid var(--hair);
+  white-space: nowrap; vertical-align: middle;
+}
+th:first-child, td:first-child { padding-left: 2px; }
+tr:last-child td { border-bottom: none; }
+td.name { font-weight: 500; color: var(--fg); }
+th.act, td.act { width: 1%; text-align: right; padding-right: 2px; }
+.sub {
+  display: block; font-size: 11.5px; color: var(--muted); font-weight: 400;
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+tbody tr:hover td { background: color-mix(in srgb, var(--coral) 5%, transparent); }
+/* Paths are long and matter; let them wrap rather than push the row's
+   controls off the edge. */
+td.path { white-space: normal; word-break: break-all; min-width: 16ch; }
+td.wrap { white-space: normal; min-width: 20ch; }
+td.name a { color: inherit; text-decoration: none; }
+td.name a:hover { color: var(--coral); }
+td.path a { color: inherit; }
+td.path a:hover { color: var(--coral); }
+
+/* Secondary table columns are data, not chrome: readable, and mono so that
+   versions, sizes, ids and paths line up down the column. `.wrap` is prose
+   (descriptions, hints) and stays in the text face. */
+td.muted { color: var(--dim); }
+td.muted:not(.wrap), td.path {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12.5px;
+}
+td.muted.wrap { color: var(--muted); font-size: 13px; }
+
+/* --- status --------------------------------------------------------------
+   Square markers, matching the geometry everywhere else. */
+.pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); }
+.dot { width: 6px; height: 6px; border-radius: 1px; background: var(--off); flex: none; }
+.dot.running { background: var(--ok); }
+.dot.exited { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+.muted { color: var(--muted); }
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* --- controls ------------------------------------------------------------
+   Default is quiet: a hairline and dim type. Fill is reserved for the one
+   action on a page that commits something, and it is warm with dark ink --
+   not white-on-blue. */
+input[type=text], input[type=password], input:not([type]), select {
+  background: var(--void); color: var(--fg); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 6px 9px; font: inherit; font-size: 13px;
+}
+input:focus, select:focus, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--coral); outline-offset: 1px;
+}
+input::placeholder { color: var(--muted); }
+label { color: var(--dim); display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+button {
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 4px 11px; font: inherit; font-size: 13px; line-height: 1.5;
+  cursor: pointer; transition: color 120ms, border-color 120ms;
+}
+button:hover:not(:disabled) { color: var(--fg); border-color: var(--dim); }
+button[disabled] { opacity: .35; cursor: not-allowed; }
+button.link {
+  background: none; border: 0; color: var(--muted); padding: 0;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+button.link:hover:not(:disabled) { color: var(--bad); border: 0; }
+/* The committing action -- one filled control per surface, warm with dark
+   ink. Everything else on the page stays a hairline. */
+.cfg-save, #job-go, #ask-go,
+.app-card-head > .actions > .job-open:first-child {
+  background: var(--coral); border-color: var(--coral); color: var(--ink);
+  font-weight: 600;
+}
+.cfg-save:hover:not(:disabled),
+#job-go:hover:not(:disabled), #ask-go:hover:not(:disabled),
+.app-card-head > .actions > .job-open:first-child:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--coral) 86%, white);
+  border-color: color-mix(in srgb, var(--coral) 86%, white); color: var(--ink);
+}
+.cfg-save { visibility: hidden; }
+.cfg-edit.is-dirty .cfg-save { visibility: visible; }
+.cfg-edit { display: flex; align-items: center; gap: 10px; }
+.cfg-edit input { width: 16em; max-width: 100%; }
+/* Icon buttons are ghosts that take on their verb's colour on hover. */
+button.icon { padding: 5px 7px; line-height: 0; color: var(--dim); }
+button.icon svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+button.icon:hover:not(:disabled) { color: var(--fg); border-color: var(--dim); }
+button.danger:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
+.head-actions .actions { gap: 8px; }
+.head .head-actions a.btn {
+  color: var(--fg); font-size: 13px; text-decoration: none;
+  border: 1px solid var(--line); border-radius: var(--r); padding: 4px 11px;
+  background: transparent;
+}
+.head .head-actions a.btn:hover { color: var(--coral); border-color: var(--coral); }
+.actions form { display: inline; }
+.actions a.link, .fetchbar a.link {
+  color: var(--muted); font-size: 13px; text-decoration: none;
+}
+.actions a.link:hover, .fetchbar a.link:hover { color: var(--coral); }
+
+/* --- rows and wells ------------------------------------------------------ */
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+/* `display: flex` outranks the UA stylesheet's [hidden] { display: none }. */
+.row[hidden] { display: none; }
+.row .grow { flex: 1; min-width: 200px; }
+.row.between { justify-content: space-between; width: 100%; }
+.fetchbar {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel); padding: 14px; margin-bottom: 20px;
+}
+.fetchbar input[name=target] { flex: 1 1 28rem; min-width: 16rem; }
+.fetchbar .hint { flex-basis: 100%; color: var(--muted); font-size: 12px; margin: 0; }
+.apphead { margin-bottom: 10px; }
+.apphead h2 {
+  margin: 0; font-size: 19px; font-weight: 600; text-transform: none;
+  letter-spacing: -0.012em; color: var(--fg); display: block;
+}
+.apphead h2::after { display: none; }
+.apphead .lede { margin: 8px 0 2px; }
+table.kv td { vertical-align: middle; }
+table.kv td.key { font-weight: 500; white-space: nowrap; width: 1%; padding-right: 28px; }
+table.kv td.key .sub { font-weight: 400; }
+table.kv td.field { width: 1%; white-space: nowrap; }
+pre {
+  margin: 10px 0 0; padding: 12px 14px; background: var(--void);
+  border: 1px solid var(--line); border-radius: var(--r);
+  overflow-x: auto; font-size: 12px; white-space: pre-wrap;
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+code {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px;
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 0 5px; border-radius: var(--r); color: var(--dim);
+}
+.empty, .note { padding: 48px 0; color: var(--muted); text-align: center; font-size: 13px; }
+
+/* --- notices -------------------------------------------------------------
+   A colour-bearing left rule rather than a coloured box. */
+.notice.contested ul { margin: 6px 0 0; padding-left: 18px; }
+.notice.contested li { margin-bottom: 3px; font-size: 13px; color: var(--dim); }
+.notice, .error {
+  border: 1px solid var(--line); border-left: 2px solid var(--ok);
+  border-radius: var(--r); padding: 12px 16px; margin-bottom: 20px;
+  background: var(--panel);
+}
+.error { border-left-color: var(--bad); }
+.notice.contested { border-left-color: var(--warn); }
+.error h2 {
+  margin: 0 0 8px; font-size: 13px; color: var(--bad); display: block;
+  text-transform: none; letter-spacing: 0;
+}
+.error h2::after { display: none; }
+.error p { margin: 0 0 4px; font-size: 13px; }
+.error ul { margin: 6px 0 0; padding-left: 18px; }
+.error li { margin-bottom: 4px; }
+
+/* --- disclosure ---------------------------------------------------------- */
+details.reveal > summary {
+  cursor: pointer; color: var(--muted); font-size: 12px; padding: 10px 0;
+  list-style-position: outside;
+}
+details.reveal > summary:hover { color: var(--coral); }
+.card > details.reveal { border-top: 1px solid var(--hair); }
+.card.pad > details.reveal { border-top: none; margin-top: 12px; }
+
+/* --- catalog / overlays --------------------------------------------------- */
+.catalog-row { cursor: pointer; }
+.catalog-row:hover td { background: color-mix(in srgb, var(--coral) 8%, transparent); }
+.shade {
+  position: fixed; inset: 0; z-index: 20;
+  /* A contested id opens one card per repo, side by side. */
+  display: flex; align-items: center; justify-content: center; gap: 20px;
+  padding: 32px;
+  background: color-mix(in srgb, var(--void) 72%, transparent);
+}
+.shade[hidden] { display: none; }
+.job-modal {
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r); width: min(36rem, 100%);
+  padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  max-height: min(80vh, 100%);
+}
+.job-modal h2 {
+  margin: 0; font-size: 16px; font-weight: 600; display: block;
+  text-transform: none; letter-spacing: -0.01em; color: var(--fg);
+}
+.job-modal h2::after { display: none; }
+.job-modal p { margin: 0; font-size: 13px; color: var(--dim); }
+.job-bar { width: 100%; }
+.job-fields { width: 100%; gap: 10px; }
+.job-out {
+  margin: 0; min-height: 12rem; max-height: 40vh; overflow: auto;
+  padding: 12px; background: var(--void); border-radius: var(--r);
+  font-size: 12px; white-space: pre-wrap;
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  border: 1px solid var(--line); border-left: 2px solid var(--line);
+  transition: border-color 400ms ease;
+}
+.job-out.ok { border-left-color: var(--ok); }
+.job-out.bad { border-left-color: var(--bad); }
+.job-choices { display: flex; flex-direction: column; gap: 8px; }
+.job-choices[hidden] { display: none; }
+.job-choice {
+  display: flex; gap: 10px; align-items: flex-start; color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px;
+  cursor: pointer; font-size: 13px;
+}
+.job-choice:hover { border-color: var(--dim); }
+.job-choice:has(input:checked) { border-color: var(--coral); }
+.job-choice .sub { margin-top: 2px; }
+
+/* --- app card ------------------------------------------------------------- */
+.app-card {
+  display: flex; flex-direction: row; align-items: stretch;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r); width: min(88rem, 100%);
+  max-height: min(92vh, 100%); overflow: hidden;
+  padding: 16px; gap: 16px;
+}
+.app-card[hidden] { display: none; }
+.app-card-head {
+  flex: 0 0 21rem; width: 21rem;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--line); padding-right: 16px;
+  overflow: auto;
+}
+.app-card h2 {
+  margin: 0 0 2px; font-size: 17px; font-weight: 600; display: block;
+  text-transform: none; letter-spacing: -0.01em; color: var(--fg);
+}
+.app-card h2::after { display: none; }
+.app-card .lede { margin: 8px 0 12px; }
+.app-card-intro > :last-child { margin-bottom: 0; }
+/* margin-top:auto rather than a fixed footer: the head scrolls, and buttons
+   that scrolled away with it would be unreachable on a long description. */
+.app-card-head > .actions {
+  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line);
+}
+.app-card .conflict, .app-card .stale {
+  margin: 10px 0 0; padding: 8px 12px; font-size: 12.5px;
+  color: var(--dim); background: var(--panel);
+  border-left: 2px solid var(--bad); border-radius: var(--r);
+}
+.app-card .stale { border-left-color: var(--warn); }
+/* Free-form docker options the manifest passes through. Louder than `.stale`:
+   a tinted ground as well as a rule, because this is the one thing on the card
+   the operator is being asked to agree to. */
+.app-card .passthru {
+  margin: 12px 0 0; padding: 10px 12px; font-size: 12.5px;
+  border-left: 2px solid var(--bad); border-radius: var(--r);
+  background: color-mix(in srgb, var(--bad) 10%, var(--panel));
+  color: var(--dim);
+}
+.app-card .passthru b {
+  display: block; margin-bottom: 6px; font-weight: 600; color: var(--bad);
+}
+.app-card .passthru p { margin: 0 0 8px; }
+.app-card .passthru ul { margin: 0; padding-left: 16px; }
+.app-card .passthru li { margin: 3px 0; }
+.app-card .passthru li .mono { color: var(--fg); font-size: 12px; }
+.app-card .update {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--line); font-size: 12.5px;
+}
+.app-card .update p { margin: 0 0 4px; }
+.app-card .update p:last-child { margin-bottom: 0; }
+.app-card-diff span { display: block; }
+.app-card-diff .diff-add { color: var(--ok); }
+.app-card-diff .diff-del { color: var(--coral); }
+.app-card-diff .diff-hunk { color: var(--muted); }
+.app-card-manifest {
+  flex: 1 1 auto; min-width: 0; min-height: 16rem; overflow: auto;
+  margin: 0; padding: 4px 0 0;
+  background: none; border: 0; border-radius: 0;
+  font: 12.5px/1.6 "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  white-space: pre; color: var(--dim);
+}
+.app-card-manifest code {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+}
+.hljs-comment { color: var(--muted); font-style: italic; }
+.hljs-section { color: var(--coral); font-weight: 500; }
+.hljs-attr { color: var(--fg); }
+.hljs-string { color: var(--gold); }
+.hljs-number, .hljs-literal { color: var(--ok); }
+.hljs-punctuation { color: var(--muted); }
+
+/* --- charts --------------------------------------------------------------- */
+.charts { display: flex; gap: 20px; align-items: stretch; }
+.charts > .card { flex: 1; min-width: 0; }
+.charts h2 { margin: 0 0 10px; display: block; }
+.charts h2::after { display: none; }
+.chart { height: 220px; }
+.chart .muted { margin: 0; padding: 48px 12px 0; text-align: center; font-size: 13px; }
+.uplot { font-family: inherit; }
+
+@media (max-width: 52rem) {
+  .app-card { flex-direction: column; }
+  .app-card-head {
+    flex: 0 0 auto; width: auto;
+    border-right: 0; padding-right: 0;
+    border-bottom: 1px solid var(--line); padding-bottom: 14px;
+  }
+  .charts { flex-direction: column; }
+}
