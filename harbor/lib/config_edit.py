@@ -19,6 +19,7 @@ import tomlkit
 from tomlkit import TOMLDocument
 
 from harbor.lib.config import _expand_path, load_config_file
+from harbor.lib.repo import MAIN_REPO
 from harbor.lib.util import validate_identifier
 
 logger = logging.getLogger("harbor.config_edit")
@@ -136,3 +137,49 @@ def remove_host_volume(ctx: HarborCtx, tag: str) -> None:
     raise ValueError(f"No host volume {tag!r}; known tags: {known}")
   with edit_config(ctx) as document:
     del _host_volumes(document)[tag]
+
+
+def _repos(document: TOMLDocument):
+  """The `[repo]` super table, created on first use."""
+  if "repo" not in document:
+    document["repo"] = tomlkit.table(is_super_table=True)
+  return document["repo"]
+
+
+def add_repo(ctx: HarborCtx, name: str, *, path: str = "", url: str = "") -> None:
+  """Write a `[repo.<name>]` table. Exactly one of path or url.
+
+  Existence is checked against the document, not `ctx.config`, which may
+  predate an earlier add.
+  """
+  validate_identifier(name)
+  if bool(path) == bool(url):
+    raise ValueError("A repo needs exactly one of a local path or a github:// url")
+  if name == MAIN_REPO:
+    raise ValueError(
+      f"{MAIN_REPO!r} is the built-in repo at {ctx.config.repos_root / MAIN_REPO}; "
+      f"give this one another name."
+    )
+  with edit_config(ctx) as document:
+    repos = _repos(document)
+    if name in repos:
+      raise ValueError(
+        f"Repo {name!r} already exists in {ctx.config.config_path}. Add this one "
+        f"under a different name, or remove that one with "
+        f"`harbor repo remove {name}`."
+      )
+    table = tomlkit.table()
+    if path:
+      table["path"] = path
+    else:
+      table["url"] = url
+    repos[name] = table
+
+
+def remove_repo(ctx: HarborCtx, name: str) -> None:
+  """Drop a `[repo.<name>]` table. The mirrored directory is the caller's."""
+  with edit_config(ctx) as document:
+    repos = document.get("repo") or {}
+    if name not in repos:
+      raise ValueError(f"Repo {name!r} is not in {ctx.config.config_path}")
+    del repos[name]

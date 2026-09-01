@@ -58,11 +58,21 @@ user-facing below them.
    available. All cheap; take disk from `statvfs` rather than the volume
    walker. Keep per-app resource usage out of it: that needs `docker stats`,
    which is slow, and it is the first step toward owning a metrics product.
-5. **Container logs in the web UI.** Nothing in the API or the UI exposes
-   them; `/logs` is the Activity page, and container output belongs to
-   dockerd. For a non-engineer whose app will not start, this matters more
-   than harbor's own run logs. The job modal is the obvious place to render
-   them.
+5. **Container logs in the web UI, tailed live.** Nothing in the API or the
+   UI exposes them; `/logs` is the Activity page, and container output belongs
+   to dockerd. For a non-engineer whose app will not start, this matters more
+   than harbor's own run logs. Two halves, and the second is the hard one: a
+   backlog to open on (`docker compose logs --tail`, a normal request/response)
+   and then a live tail (`docker compose logs -f`) that keeps writing while the
+   page is open. The job modal already renders streamed output, so the front
+   end is mostly there. What is new is a child process that outlives a job:
+   `docker_run_command` reads to EOF and returns a `DockerReturn`, which a `-f`
+   tail never reaches, so the tail needs its own spawn-and-stream path whose
+   lifetime is the *reader's*, not a verb's. It has no exit status, it must be
+   killed when the browser goes away rather than when a job finishes, and two
+   viewers on one app should not mean two `docker` children. Per-unit
+   selection, since an app can have several containers, and a byte cap so a
+   chatty container cannot pin harbord's memory.
 6. **Health, not just liveness.** `HarborRunUnitStatus` keeps `state` and
    discards docker's `Status`, which carries `(healthy)` / `(unhealthy)`. A
    container can be running and the app dead — precisely the failure this
@@ -80,16 +90,88 @@ user-facing below them.
    both providers presume Pangolin or NPM already exists, which presumes
    someone who understands reverse proxies. A bundled Caddy provider giving
    LAN-local HTTPS with no configuration would finish the abstraction.
-10. **Editing a happ from the web UI — the bundle, not the staged copy.**
+10. **A manifest check the daemon can perform.** The prerequisite for both
+    editors below, and for showing an operator what a happ *does* before they
+    install it. A verb taking manifest bytes and an app id, touching nothing
+    on disk, returning either the `AppStack` it would build or every reason it
+    could not. `AppStack.from_bytes(data, app_id, source)` is already exactly
+    this call — `source` only names the file in messages, so a buffer that was
+    never written can borrow the name it would have had. Three things stand
+    between that and a useful answer:
+
+    - *Errors are strings, and the caller needs structure.* Every failure
+      arrives as one `ConfigError` whose message has been pre-formatted for a
+      terminal — `_fmt_validation_error` flattens pydantic's `loc`/`msg`/
+      `input` into indented lines, and `_validate_manifest` joins its list
+      with `"\n  "`. A caller wants the parts back: which key, what is wrong,
+      and for TOML syntax the line and column, so a failure can be marked
+      where it happened instead of printed underneath. Keep the structured
+      form and let the CLI's formatting be one renderer of it.
+    - *Parsing is fail-fast, and the caller wants the whole list.* The stages
+      are sequential — decode, TOML, schema, cross-section checks, then
+      `_build` — and each raises on the first problem, so fixing one error
+      only reveals the next. Pydantic already reports every schema violation
+      at once and `_validate_manifest` already accumulates, so the collecting
+      is half done; what is missing is running the later stages when an
+      earlier one has found something survivable, and admitting that some
+      stages genuinely cannot (nothing downstream of unparseable TOML can
+      say anything useful). The honest contract is a list of errors plus
+      whether parsing got far enough for that list to be complete.
+    - *Not every objection is an error.* A `ComposeWarning` (see "Privileged
+      compose keys" below) is not a manifest that failed to parse — it is a
+      manifest that parsed and is asking for something unmodelled. The check
+      returns those separately from errors, so a UI can render "this will not
+      load" and "review these options" differently. The catalog view already
+      serialises them; the check would hand back the same shape for text that
+      has not been saved yet.
+
+    A serialised `AppStack` on success is worth more than a bare "ok": it is
+    what a UI needs to show what a manifest *does* — the units, volumes,
+    routes, and config keys it produces, and the free-form docker options it
+    passes through — before anything is installed or written.
+
+11. **Editing a happ from the web UI — the bundle, not the staged copy.**
     Editing `run/<app>/happ/` is editing derived state: `install` regenerates
     it from the bundle and `reset` re-stages, so edits vanish silently, and
     `manifest_stale` only watches drift in the other direction. Edit
     `apps/<app>.happ` instead, framed as "customise this app", after which
-    `manifest_stale` lights up and Reinstall applies it. Note this also
+    `manifest_stale` lights up and Reinstall applies it. Item 10 is what makes
+    this an editor rather than a text box: without a dry check, the only way
+    to find out whether an edit is good is to write it. Note this also
     punches through the rule in the `JOBS` comment — a manifest defines bind
     mounts, which means root — so it belongs behind authentication and behind
     the capability receipt. Low value for the target audience, who do not
     write manifests; real value for the tinkering loop in the case study.
+
+12. **Editing config.toml from the web UI, in the same style.** Same shape as
+    item 11, one file up: an editor, a dry check, and an explicit write. The
+    write half is the part that already exists and is worth not rebuilding —
+    `config_edit._commit` stages the new text beside the real file, runs
+    `load_config_file` over the staging copy, and only then `os.replace`s it
+    into place, so a config that does not load can never land. Splitting the
+    check out from the commit gives the editor its dry run for free. Three
+    things this file has that a manifest does not:
+
+    - *`[repo]` is soft-failed on purpose.* `_resolve_repos` logs and drops
+      every repo rather than raising, so that one typo cannot take down every
+      harbor command. That is right for startup and wrong for an editor: a
+      dry check that calls a broken `[repo]` table valid is lying, so the
+      check has to report the soft failures alongside the hard ones and mark
+      which is which.
+    - *Comments are the operator's.* Edits made through `edit_config` go
+      through tomlkit and round-trip comments, ordering, and whitespace.
+      Whole-file editing keeps that for free — the operator's text *is* the
+      document — but it means the UI must never round-trip through a parsed
+      structure and re-serialise.
+    - *Nothing takes effect by itself.* `_ctx_again` already exists for
+      re-reading config after an edit, and route assignments deliberately
+      land on the next `start`. So the UI has to say which parts of a saved
+      change are live and which wait for a restart, rather than implying the
+      whole file took hold.
+
+    Also worth stating plainly in the UI: this is the file that defines host
+    volumes and route providers, so it is root-adjacent in the same way item
+    11 is, and belongs behind the same authentication.
 
 ### Deliberately not doing
 
@@ -101,62 +183,54 @@ which item 4 covers; the user who wants graphs is an engineer who will run
 their own. Be an excellent host for it instead: put Netdata, or
 Prometheus and Grafana, in the default repo as one-click happs.
 
-## Privileged compose keys are invisible
+## Privileged compose keys — now visible, not yet granted
 
-`[run.<unit>.compose]` is copied verbatim into the generated compose service.
-The only guard is `_COMPOSE_MANAGED_KEYS` in `lib/manifest.py`, which stops a
-manifest from *shadowing* what harbor generates (`image`, `volumes`, `ports`,
-`network_mode`, …). Everything else passes through untouched.
+*Mostly closed.* `[run.<unit>.compose]` is still copied verbatim into the
+generated compose service, and `_COMPOSE_MANAGED_KEYS` in `lib/manifest.py`
+still stops a manifest from *shadowing* what harbor generates (`image`,
+`volumes`, `ports`, `network_mode`, …). What changed is that everything else
+no longer passes through *silently*.
 
-So this manifest is accepted, generates what it asks for, and is reported as
-clean:
+`_COMPOSE_ALLOWED_KEYS` is an allowlist of keys that shape how a container runs
+without reaching outside it — `healthcheck`, `depends_on`, `mem_limit`, `user`,
+`ulimits`, `read_only`, and friends. An allowlist rather than a denylist, so a
+compose key nobody has considered yet is remarked on instead of sailing
+through. Anything not on it becomes a `ComposeWarning` on the `AppStack`, one
+per run unit, derived from `run_units` so it cannot drift from what compose is
+actually handed.
 
-```toml
-[run.main.compose]
-privileged = true
-pid        = "host"
-cap_add    = ["SYS_ADMIN"]
-devices    = ["/dev/sda:/dev/sda"]
-```
+The warning does not try to classify what the key does. Harbor cannot know
+that, and pretending to would mean maintaining a table of every compose key
+against every docker version. It says what it does know:
 
-```
-manifest accepted: True
-compose.privileged = True
-compose.pid = host
-compose.cap_add = ['SYS_ADMIN']
-compose.devices = ['/dev/sda:/dev/sda']
-danger_callouts: NOTHING FLAGGED
-```
+> This application sets free-form docker options on `<run_unit>` that are not
+> guaranteed to be safe. Please review them before continuing
 
-`privileged = true` is host root: the container can mount the host disk. No
-bind, no config change, no prompt — `harbor fetch` then `harbor start`.
+…followed by the offending `key = value` pairs, so the operator reviews the
+actual request rather than harbor's summary of it. This also catches the
+typo case for free: compose *ignores* a key it does not know, so `devcies`
+for `devices` silently does nothing, and now shows up beside the real ones.
 
-This is not a claim that harbor should sandbox hostile apps; it should not,
-and the box is administered by the person running it. The problem is narrower
-and worse: `danger_callouts` exists precisely to make escalation legible, and
-it only knows about `network_mode = "host"` and writable host binds. An
-operator auditing with `harbor inspect` rather than by reading raw TOML gets a
-clean bill of health on the manifest above.
+Three places surface it, all before the operator commits: `danger_callouts`,
+so `harbor inspect` and `harbor start` list it beside host networking and
+writable binds; `harbor install`, which prints it and asks, unless `-y` is
+passed; and the web UI's Repos page, which prints it on the app card beside the
+manifest that asks for it, above the Install button.
 
-**The shape it should take** is the one `kind = "host"` volumes already use —
-the manifest states what it needs, and the operator provides it:
+**What is deliberately still missing is the grant.** A warning is a warning:
+nothing refuses to install or start, and there is no per-app record that an
+operator once said yes. The shape that would close it is the one `kind = "host"`
+volumes already use — an ungranted key becomes a `ConfigIssue`, which makes it
+a `start_blocker`, and the operator grants once per key, recorded in the app
+store beside binds and route assignments (`harbor config <app> --allow
+privileged`). That is a bigger change than it looks: it moves an
+installation-independent property of a manifest onto per-installation state,
+and `AppStack` is deliberately installation-independent today.
 
-- An **allowlist** of benign compose keys (`healthcheck`, `deploy`, `user`,
-  `read_only`, `ulimits`, `stop_grace_period`, …) that pass silently. Allowlist
-  rather than denylist, so a compose key nobody has considered yet needs a
-  grant instead of sailing through.
-- Anything else is a *declared request*, not a parse error.
-- An ungranted request becomes a `ConfigIssue`, so it is a `start_blocker`.
-  `start` already refuses on those and prints `recovery_lines`, so the refusal
-  and its wording come free.
-- The operator grants once, per key, recorded in the app store beside binds and
-  route assignments: `harbor config <app> --allow privileged`.
-- `danger_callouts` lists requested and granted separately, so `harbor inspect`
-  shows the escalation instead of hiding it.
-
-Deliberately **not** a prompt. `manifest.py` has no `Conn` to ask from, jobs
-submitted through harbord cannot answer one, and a question asked on every
-`start` trains the operator to dismiss it.
+Deliberately **not** a prompt inside `manifest.py`: it has no `Conn` to ask
+from, jobs submitted through harbord cannot answer one, and a question asked on
+every `start` trains the operator to dismiss it. The `install` prompt sits at
+the CLI layer for exactly that reason.
 
 ## Smaller known gaps
 

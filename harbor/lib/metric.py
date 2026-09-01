@@ -42,7 +42,7 @@ _SKIP_FS = frozenset(
 
 
 def record_volume_sizes(ctx: HarborCtx) -> int:
-  """Walk volumes, host volumes, `$var`, and `$snapshots`. Returns how many."""
+  """Walk volumes, host volumes, and the harbor directories. Returns how many."""
   n = 0
   for kind, root in ctx.config.volume_roots.items():
     if not root.is_dir():
@@ -66,6 +66,7 @@ def record_volume_sizes(ctx: HarborCtx) -> int:
   for name, root in (
     ("var", ctx.config.var_root),
     ("snapshots", ctx.config.snapshot_root),
+    ("repos", ctx.config.repos_root),
   ):
     if not root.exists():
       continue

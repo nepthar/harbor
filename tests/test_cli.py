@@ -136,7 +136,7 @@ def test_rm_removes_run_state_configuration_and_managed_volumes(harbor_env):
 
 def test_rm_leaves_the_catalog_entry_alone(harbor_env):
   app_id = "ports-demo"
-  bundle = harbor_env.root / "apps" / f"{app_id}.happ"
+  bundle = harbor_env.main_repo / f"{app_id}.happ"
   assert harbor_env.run("start", app_id).returncode == 0
   assert harbor_env.run("stop", app_id).returncode == 0
 
@@ -167,7 +167,7 @@ def test_catalog_shows_available_apps_ps_hides_until_installed(harbor_env):
   assert app_id not in ps.stdout
 
   # Unstaged apps have no run/ copy; inspect a path instead of the catalog id.
-  happ = harbor_env.root / "apps" / f"{app_id}.happ"
+  happ = harbor_env.main_repo / f"{app_id}.happ"
   inspected = harbor_env.run("inspect", str(happ))
   assert inspected.returncode == 0, inspected.stderr
 
@@ -189,7 +189,7 @@ def test_inspect_shows_config_status(harbor_env):
 
 def test_inspect_notes_when_the_source_manifest_has_drifted(harbor_env):
   assert harbor_env.run("install", BASIC).returncode == 0
-  source = harbor_env.root / "apps" / f"{BASIC}.happ" / "manifest.toml"
+  source = harbor_env.main_repo / f"{BASIC}.happ" / "manifest.toml"
   source.write_text(source.read_text() + "\n# edited after staging\n")
 
   inspected = harbor_env.run("inspect", BASIC)
@@ -202,7 +202,7 @@ def test_inspect_notes_when_the_source_manifest_has_drifted(harbor_env):
 
 
 def test_inspect_by_path_shows_declared_config_without_installing(harbor_env):
-  happ = harbor_env.root / "apps" / f"{BASIC}.happ"
+  happ = harbor_env.main_repo / f"{BASIC}.happ"
   inspected = harbor_env.run("inspect", str(happ))
   assert inspected.returncode == 0, inspected.stderr
   assert "admin_user: (required)" in inspected.stdout
@@ -228,7 +228,7 @@ def test_logs_accepts_native_flags_before_app(harbor_env):
 
 
 def test_cmd_lists_and_runs_manifest_commands(harbor_env):
-  app = harbor_env.root / "apps" / "cmd-demo.happ"
+  app = harbor_env.main_repo / "cmd-demo.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
     """\
@@ -287,7 +287,7 @@ desc = "List-form command"
 
 
 def test_cmd_uses_run_when_container_is_stopped(harbor_env):
-  app = harbor_env.root / "apps" / "cmd-demo.happ"
+  app = harbor_env.main_repo / "cmd-demo.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
     """\
@@ -337,7 +337,7 @@ cmd = "echo pong"
 
 
 def test_invalid_manifest_is_rejected_before_start(harbor_env):
-  app = harbor_env.root / "apps" / "invalid-mount.happ"
+  app = harbor_env.main_repo / "invalid-mount.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
     """\
@@ -386,14 +386,14 @@ def test_start_invalid_path_arg_errors(harbor_env):
 def test_start_by_path_from_arbitrary_dir(harbor_env):
   app_id = "ports-demo"
   elsewhere = harbor_env.root / "elsewhere" / f"{app_id}.happ"
-  shutil.copytree(harbor_env.root / "apps" / f"{app_id}.happ", elsewhere)
-  shutil.rmtree(harbor_env.root / "apps" / f"{app_id}.happ")
+  shutil.copytree(harbor_env.main_repo / f"{app_id}.happ", elsewhere)
+  shutil.rmtree(harbor_env.main_repo / f"{app_id}.happ")
 
   started = harbor_env.run("start", str(elsewhere))
   assert started.returncode == 0, started.stderr
-  entry = harbor_env.root / "apps" / f"{app_id}.happ"
-  assert entry.is_symlink()
-  assert entry.readlink() == elsewhere.resolve()
+  # A bundle named by path belongs to no repo, so nothing is added to one.
+  assert not (harbor_env.main_repo / f"{app_id}.happ").exists()
+  assert harbor_env.app_logtab(app_id).read_text().count(str(elsewhere.resolve()))
 
   stopped = harbor_env.run("stop", app_id)
   assert stopped.returncode == 0, stopped.stderr
@@ -406,11 +406,11 @@ def test_start_from_a_conflicting_path_is_refused(harbor_env):
   assert harbor_env.run("stop", app_id).returncode == 0
 
   other = harbor_env.root / "elsewhere" / f"{app_id}.happ"
-  shutil.copytree(harbor_env.root / "apps" / f"{app_id}.happ", other)
+  shutil.copytree(harbor_env.main_repo / f"{app_id}.happ", other)
 
   result = harbor_env.run("start", str(other))
   assert result.returncode == 1
-  assert "already in the catalog" in result.stderr
+  assert "previously installed from" in result.stderr
 
 
 def test_missing_run_directory_with_container_refuses_lifecycle(harbor_env):
@@ -441,7 +441,7 @@ def test_removed_app_bundle_remains_runnable_from_the_staged_copy(harbor_env):
   """
   app_id = "ports-demo"
   assert harbor_env.run("start", app_id).returncode == 0
-  shutil.rmtree(harbor_env.root / "apps" / f"{app_id}.happ")
+  shutil.rmtree(harbor_env.main_repo / f"{app_id}.happ")
 
   doctor = harbor_env.run("doctor")
   assert doctor.returncode == 1
@@ -506,7 +506,7 @@ def test_config_of_a_staged_app_reads_the_run_copy(harbor_env):
   app will actually start with."""
   assert harbor_env.run("install", BASIC).returncode == 0
 
-  manifest = harbor_env.root / "apps" / f"{BASIC}.happ" / "manifest.toml"
+  manifest = harbor_env.main_repo / f"{BASIC}.happ" / "manifest.toml"
   manifest.write_text(
     manifest.read_text().replace("[volumes]", "since_staging = {}\n\n[volumes]")
   )
@@ -914,7 +914,7 @@ def test_readonly_host_volume_refuses_writable_app_volume(harbor_env):
 
 def test_missing_secret_blocks_start_with_recovery_command(harbor_env):
   app_id = "needs-secret"
-  app = harbor_env.root / "apps" / f"{app_id}.happ"
+  app = harbor_env.main_repo / f"{app_id}.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
     """\
@@ -955,7 +955,7 @@ def test_a_required_non_secret_value_blocks_start_and_shows_as_missing_config(
   blocker cannot be attributed to some other value.
   """
   app_id = "needs-value"
-  app = harbor_env.root / "apps" / f"{app_id}.happ"
+  app = harbor_env.main_repo / f"{app_id}.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
     """\
@@ -1184,7 +1184,7 @@ def test_stop_uses_staged_manifest_when_bundle_is_missing(
   lifecycle.stage(app, stage_ctx.bundle_path(app), stage_ctx)
   start_ctx = HarborCtx(load_config_file(harbor_env.config))
   lifecycle.start(app, start_ctx.bundle_path(app), start_ctx)
-  shutil.rmtree(harbor_env.root / "apps" / "routes-demo.happ")
+  shutil.rmtree(harbor_env.main_repo / "routes-demo.happ")
 
   fresh_ctx = HarborCtx(load_config_file(harbor_env.config))
   lifecycle.stop("routes-demo", fresh_ctx)
@@ -1210,7 +1210,7 @@ def test_init_bootstraps_a_usable_root(harbor_env, tmp_path):
   assert result.returncode == 0, result.stderr
   assert (root / "config.toml").is_file()
   assert (root / "master.key").is_file()
-  assert (root / "apps").is_dir()
+  assert (root / "repos" / "main").is_dir()
   assert (root / "run").is_dir()
   assert (root / "config").is_dir()
   for kind in VOLUME_KINDS:
@@ -1245,7 +1245,7 @@ def test_every_shipped_happ_stages(harbor_env):
 
   for app_id, rel_path in shipped:
     source = apps_dir / rel_path
-    dest = harbor_env.root / "apps" / source.name
+    dest = harbor_env.main_repo / source.name
     if source.is_dir():
       shutil.copytree(source, dest, dirs_exist_ok=True)
     else:
@@ -1482,7 +1482,7 @@ def test_reset_picks_up_a_changed_app_volume(harbor_env):
   staged = harbor_env.run_root / BASIC / "happ" / "bin" / "hello.sh"
   assert "changed by the happ author" not in staged.read_text()
 
-  bundle = harbor_env.root / "apps" / f"{BASIC}.happ" / "bin" / "hello.sh"
+  bundle = harbor_env.main_repo / f"{BASIC}.happ" / "bin" / "hello.sh"
   bundle.write_text("#!/bin/sh\necho changed by the happ author\n")
 
   assert harbor_env.run("reset", BASIC, "-y").returncode == 0
@@ -1493,7 +1493,7 @@ def test_reset_refuses_before_deleting_when_the_bundle_is_gone(harbor_env):
   assert harbor_env.run("start", BASIC, "--set", "admin_user=alice").returncode == 0
   data = harbor_env.volumes_root / "data" / BASIC / "config"
   (data / "app.db").write_text("rows")
-  shutil.rmtree(harbor_env.root / "apps" / f"{BASIC}.happ")
+  shutil.rmtree(harbor_env.main_repo / f"{BASIC}.happ")
 
   failed = harbor_env.run("reset", BASIC, "-y")
   assert failed.returncode != 0

@@ -5,7 +5,7 @@ from harbor.lib.metric import record_host_stats, record_volume_sizes
 
 class VolumeMetricsJob(Job):
   name = "volume-metrics"
-  description = "Record volume, var, and snapshot directory sizes"
+  description = "Record volume and harbor directory sizes"
   record_activity = False
 
   def run(self, ctx: HarborCtx) -> None:

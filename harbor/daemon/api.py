@@ -44,7 +44,8 @@ from harbor.lib.stack import AppStack
 # 10: GET /metrics (gauge history).
 # 11: /volumes bytes come from gauges; sizes=1 is gone; host volumes carry bytes.
 # 12: restart is a job verb.
-API_VERSION = 12
+# 15: catalog apps carry `warnings` -- unmodelled [run.<unit>.compose] keys.
+API_VERSION = 15
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -71,22 +72,6 @@ class ConfigChange(BaseModel):
   set: dict[str, str] = Field(default_factory=dict)
   bind: dict[str, str] = Field(default_factory=dict)
   route: dict[str, str] = Field(default_factory=dict)
-
-
-class FetchTarget(BaseModel):
-  """A github: target to look at, as the UI sends it."""
-
-  model_config = ConfigDict(extra="forbid")
-
-  target: str
-
-
-class CheckApp(BaseModel):
-  """An already-fetched app id to compare against its recorded source."""
-
-  model_config = ConfigDict(extra="forbid")
-
-  app: str
 
 
 class JobSubmission(BaseModel):
@@ -170,23 +155,14 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
 
   @app.get("/catalog", tags=["catalog"])
   def list_catalog(ctx: Ctx) -> dict:
-    return {"catalogs": views.catalog_view(ctx)}
+    return {
+      "catalogs": views.catalog_view(ctx),
+      "contested": views.contested_view(ctx),
+    }
 
-  @app.post("/catalog/preview", tags=["catalog"])
-  def preview_fetch(body: FetchTarget, ctx: Ctx) -> dict:
-    """Read what a github: target holds, without installing any of it."""
-    try:
-      return views.fetch_preview_view(body.target, ctx)
-    except (ValueError, RuntimeError) as e:
-      raise HTTPException(400, str(e)) from e
-
-  @app.post("/catalog/check", tags=["catalog"])
-  def check_catalog_update(body: CheckApp, ctx: Ctx) -> dict:
-    """Compare a fetched happ to the commit its source currently points at."""
-    try:
-      return views.fetch_update_view(ctx.resolve_app(body.app), ctx)
-    except (ValueError, RuntimeError) as e:
-      raise HTTPException(400, str(e)) from e
+  @app.get("/repos", tags=["catalog"])
+  def list_repos(ctx: Ctx) -> dict:
+    return {"repos": views.repos_view(ctx)}
 
   @app.get("/apps/{app_id}", tags=["apps"])
   def get_app(app_id: str, ctx: Ctx) -> dict:

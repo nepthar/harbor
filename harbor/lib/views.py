@@ -14,25 +14,17 @@ from typing import Any
 
 from harbor.lib import activity
 from harbor.lib.apps import AppID
-from harbor.lib.fetch import (
-  USAGE,
-  check_update,
-  parse_current,
-  preview_target,
-  split_pin,
-)
 from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
 from harbor.lib.lifecycle.restore import snapshot_names, snapshotted_app_ids
 from harbor.lib.lifecycle.snapshot import snapshot_archive, split_snapshot_name
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
+from harbor.lib.repo import MAIN_REPO, bound_apps
 from harbor.lib.run_layout import AppRunData, load_run_data
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore
 from harbor.lib.util import path_size
-
-GITHUB_PREFIX = "github:"
 
 
 def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
@@ -60,10 +52,8 @@ def metrics_view(ctx: HarborCtx, prefix: str, hours: int) -> dict[str, Any]:
 
 
 def catalog_view(ctx: HarborCtx) -> list[dict[str, Any]]:
-  """Every configured app source, with the happs currently in it."""
-  catalogs: dict[str, list[dict[str, Any]]] = {
-    name: [] for name in ctx.config.app_sources
-  }
+  """Every configured repo, with the happs currently in it."""
+  catalogs: dict[str, list[dict[str, Any]]] = {name: [] for name in ctx.config.repos}
   catalog = ctx.app_catalog()
   for app_id in sorted(catalog):
     for entry in catalog[app_id]:
@@ -83,69 +73,29 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
     "display_name": stack.display_name if stack else "",
     "version": stack.version if stack else None,
     "description": stack.description if stack else "",
-    "source": _catalog_origin(entry.app_id, ctx),
-    "catalog": entry.source,
+    "repo": entry.source,
     "state": ctx.app_state(entry.app_id),
     "configured": config_status(stack, store) if stack else None,
     "manifest": manifest,
     "manifest_stale": _catalog_manifest_stale(entry, manifest, ctx),
+    "warnings": compose_warnings_view(stack) if stack else [],
   }
 
 
-def fetch_preview_view(target: str, ctx: HarborCtx) -> dict[str, Any]:
-  """What a github: target holds, shaped like the catalog card that shows it."""
-  spec, pin = split_pin(target)
-  if not spec.startswith(GITHUB_PREFIX):
-    raise ValueError(
-      f"Don't know how to fetch {target!r}; expected a github: target.\n  {USAGE}"
-    )
-  preview = preview_target(spec, pin, ctx)
-  stack = preview.stack
-  user = spec[len(GITHUB_PREFIX) :].split("/", 1)[0]
-  return {
-    "app_id": preview.app_id,
-    "display_name": stack.display_name,
-    "version": stack.version,
-    "description": stack.description,
-    "source": f"{GITHUB_PREFIX}{user}" if user else "local",
-    "catalog": None,
-    # About the id, not the download: a conflicting id may well be installed,
-    # and the card should say so rather than claim otherwise.
-    "state": ctx.app_state(preview.app_id),
-    "configured": config_status(stack, None),
-    "manifest": preview.manifest,
-    "manifest_stale": False,
-    "conflict": preview.conflict,
-    "target": preview.spec,
-    "sha": preview.sha,
-    "files": preview.files,
-    "bytes": preview.total_bytes,
-  }
+def compose_warnings_view(stack: AppStack) -> list[dict[str, Any]]:
+  """`[run.<unit>.compose]` keys harbor does not model, for the UI to show.
 
-
-def fetch_update_view(app_id: AppID, ctx: HarborCtx) -> dict[str, Any]:
-  """A fetched happ compared to the commit its source currently points at."""
-  check = check_update(app_id, ctx)
-  current_version, current_sha = parse_current(check.current)
-  remote_version = remote_sha = None
-  if check.remote:
-    remote_version, remote_sha = parse_current(check.remote)
-  diff = None
-  if check.available and check.remote_manifest is not None:
-    diff = _manifest_diff(check.current_manifest, check.remote_manifest)
-  return {
-    "app_id": check.app_id,
-    "pinned": check.pinned,
-    "available": check.available,
-    "current_version": current_version,
-    "current_sha": current_sha,
-    "remote_version": remote_version,
-    "remote_sha": remote_sha,
-    "current_manifest": check.current_manifest,
-    "remote_manifest": check.remote_manifest,
-    "diff": diff,
-    "message": check.message,
-  }
+  Sent whether or not the app is installed: it is a property of the manifest,
+  and the point is to be readable *before* deciding to install.
+  """
+  return [
+    {
+      "run_unit": w.run_unit,
+      "message": w.message(),
+      "options": list(w.option_lines()),
+    }
+    for w in stack.compose_warnings
+  ]
 
 
 def _manifest_diff(current: str, remote: str) -> str:
@@ -181,24 +131,43 @@ def config_status(stack: AppStack, store: AppStore | None) -> str:
   return "ready"
 
 
+def repos_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """Every configured repo: what it is, and what it last mirrored."""
+  catalog = ctx.app_catalog()
+  out = []
+  for name, repo in ctx.config.repos.items():
+    state = ctx.harbor_db.get_repo_state(name) if repo.mirrored else None
+    out.append(
+      {
+        "name": name,
+        "kind": repo.kind,
+        "location": repo.describe(),
+        "url": repo.remote.url if repo.remote else None,
+        "path": str(repo.path),
+        "exists": repo.path.is_dir(),
+        "removable": name != MAIN_REPO,
+        "apps": sum(
+          1 for entries in catalog.values() for e in entries if e.source == name
+        ),
+        "bound_apps": list(bound_apps(ctx, name)),
+        "sha": state["sha"] if state else None,
+        "updated_at": state["at"] if state else None,
+      }
+    )
+  return out
+
+
+def contested_view(ctx: HarborCtx) -> dict[str, list[str]]:
+  """App ids more than one repo carries, and which repos those are."""
+  return {app_id: sorted(repos) for app_id, repos in ctx.contested_app_ids().items()}
+
+
 def _catalog_stack(entry: CatalogEntry) -> AppStack | None:
   """The bundle's schema, or None when the happ on disk does not parse."""
   try:
     return load_happ(entry.path).app_stack()
   except (ValueError, RuntimeError):
     return None
-
-
-def _catalog_origin(app_id: str, ctx: HarborCtx) -> str:
-  """Where this happ was fetched from, collapsed for a table cell."""
-  record = ctx.harbor_db.get_app_source(app_id)
-  if record is None:
-    return "local"
-  spec = record["source"]
-  if not spec.startswith(GITHUB_PREFIX):
-    return "local"
-  user = spec[len(GITHUB_PREFIX) :].split("/", 1)[0]
-  return f"{GITHUB_PREFIX}{user}" if user else "local"
 
 
 def _gauge_bytes(gauges: dict[str, Any], name: str) -> int | None:
@@ -269,13 +238,17 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   ]
 
 
+# The directories `record_volume_sizes` gauges by name, in display order.
+HARBOR_DIRS = ("var", "snapshots", "repos")
+
+
 def harbor_dir_sizes(ctx: HarborCtx) -> dict[str, int | None]:
-  """`$var` and `$snapshots` as last recorded by volume-metrics."""
+  """Harbor's own directories, as last recorded by volume-metrics."""
   return {
-    "var_bytes": _gauge_bytes(ctx.read_gauges("var_size_bytes"), "var_size_bytes"),
-    "snapshots_bytes": _gauge_bytes(
-      ctx.read_gauges("snapshots_size_bytes"), "snapshots_size_bytes"
-    ),
+    f"{name}_bytes": _gauge_bytes(
+      ctx.read_gauges(f"{name}_size_bytes"), f"{name}_size_bytes"
+    )
+    for name in HARBOR_DIRS
   }
 
 

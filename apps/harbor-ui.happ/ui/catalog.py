@@ -1,9 +1,10 @@
-"""The Catalog page: listings, the app card, fetch preview, and updates."""
-
-from urllib.parse import quote
+"""The Repos page: the repos apps come from, and the happs in each of them."""
 
 from api import ApiError, api
 from layout import error_card, esc, job_button, job_modal
+
+TITLE = "Repos"
+SUBTITLE = "Application repositories"
 
 
 def catalog_app_entry(catalogs, app_id):
@@ -14,45 +15,140 @@ def catalog_app_entry(catalogs, app_id):
   return None
 
 
-def catalog_tables(catalogs, open_app="", update=None, confirm=False):
+def add_repo_button():
+  """The page-level action: subscribe to a folder of happs on GitHub."""
+  return job_button(
+    "+ Add Repo",
+    "repo-add",
+    title="Add a repo",
+    desc=(
+      "Harbor mirrors the folder and every happ in it becomes part of your "
+      "catalog. Nothing is installed or started."
+    ),
+    fields=[
+      {"name": "url", "placeholder": "github://user/repo/branch/folder"},
+      {"name": "name", "placeholder": "name (optional)"},
+    ],
+    done="/catalog",
+  )
+
+
+def repo_actions(repo):
+  """Update and remove, beside the repo's heading."""
+  name = repo.get("name") or ""
+  if not repo.get("removable"):
+    return ""
+  buttons = []
+  if repo.get("url"):
+    buttons.append(
+      job_button(
+        "Update",
+        "repo-update",
+        title=f"Update {name}",
+        desc=(
+          f"Re-reads {repo.get('url')} and replaces the local copy with what "
+          f"it holds now. Installed apps keep running until you re-install "
+          f"them."
+        ),
+        args={"name": name},
+        autorun=True,
+        done="/catalog",
+      )
+    )
+  bound = repo.get("bound_apps") or []
+  warning = ""
+  if bound:
+    warning = (
+      f" {len(bound)} installed app(s) came from it "
+      f"({', '.join(bound)}); they keep running, but harbor will stop "
+      f"seeing updates for them."
+    )
+  buttons.append(
+    job_button(
+      "Remove",
+      "repo-remove",
+      title=f"Remove {name}",
+      desc=(
+        f"Drops {name} from the catalog and deletes its mirrored copy."
+        f"{warning}"
+      ),
+      args={"name": name},
+      danger=True,
+      done="/catalog",
+    )
+  )
+  return '<span class="act">' + "".join(buttons) + "</span>"
+
+
+def repo_meta(repo):
+  """Where a repo comes from, and when it was last mirrored."""
+  bits = [f'<span class="mono">{esc(repo.get("location"))}</span>']
+  sha = repo.get("sha")
+  if sha:
+    bits.append(f'<span class="mono">{esc(sha[:8])}</span>')
+  at = repo.get("updated_at")
+  if at:
+    bits.append(f'<time datetime="{esc(at)}">{esc(at)}</time>')
+  if not repo.get("exists"):
+    bits.append('<span class="warnish">not mirrored yet</span>')
+  return '<p class="lede repo-meta">' + " · ".join(bits) + "</p>"
+
+
+def contested_note(contested):
+  """Ids more than one repo carries."""
+  if not contested:
+    return ""
+  items = "".join(
+    f"<li><span class=mono>{esc(app_id)}</span> is in "
+    f"{', '.join(esc(r) for r in repos)} — install it as "
+    f"<span class=mono>{esc(app_id)}@&lt;repo&gt;</span></li>"
+    for app_id, repos in sorted(contested.items())
+  )
+  return (
+    f'<div class="notice contested"><b>Some app ids are in more than one '
+    f"repo.</b><ul>{items}</ul></div>"
+  )
+
+
+def catalog_tables(catalogs, repos, contested, open_app=""):
+  by_name = {repo.get("name"): repo for repo in repos}
   if not catalogs:
-    return '<div class="card"><p class="empty">No catalogs configured.</p></div>'
+    return '<div class="card"><p class="empty">No repos configured.</p></div>'
   parts = []
   cards = []
   for catalog in catalogs:
-    parts.append(f"<h2>{esc(catalog.get('name'))}</h2>")
+    name = catalog.get("name")
+    repo = by_name.get(name, {})
+    parts.append(f"<h2>{esc(name)}{repo_actions(repo)}</h2>")
+    parts.append(repo_meta(repo))
     apps = catalog.get("apps") or []
     if not apps:
-      parts.append(
-        '<div class="card"><p class="empty">No apps in this catalog.</p></div>'
-      )
+      parts.append('<div class="card"><p class="empty">No happs here.</p></div>')
       continue
     rows = []
     for app in apps:
-      name = app.get("display_name") or app.get("app_id")
+      display = app.get("display_name") or app.get("app_id")
       version = app.get("version")
       app_id = app.get("app_id") or ""
       card_id = catalog_card_id(app)
       is_open = bool(open_app) and app_id == open_app
       card_app = dict(app)
-      if is_open and update is not None:
-        card_app["update"] = update
-      cards.append(
-        catalog_card(card_app, card_id, hidden=not is_open, confirm=is_open and confirm)
-      )
+      card_app["contested"] = contested.get(app_id) or []
+      cards.append(catalog_card(card_app, card_id, hidden=not is_open))
+      mark = ""
+      if app_id in contested:
+        mark = ' <span class="dot exited" title="in more than one repo"></span>'
       rows.append(
         f'<tr class="catalog-row" data-card="{esc(card_id)}">'
-        f'<td class="name">{esc(name)}</td>'
-        f'<td class="mono muted">{esc(app_id)}</td>'
+        f'<td class="name">{esc(display)}{mark}</td>'
+        f'<td class="muted">{esc(app_id)}</td>'
         f'<td class="muted">{esc(version) if version else "&mdash;"}</td>'
         f'<td class="wrap">{esc(app.get("description") or "")}</td>'
-        f'<td class="muted">{esc(app.get("source") or "local")}</td>'
         "</tr>"
       )
     parts.append(
       '<div class="card scroll"><table><thead><tr>'
-      "<th>Name</th><th>App ID</th><th>Version</th>"
-      "<th>Description</th><th>Source</th>"
+      "<th>Name</th><th>App ID</th><th>Version</th><th>Description</th>"
       "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
     )
   if cards:
@@ -66,34 +162,8 @@ def catalog_tables(catalogs, open_app="", update=None, confirm=False):
   return "".join(parts)
 
 
-def fetch_bar(target=""):
-  """Where an operator names a happ to fetch. GitHub is the only source today."""
-  return (
-    '<form class="fetchbar" method="get" action="/catalog">'
-    '<input type="hidden" name="fetch" value="1">'
-    '<input name="target" placeholder="github:user/repo/ref/path/name.happ" '
-    f'value="{esc(target)}" autofocus>'
-    '<button type="submit">Preview</button>'
-    '<a class="link" href="/catalog">Cancel</a>'
-    '<p class="hint">Only github: targets for now. Harbor shows you the '
-    "manifest before anything is installed.</p>"
-    "</form>"
-  )
-
-
-def fetch_preview(app):
-  """The previewed happ, over the catalog, as the same card a row opens."""
-  return (
-    '<div id="fetch-shade" class="shade" data-close="/catalog?fetch=1">'
-    + catalog_card(
-      app, "card-fetch-preview", actions=preview_actions, hidden=False, status=False
-    )
-    + "</div>"
-  )
-
-
 def catalog_card_id(app):
-  return f"card-{app.get('catalog') or 'apps'}--{app.get('app_id') or ''}"
+  return f"card-{app.get('repo') or 'main'}--{app.get('app_id') or ''}"
 
 
 def catalog_status_pill(app):
@@ -119,34 +189,15 @@ def catalog_stale_note(app):
   )
 
 
-def catalog_conflict_note(app):
-  if not app.get("conflict"):
-    return ""
-  return f'<p class="conflict">{esc(app["conflict"])}</p>'
-
-
 def catalog_actions(app):
-  """Reinstall from the catalog. Starting is the app page's job, not this one."""
+  """Install from this repo. Starting is the app page's job."""
   if app.get("configured") is None:
     return ""
   app_id = app.get("app_id") or ""
+  repo = app.get("repo") or ""
   label = "Re-install" if app.get("state") == "installed" else "Install"
-  update = ""
-  github = str(app.get("source") or "").startswith("github:")
-  if github and (app.get("update") or {}).get("available"):
-    update = (
-      f'<form method="get" action="/catalog">'
-      f'<input type="hidden" name="app" value="{esc(app_id)}">'
-      f'<input type="hidden" name="confirm" value="1">'
-      f'<button type="submit">Update</button></form>'
-    )
-  elif github and app.get("update") is None:
-    update = (
-      f'<form method="get" action="/catalog">'
-      f'<input type="hidden" name="app" value="{esc(app_id)}">'
-      f'<input type="hidden" name="check" value="1">'
-      f'<button type="submit">Check for update</button></form>'
-    )
+  # Opening this card is the choice of repo, so it is always named.
+  target = f"{app_id}@{repo}" if repo else app_id
   return (
     '<div class="row actions">'
     + job_button(
@@ -154,126 +205,51 @@ def catalog_actions(app):
       "install",
       title=f"{label} {app.get('display_name') or app_id}",
       desc=(
-        f"Installs {app_id} from this catalog entry so it can be started. "
-        f"Any data and configuration it already has are kept."
+        f"Installs {app_id} from {repo} so it can be started. Any data and "
+        f"configuration it already has are kept.{warning_desc(app)}"
       ),
-      args={"app": app_id},
+      args={"app": target},
+      done="/catalog",
     )
-    + f"{update}</div>"
-  )
-
-
-def confirm_update_actions(app):
-  """Apply the remote copy the operator just reviewed, or back out."""
-  app_id = app.get("app_id") or ""
-  return (
-    '<div class="row actions">'
-    + job_button(
-      "Apply update",
-      "fetch",
-      title=f"Update {app_id}",
-      desc=(
-        f"Replaces the catalog copy of {app_id} with the remote one reviewed "
-        f"above. The installed app is unchanged until it is reinstalled."
-      ),
-      args={"target": app_id},
-      autorun=True,
-    )
-    + f'<a class="link" href="/catalog?app={quote(app_id)}">Cancel</a>'
     + "</div>"
   )
 
 
-def catalog_update_section(app, confirm=False):
-  """Remote vs fetched, under the name/version/status block."""
-  update = app.get("update")
-  if not update:
-    return ""
-  if update.get("error"):
-    return f'<p class="conflict">{esc(update["error"])}</p>'
-  if update.get("pinned"):
-    ver = update.get("current_version") or ""
-    sha = (update.get("current_sha") or "")[:8]
-    return (
-      f'<div class="update"><p>Pinned at {esc(ver)} '
-      f'<span class="mono muted">{esc(sha)}</span>. '
-      f"This happ will not follow its branch.</p></div>"
-    )
-  if not update.get("available"):
-    return '<div class="update"><p class="muted">Up to date.</p></div>'
-  cur_v = update.get("current_version") or ""
-  new_v = update.get("remote_version") or ""
-  cur_s = (update.get("current_sha") or "")[:8]
-  new_s = (update.get("remote_sha") or "")[:8]
-  prompt = ""
-  if confirm:
-    prompt = (
-      "<p>This replaces the catalog copy. The running app is unchanged "
-      "until you stop it, Re-install, and Start.</p>"
-    )
-  return (
-    f'<div class="update">'
-    f"<p><b>Update available</b></p>"
-    f'<p class="mono">{esc(cur_v)} → {esc(new_v)}</p>'
-    f'<p class="mono muted">{esc(cur_s)} → {esc(new_s)}</p>'
-    f"{prompt}</div>"
-  )
+def compose_warnings(app):
+  """Free-form docker options, beside the manifest that asks for them.
 
-
-def catalog_diff_html(diff):
-  """The remote manifest as a unified diff, colored in the right-hand pane."""
-  if not diff:
-    return (
-      '<pre class="app-card-manifest app-card-diff">'
-      '<span class="diff-hunk">The manifest is unchanged; other files differ.'
-      "</span></pre>"
-    )
-  parts = []
-  for line in diff.splitlines():
-    if line.startswith("+") and not line.startswith("+++"):
-      cls = "diff-add"
-    elif line.startswith("-") and not line.startswith("---"):
-      cls = "diff-del"
-    elif line.startswith("@") or line.startswith("+++") or line.startswith("---"):
-      cls = "diff-hunk"
-    else:
-      cls = "diff-ctx"
-    parts.append(f'<span class="{cls}">{esc(line) or " "}</span>')
-  return '<pre class="app-card-manifest app-card-diff">' + "".join(parts) + "</pre>"
-
-
-def preview_actions(app):
-  """Fetch what the preview just showed, or nothing when the id is taken."""
-  close = '<a class="link" href="/catalog?fetch=1">Back</a>'
-  if app.get("conflict"):
-    return f'<div class="row actions">{close}</div>'
-  target = app.get("target") or ""
-  return (
-    '<div class="row actions">'
-    + job_button(
-      "Fetch",
-      "fetch",
-      title=f"Fetch {app.get('app_id') or target}",
-      desc=f"Downloads {target} into the catalog. Nothing is installed or started.",
-      args={"target": target, "yes": "1"},
-      autorun=True,
-      done="/catalog",
-    )
-    + f"{close}</div>"
-  )
-
-
-def catalog_card(
-  app, card_id, actions=catalog_actions, hidden=True, status=True, confirm=False
-):
-  """One happ, full width: what it is on the left, its manifest on the right.
-
-  `actions` is the only thing that differs between a catalog entry and a
-  fetch preview. A preview renders open and without a status pill.
+  Harbor cannot say what an arbitrary compose key does, so this says that it
+  does not know and shows the operator exactly what was asked for.
   """
+  blocks = []
+  for warning in app.get("warnings") or []:
+    items = "".join(
+      f'<li><span class="mono">{esc(option)}</span></li>'
+      for option in warning.get("options") or []
+    )
+    message = esc(warning.get("message"))
+    body = f"<b>Warning</b><p>{message}:</p><ul>{items}</ul>"
+    blocks.append(f'<div class="passthru">{body}</div>')
+  return "".join(blocks)
+
+
+def warning_desc(app):
+  """The same warning, as one line of prose for the Install confirmation."""
+  warnings = app.get("warnings") or []
+  if not warnings:
+    return ""
+  units = ", ".join(w.get("run_unit") or "" for w in warnings)
+  return (
+    f" Warning: this application sets free-form docker options on {units} "
+    f"that are not guaranteed to be safe. Review them before continuing."
+  )
+
+
+def catalog_card(app, card_id, hidden=True):
+  """One happ, full width: what it is on the left, its manifest on the right."""
   name = app.get("display_name") or app.get("app_id")
   version = app.get("version")
-  pill = catalog_status_pill(app) if status else ""
+  pill = catalog_status_pill(app)
   ver = f'<span class="muted">v{esc(version)}</span>' if version else ""
   side = " ".join(p for p in (ver, pill) if p)
   if app.get("configured") is None:
@@ -282,70 +258,47 @@ def catalog_card(
     summary = (
       f'<p class="lede">{esc(app.get("description") or "")}</p>'
       f'<p class="muted mono">{esc(app.get("app_id"))}'
-      f" · {esc(app.get('source') or 'local')}</p>"
+      f" · {esc(app.get('repo') or 'main')}</p>"
     )
-  show_diff = confirm and (app.get("update") or {}).get("available")
-  if show_diff:
-    acts = confirm_update_actions(app)
-    pane = catalog_diff_html((app.get("update") or {}).get("diff") or "")
-  else:
-    acts = actions(app)
-    manifest = esc(app.get("manifest") or "")
-    pane = (
-      f'<pre class="app-card-manifest">'
-      f'<code class="language-toml">{manifest}</code></pre>'
+  others = [r for r in (app.get("contested") or []) if r != app.get("repo")]
+  contested = ""
+  if others:
+    contested = (
+      f'<p class="stale">Also carried by {", ".join(esc(r) for r in others)}. '
+      f"Installing from here binds it to {esc(app.get('repo'))}.</p>"
     )
+  manifest = esc(app.get("manifest") or "")
   return (
     f'<article class="app-card" id="{esc(card_id)}"{" hidden" if hidden else ""}>'
     f'<div class="app-card-head">'
     f'<div class="app-card-intro">'
     f'<div class="row between"><h2>{esc(name)}</h2>{side}</div>'
-    f"{summary}{catalog_conflict_note(app)}{catalog_stale_note(app)}"
-    f"{catalog_update_section(app, confirm)}</div>"
-    f"{acts}</div>"
-    f"{pane}"
+    f"{summary}{contested}{catalog_stale_note(app)}"
+    f"{compose_warnings(app)}</div>"
+    f"{catalog_actions(app)}</div>"
+    f'<pre class="app-card-manifest">'
+    f'<code class="language-toml">{manifest}</code></pre>'
     "</article>"
   )
 
 
-def page(
-  version,
-  notice="",
-  *,
-  fetch=False,
-  target="",
-  app="",
-  confirm=False,
-  check=False,
-):
-  """The catalog listing, plus fetch preview / update check when asked."""
-  target = target.strip()
+def page(version, notice="", *, app=""):
+  """Every repo, and the happs each one carries."""
   open_app = app.strip()
-  body = notice
-  if fetch or target:
-    body += fetch_bar(target)
-  # The preview is its own request and its own failure: a target that does
-  # not resolve must not take the catalog listing down with it.
-  preview = ""
-  if target:
-    try:
-      preview = fetch_preview(
-        api("/catalog/preview", "POST", {"target": target}, timeout=60)
-      )
-    except ApiError as e:
-      body += f'<div class="error"><p>{esc(e)}</p></div>'
+  actions = f'<span class="head-actions">{add_repo_button()}</span>'
   try:
-    catalogs = api("/catalog").get("catalogs", [])
+    body = api("/catalog")
+    repos = api("/repos").get("repos", [])
   except ApiError as e:
-    return "Catalog", error_card(e), version
-  update = None
-  # Opening a card is cheap. GitHub is not: only Check / Update wait on it.
-  if open_app and (check or confirm):
-    entry = catalog_app_entry(catalogs, open_app)
-    if entry and str(entry.get("source") or "").startswith("github:"):
-      try:
-        update = api("/catalog/check", "POST", {"app": open_app}, timeout=60)
-      except ApiError as e:
-        update = {"error": str(e)}
-  body += catalog_tables(catalogs, open_app=open_app, update=update, confirm=confirm)
-  return "Catalog", body + preview + job_modal(), version
+    return TITLE, error_card(e) + job_modal(), version, actions
+  catalogs = body.get("catalogs", [])
+  contested = body.get("contested", {})
+  return (
+    TITLE,
+    notice
+    + contested_note(contested)
+    + catalog_tables(catalogs, repos, contested, open_app=open_app)
+    + job_modal(),
+    version,
+    actions,
+  )

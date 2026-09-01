@@ -8,7 +8,7 @@ NAV = (
   ("/snapshots", "Snapshots"),
   ("/apps", "Apps"),
   ("/volumes", "Volumes"),
-  ("/catalog", "Catalog"),
+  ("/catalog", "Repos"),
   ("/logs", "Activity"),
 )
 
@@ -140,6 +140,8 @@ main { flex: 1; padding: 28px 32px 48px; min-width: 0; overflow: auto; }
     var(--coral) 35% 65%, transparent 65% 70%, var(--gold) 70% 100%);
 }
 h1 { font-size: 19px; margin: 0; font-weight: 600; letter-spacing: -0.012em; }
+/* Beside the title on the head's baseline: what the page is, in one phrase. */
+.head-sub { color: var(--dim); font-size: 13px; margin: 0; }
 .head a { color: var(--dim); text-decoration: none; font-size: 12px; }
 .head a:hover { color: var(--coral); }
 .head .head-actions { order: 1; align-self: center; }
@@ -155,7 +157,12 @@ h2 {
 }
 h2::after { content: ""; order: 1; flex: 1; height: 1px; background: var(--line); }
 h2:first-child { margin-top: 0; }
-h2 .act { order: 2; font-weight: 400; font-size: 12px; letter-spacing: 0; text-transform: none; }
+/* Beside the label, before the rule -- the same reading path as `.head`. */
+h2 .act {
+  order: 0; display: flex; gap: 8px; font-weight: 400; font-size: 12px;
+  letter-spacing: 0; text-transform: none;
+}
+h2 .act button { padding: 2px 9px; font-size: 12px; }
 h2 .act a { color: var(--muted); text-decoration: none; }
 h2 .act a:hover { color: var(--coral); }
 h3 {
@@ -163,6 +170,10 @@ h3 {
   color: var(--muted); margin: 20px 0 8px; font-weight: 600;
 }
 .lede { color: var(--dim); margin: -4px 0 12px; max-width: 68ch; font-size: 13px; }
+/* A repo's provenance line: long enough to want the full width. */
+.lede.repo-meta { max-width: none; color: var(--muted); font-size: 12px; }
+.lede.repo-meta .mono { font-size: 12px; }
+.warnish { color: var(--warn); }
 
 /* --- surfaces ------------------------------------------------------------
    `.card` around a table is just a pair of rules; only `.pad` fills. */
@@ -326,12 +337,15 @@ code {
 
 /* --- notices -------------------------------------------------------------
    A colour-bearing left rule rather than a coloured box. */
+.notice.contested ul { margin: 6px 0 0; padding-left: 18px; }
+.notice.contested li { margin-bottom: 3px; font-size: 13px; color: var(--dim); }
 .notice, .error {
   border: 1px solid var(--line); border-left: 2px solid var(--ok);
   border-radius: var(--r); padding: 12px 16px; margin-bottom: 20px;
   background: var(--panel);
 }
 .error { border-left-color: var(--bad); }
+.notice.contested { border-left-color: var(--warn); }
 .error h2 {
   margin: 0 0 8px; font-size: 13px; color: var(--bad); display: block;
   text-transform: none; letter-spacing: 0;
@@ -355,7 +369,8 @@ details.reveal > summary:hover { color: var(--coral); }
 .catalog-row:hover td { background: color-mix(in srgb, var(--coral) 8%, transparent); }
 .shade {
   position: fixed; inset: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: center;
+  /* A contested id opens one card per repo, side by side. */
+  display: flex; align-items: center; justify-content: center; gap: 20px;
   padding: 32px;
   background: color-mix(in srgb, var(--void) 72%, transparent);
 }
@@ -428,6 +443,22 @@ details.reveal > summary:hover { color: var(--coral); }
   border-left: 2px solid var(--bad); border-radius: var(--r);
 }
 .app-card .stale { border-left-color: var(--warn); }
+/* Free-form docker options the manifest passes through. Louder than `.stale`:
+   a tinted ground as well as a rule, because this is the one thing on the card
+   the operator is being asked to agree to. */
+.app-card .passthru {
+  margin: 12px 0 0; padding: 10px 12px; font-size: 12.5px;
+  border-left: 2px solid var(--bad); border-radius: var(--r);
+  background: color-mix(in srgb, var(--bad) 10%, var(--panel));
+  color: var(--dim);
+}
+.app-card .passthru b {
+  display: block; margin-bottom: 6px; font-weight: 600; color: var(--bad);
+}
+.app-card .passthru p { margin: 0 0 8px; }
+.app-card .passthru ul { margin: 0; padding-left: 16px; }
+.app-card .passthru li { margin: 3px 0; }
+.app-card .passthru li .mono { color: var(--fg); font-size: 12px; }
 .app-card .update {
   margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--line); font-size: 12.5px;
@@ -500,17 +531,7 @@ def nav_active(path):
   return None
 
 
-def head_actions(path):
-  """Page-level actions that belong beside the title rather than in the body."""
-  if path != "/catalog":
-    return ""
-  return (
-    '<span class="head-actions">'
-    '<a class="btn" href="/catalog?fetch=1">+ Fetch App</a></span>'
-  )
-
-
-def page(path, title, body, version="", actions=""):
+def page(path, title, body, version="", actions="", subtitle=""):
   active = nav_active(path)
   links = "".join(
     f'<a href="{href}" title="{esc(label)}"'
@@ -520,12 +541,13 @@ def page(path, title, body, version="", actions=""):
     for href, label in NAV
   )
   sub = f'<span class="ver">harbor {esc(version)}</span>' if version else ""
-  extra = actions or head_actions(path)
+  extra = actions
   refresh = (
     ""
     if path.startswith("/apps/") and path != "/apps"
     else f'<a href="{esc(path)}">Refresh</a>'
   )
+  lede = f'<p class="head-sub">{esc(subtitle)}</p>' if subtitle else ""
   return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -543,7 +565,7 @@ def page(path, title, body, version="", actions=""):
   <button type="button" class="nav-toggle" aria-label="Collapse sidebar">‹</button>
 </nav>
 <main>
-  <div class="head"><h1>{esc(title)}</h1>{refresh}{extra}</div>
+  <div class="head"><h1>{esc(title)}</h1>{lede}{refresh}{extra}</div>
   {body}
 </main>
 </div>

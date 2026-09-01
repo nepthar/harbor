@@ -67,21 +67,17 @@ def test_purge_app_clears_routes(db: HarborStore):
   assert db.next_free_port() == 41000
 
 
-def test_app_source_round_trips_and_survives_purge(db: HarborStore):
-  db.set_app_source(
-    "hello-world",
-    source="github:nepthar/harbor/main/examples/hello-world.happ",
-    current="0.1.0@" + "a" * 40,
-  )
-  db._store.write("routes/hello-world/main", _route("main", 41000))
-  db.purge_app("hello-world")
+def test_repo_state_round_trips_and_can_be_dropped(db: HarborStore):
+  db.set_repo_state("harbor", sha="a" * 40, at="2026-01-01T00:00:00Z")
 
-  assert db.list_routes("hello-world") == {}
-  assert db.get_app_source("hello-world") == {
-    "source": "github:nepthar/harbor/main/examples/hello-world.happ",
-    "current": "0.1.0@" + "a" * 40,
+  assert db.get_repo_state("harbor") == {
+    "sha": "a" * 40,
+    "at": "2026-01-01T00:00:00Z",
   }
-  assert db.get_app_source("missing") is None
+  assert db.get_repo_state("missing") is None
+
+  db.del_repo_state("harbor")
+  assert db.get_repo_state("harbor") is None
 
 
 def test_pinned_port_outside_range_still_occupies_slot(db: HarborStore):

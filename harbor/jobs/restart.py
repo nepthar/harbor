@@ -1,4 +1,4 @@
-from harbor.jobs.job import Job, logger
+from harbor.jobs.job import Job, app_target, logger
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle import stage, start, stop
 
@@ -7,11 +7,12 @@ class RestartJob(Job):
   name = "restart"
   description = "Stop a happ if running, re-stage it, and start it again if it was"
   required_args = ("app",)
+  optional_args = ("force",)
 
   def init(self, ctx: HarborCtx, kwargs: dict[str, str]) -> None:
-    app = ctx.resolve_app(kwargs["app"])
-    self.app = str(app)
-    self.app_id = app
+    self.target = app_target(ctx, kwargs["app"], force=self._bool_arg(kwargs, "force"))
+    self.app = str(self.target.app_id)
+    self.app_id = self.target.app_id
 
   def run(self, ctx: HarborCtx) -> None:
     app = self.app_id
@@ -22,7 +23,8 @@ class RestartJob(Job):
         running = 0
       if running:
         stop(app, ctx)
-      result = stage(app, ctx.bundle_path(app), ctx)
+      bundle = self.target.bundle or ctx.bundle_path(app)
+      result = stage(app, bundle, ctx, bound=self.target.bound_to)
       if running:
         start(app, ctx.config.app_run_path(app), ctx)
     lines = [f"Restarted {app}" if running else f"Restaged {app}"]

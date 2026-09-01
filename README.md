@@ -33,9 +33,9 @@ main = { port = "8443", scheme = "https" }
 ```
 
 
-Use harbor to fetch and start the app:
+Add the repo it lives in, then start the app:
 ```
-$ harbor fetch github:nepthar/harbor/main/apps/unifi-network-application.happ
+$ harbor repo add github://nepthar/harbor/main/apps
 $ harbor install unifi-network-application
 $ harbor start unifi-network-application
 ```
@@ -68,18 +68,21 @@ Preqrequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 1. `$ uv tool install "git+https://github.com/nepthar/harbor"`
 2. `$ harbor init`
 3. Configure harbor as requested by init (or just leave all defaults)
-4. `$ harbor fetch github:nepthar/harbor/main/apps/hello-world.happ.md`
+4. `$ harbor repo add github://nepthar/harbor/main/apps`
 5. `$ harbor start hello-world`
 6. `$ harbor logs hello-world`
-7. Examine your `apps/` folder to look at how the hello-world example is constructed.
+7. Examine `repos/harbor/hello-world.happ.md` to see how the example is constructed.
 
 ## Creating your own apps
-You can create your own harbor app by making (or linking in) a folder in `$harbor/apps/<your_app_id>.happ` and has a `manifest.toml` file. Small apps can instead be a single `$harbor/apps/<your_app_id>.happ.md` markdown file, which keeps the whole app auditable at a glance. Harbor will then recognize it under `<your_app_id>`. To develop against a directory of happs outside `apps/`, add it to your `config.toml` as an extra app source:
+You can create your own harbor app by making (or linking in) a folder `$harbor/repos/main/<your_app_id>.happ` that has a `manifest.toml` file. Small apps can instead be a single `$harbor/repos/main/<your_app_id>.happ.md` markdown file, which keeps the whole app auditable at a glance. Harbor will then recognize it under `<your_app_id>`.
+
+Publishing them is the same folder, committed to GitHub: anyone can then `harbor repo add github://<user>/<repo>/<ref>/<folder>` and every happ in it joins their catalog. `harbor repo update` re-reads the remote, and the local copy is always a mirror of it — never a merge.
+
+To develop against a directory of happs outside `repos/`, add it to your `config.toml`:
 
 ```toml
-[[app_source]]
-name     = "dev"
-location = "~/code/happs"
+[repo.dev]
+path = "~/code/happs"
 ```
 
 The best way to learn is by example and by reading the source (at this stage). Check out [manifest.py](harbor/lib/manifest.py) for the most up to information on what to put in a manifest.
@@ -103,7 +106,7 @@ Harbor is currently in a **pre-beta** stage. I do not yet consider it feature co
 
 ### Harbor CLI:
 * **[in progress] Commands**: `harbor cmd <app> <cmd_name> [... args]` which will run the command <cmd_name> as defined in the manifest. This is nearly complete.
-* **FQDN fetch & publish**: Allow fetching by reverse-fqdn app_id. ie: `harbor fetch com.my-company.my-app` will look for a well known index at `https://my-app.mycompany.com/.well-known/happ_versions.txt`, parse it, and fetch a bundle hosted there, using the domain's SSL cert as verification. Optionally, it will pop open the `manifest.toml` of the app you're considering to install so you can verify that you want to download it.
+* **FQDN fetch & publish**: Allow fetching by reverse-fqdn app_id. ie: `harbor repo add com.my-company.my-app` will look for a well known index at `https://my-app.mycompany.com/.well-known/happ_versions.txt`, parse it, and fetch a bundle hosted there, using the domain's SSL cert as verification. Optionally, it will pop open the `manifest.toml` of the app you're considering to install so you can verify that you want to download it.
 * **Other Route Providers**: Integrate with things like Pangolin, traefik, etc to "publish" routes to. Also, allow for other route publishing domains. ("lan", "vpn", etc). Right now, we only support Nginx Proxy Manager
 * **Cron Jobs**: Add the ability to define and execute commands and cron jobs from within the manifest.toml. Think regular admin tasks, database cleanup, password reset, etc.
 * **Services & Service Catalog**: Allow happ developers to better focus on their own app by saying "Just give me a postgres instance + login for my app" rather than adding postgres to their stack manually. This `services` system would enable an happ to list the services it "provides" and have other services "require" them. This feature will require a lot of thought.

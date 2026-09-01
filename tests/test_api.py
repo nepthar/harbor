@@ -61,14 +61,13 @@ def test_version(harbor_env, client):
 
 def test_catalog_lists_available_apps_grouped_by_source(harbor_env, client):
   catalogs = client.get("/catalog").json()["catalogs"]
-  assert [c["name"] for c in catalogs] == ["apps"]
+  assert [c["name"] for c in catalogs] == ["main"]
 
   apps = {app["app_id"]: app for app in catalogs[0]["apps"]}
   assert apps[APP]["display_name"] == "Basic Features"
   assert apps[APP]["version"] == "0.1.0"
   assert apps[APP]["description"] == "Config and volumes fixture"
-  assert apps[APP]["source"] == "local"
-  assert apps[APP]["catalog"] == "apps"
+  assert apps[APP]["repo"] == "main"
   assert apps[APP]["configured"] == "missing"
   assert 'display_name = "Basic Features"' in apps[APP]["manifest"]
   assert "[config]" in apps[APP]["manifest"]
@@ -98,7 +97,7 @@ def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
 
   # Editing the bundle leaves the staged copy behind: that is the drift the
   # catalog card offers to close with a re-install.
-  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest = harbor_env.main_repo / f"{APP}.happ" / "manifest.toml"
   manifest.write_text(
     manifest.read_text() + "\n# a comment the staged copy has not seen\n"
   )
@@ -108,7 +107,7 @@ def test_catalog_reports_installed_and_manifest_drift(harbor_env, client, jobs):
   assert entry()["manifest_stale"] is False
 
 
-def test_catalog_groups_a_second_app_source(harbor_env, client):
+def test_catalog_groups_a_second_repo(harbor_env, client):
   extra = harbor_env.root / "dev-apps"
   extra.mkdir()
   bundle = extra / "dev-app.happ"
@@ -119,40 +118,23 @@ def test_catalog_groups_a_second_app_source(harbor_env, client):
     '[run.main]\nimage = "alpine:latest"\n'
   )
   with open(harbor_env.config, "a") as f:
-    f.write(f'\n[[app_source]]\nname = "dev"\nlocation = "{extra}"\n')
+    f.write(f'\n[repo.dev]\npath = "{extra}"\n')
 
   catalogs = {c["name"]: c["apps"] for c in client.get("/catalog").json()["catalogs"]}
-  assert list(catalogs) == ["apps", "dev"]
-  assert APP in {app["app_id"] for app in catalogs["apps"]}
+  assert list(catalogs) == ["main", "dev"]
+  assert APP in {app["app_id"] for app in catalogs["main"]}
   [dev] = catalogs["dev"]
   assert dev["app_id"] == "dev-app"
   assert dev["display_name"] == "Dev App"
   assert dev["version"] == "2.0"
   assert dev["description"] == "From a second catalog"
-  assert dev["source"] == "local"
-  assert dev["catalog"] == "dev"
+  assert dev["repo"] == "dev"
   assert dev["configured"] == "ready"
   assert 'display_name = "Dev App"' in dev["manifest"]
 
 
-def test_catalog_names_a_github_origin(harbor_env, client):
-  ctx().harbor_db.set_app_source(
-    "ports-demo",
-    source="github:nepthar/harbor/main/examples/ports-demo.happ",
-    current="0.1.0@" + "a" * 40,
-  )
-
-  apps = {
-    app["app_id"]: app
-    for catalog in client.get("/catalog").json()["catalogs"]
-    for app in catalog["apps"]
-  }
-  assert apps["ports-demo"]["source"] == "github:nepthar"
-  assert apps[APP]["source"] == "local"
-
-
 def test_catalog_keeps_a_broken_bundle(harbor_env, client):
-  broken = harbor_env.root / "apps" / "broken.happ"
+  broken = harbor_env.main_repo / "broken.happ"
   broken.mkdir()
   (broken / "manifest.toml").write_text("not toml")
 
@@ -166,12 +148,13 @@ def test_catalog_keeps_a_broken_bundle(harbor_env, client):
     "display_name": "",
     "version": None,
     "description": "",
-    "source": "local",
-    "catalog": "apps",
+    "repo": "main",
     "state": "available",
     "configured": None,
     "manifest": "not toml",
     "manifest_stale": False,
+    # A bundle that does not parse has no stack, so nothing to warn about.
+    "warnings": [],
   }
 
 
@@ -311,7 +294,7 @@ def _compose_calls(harbor_env) -> list[list[str]]:
 
 def test_restart_stops_restages_and_starts_a_running_app(harbor_env, client, jobs):
   harbor_env.run("start", APP, "--set", "admin_user=root")
-  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest = harbor_env.main_repo / f"{APP}.happ" / "manifest.toml"
   manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
 
   job = submit(client, jobs, "restart", {"app": APP})
@@ -329,7 +312,7 @@ def test_restart_stops_restages_and_starts_a_running_app(harbor_env, client, job
 
 def test_restart_restages_a_stopped_app_without_starting(harbor_env, client, jobs):
   harbor_env.run("install", APP)
-  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest = harbor_env.main_repo / f"{APP}.happ" / "manifest.toml"
   manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
 
   job = submit(client, jobs, "restart", {"app": APP})
@@ -439,7 +422,7 @@ def test_activity_log_rejects_a_bad_name(harbor_env, client):
 
 
 def _install_cmd_demo(harbor_env):
-  app_dir = harbor_env.root / "apps" / "cmd-demo.happ"
+  app_dir = harbor_env.main_repo / "cmd-demo.happ"
   app_dir.mkdir()
   (app_dir / "manifest.toml").write_text(
     '[app]\nversion = "1"\n\n'
@@ -616,8 +599,6 @@ def test_openapi_documents_the_surface(harbor_env, client):
     "/apps",
     "/apps/{app_id}",
     "/catalog",
-    "/catalog/preview",
-    "/catalog/check",
     "/jobs",
     "/jobs/{job_id}",
     "/snapshots",
@@ -720,6 +701,7 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   assert volumes["config"]["bytes"] is None
   assert body["var_bytes"] is None
   assert body["snapshots_bytes"] is None
+  assert body["repos_bytes"] is None
 
   media_dir = harbor_env.root / "external-data"
   media_dir.mkdir(exist_ok=True)
@@ -729,6 +711,8 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   volumes = {v["name"]: v for v in body["volumes"]}
   assert volumes["config"]["bytes"] == 2
   assert body["var_bytes"] > 0
+  # repos/main holds the fixture happs, so it is gauged and non-empty.
+  assert body["repos_bytes"] > 0
   media = {v["tag"]: v for v in client.get("/host-volumes").json()["host_volumes"]}
   assert media["media"]["bytes"] == 4
 
@@ -743,7 +727,7 @@ def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
     "cache",
   }
 
-  manifest = harbor_env.root / "apps" / f"{APP}.happ" / "manifest.toml"
+  manifest = harbor_env.main_repo / f"{APP}.happ" / "manifest.toml"
   # Dropped from [volumes] *and* from the unit that mounted it -- a manifest
   # that declares neither is what re-staging leaves data behind for.
   text = manifest.read_text().replace(

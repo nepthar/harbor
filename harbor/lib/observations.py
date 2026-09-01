@@ -132,7 +132,7 @@ class AppObservation:
 
 
 def collect_observations(ctx: HarborCtx) -> dict[str, AppObservation]:
-  bundles = ctx.known_bundles()
+  bundles = ctx.resolved_bundles()
   run_ids = (
     {path.name for path in ctx.config.run_root.iterdir() if path.is_dir()}
     if ctx.config.run_root.is_dir()

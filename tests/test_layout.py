@@ -22,7 +22,7 @@ BASIC = "io.p2net.basic-features"
 
 def _write_happ(harbor_env, app_id: str, manifest: str) -> Path:
   """Create (or overwrite) a catalog entry with the given manifest."""
-  happ = harbor_env.root / "apps" / f"{app_id}.happ"
+  happ = harbor_env.main_repo / f"{app_id}.happ"
   happ.mkdir(parents=True, exist_ok=True)
   (happ / "manifest.toml").write_text(manifest)
   return happ
@@ -57,7 +57,7 @@ def test_stage_copies_the_happ_into_the_run_dir(harbor_env):
   assert staged.returncode == 0, staged.stderr
 
   run_dir = harbor_env.run_root / app_id
-  catalog = harbor_env.root / "apps" / f"{app_id}.happ"
+  catalog = harbor_env.main_repo / f"{app_id}.happ"
   copied = run_dir / "happ" / "manifest.toml"
   assert copied.is_file()
   assert not copied.is_symlink()
@@ -71,7 +71,7 @@ def test_editing_the_catalog_then_restaging_recopies(harbor_env):
   app_id = "ports-demo"
   assert harbor_env.run("install", app_id).returncode == 0
 
-  catalog = harbor_env.root / "apps" / f"{app_id}.happ" / "manifest.toml"
+  catalog = harbor_env.main_repo / f"{app_id}.happ" / "manifest.toml"
   catalog.write_text(
     catalog.read_text().replace('version      = "0.1.0"', 'version = "9"')
   )
@@ -111,34 +111,34 @@ def test_stage_preserves_config_and_volume_contents(harbor_env):
   assert payload.read_text() == "precious"
 
 
-def test_stage_by_path_links_it_into_the_catalog(harbor_env):
+def test_stage_by_path_adds_nothing_to_a_repo(harbor_env):
   app_id = "ports-demo"
   elsewhere = harbor_env.root / "checkout" / f"{app_id}.happ"
   elsewhere.parent.mkdir()
-  (harbor_env.root / "apps" / f"{app_id}.happ").rename(elsewhere)
+  (harbor_env.main_repo / f"{app_id}.happ").rename(elsewhere)
 
   staged = harbor_env.run("install", str(elsewhere))
   assert staged.returncode == 0, staged.stderr
 
-  entry = harbor_env.root / "apps" / f"{app_id}.happ"
-  assert entry.is_symlink()
-  assert entry.readlink() == elsewhere.resolve()
+  assert not (harbor_env.main_repo / f"{app_id}.happ").exists()
   assert (harbor_env.run_root / app_id / "happ" / "manifest.toml").is_file()
 
 
-def test_stage_by_path_refuses_a_conflicting_catalog_entry(harbor_env):
-  """The catalog entry is the source of truth; a second source is refused."""
+def test_stage_by_path_refuses_to_take_over_another_bundles_id(harbor_env):
+  """An id installed from one bundle is not silently taken over by another."""
   app_id = "ports-demo"
   other = harbor_env.root / "checkout" / f"{app_id}.happ"
   other.parent.mkdir()
   _write_happ(
     harbor_env, "scratch", '[app]\nversion = "1"\n\n[run.main]\nimage = "alpine"\n'
   )
-  (harbor_env.root / "apps" / "scratch.happ").rename(other)
+  (harbor_env.main_repo / "scratch.happ").rename(other)
+
+  assert harbor_env.run("install", app_id).returncode == 0
 
   refused = harbor_env.run("install", str(other))
   assert refused.returncode == 1
-  assert "already in the catalog" in refused.stderr
+  assert "previously installed from" in refused.stderr
 
 
 def test_stage_refuses_while_containers_are_running(harbor_env):
@@ -333,7 +333,7 @@ def _staged_for_dev(harbor_env) -> Path:
   """Stage BASIC with its required config set, and return the source bundle."""
   assert harbor_env.run("install", BASIC).returncode == 0
   assert harbor_env.run("config", BASIC, "--set", "admin_user=alice").returncode == 0
-  return harbor_env.root / "apps" / f"{BASIC}.happ"
+  return harbor_env.main_repo / f"{BASIC}.happ"
 
 
 def test_dev_runs_in_the_foreground_against_the_source(harbor_env):
@@ -411,7 +411,7 @@ def test_dev_refuses_unset_config_like_start_does(harbor_env):
 def test_dev_refuses_a_markdown_happ(harbor_env):
   """There is no source folder to edit: the files only exist as a copy."""
   app_id = "md-demo"
-  (harbor_env.root / "apps" / f"{app_id}.happ.md").write_text(
+  (harbor_env.main_repo / f"{app_id}.happ.md").write_text(
     '```toml happ_path="manifest.toml"\n'
     '[app]\nversion = "1"\n\n'
     '[volumes]\nhello = { kind = "app", src = "bin/hello.sh" }\n\n'
@@ -433,7 +433,7 @@ def test_dev_refuses_a_markdown_happ(harbor_env):
 def test_dev_refuses_a_markdown_happ_with_nothing_to_mount(harbor_env):
   """The folder requirement is about what the app *is*, not about mounts."""
   app_id = "md-plain"
-  (harbor_env.root / "apps" / f"{app_id}.happ.md").write_text(
+  (harbor_env.main_repo / f"{app_id}.happ.md").write_text(
     '```toml happ_path="manifest.toml"\n'
     '[app]\nversion = "1"\n\n'
     '[volumes]\nstate = { kind = "data" }\n\n'
@@ -560,7 +560,7 @@ def test_rm_removes_the_run_dir_volumes_and_routes(harbor_env):
     assert not (harbor_env.volumes_root / kind / app_id).exists()
   assert app_id not in harbor_env.read_db().get("routes", {})
   # The catalog entry is the reinstall path, so it survives on purpose.
-  assert (harbor_env.root / "apps" / f"{app_id}.happ").is_dir()
+  assert (harbor_env.main_repo / f"{app_id}.happ").is_dir()
 
 
 def test_rm_needs_confirmation_and_says_it_cannot_be_undone(harbor_env):

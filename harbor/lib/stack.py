@@ -1,10 +1,16 @@
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from harbor.lib.apps import AppID
-from harbor.lib.manifest import ConfigError, Manifest, parse_manifest
+from harbor.lib.manifest import (
+  ConfigError,
+  Manifest,
+  parse_manifest,
+  unlisted_compose_options,
+)
 
 HARBOR_APP_ID_LABEL = "harbor.app_id"
 HARBOR_RUN_UNIT_LABEL = "harbor.run_unit"
@@ -102,6 +108,33 @@ class AppRunUnit:
 
 
 @dataclass(frozen=True)
+class ComposeWarning:
+  """One run unit's `[run.<unit>.compose]` keys that harbor does not model.
+
+  Not an error: the manifest is valid and harbor will run it. It exists so the
+  escape hatch is legible -- harbor cannot say what an arbitrary compose key
+  does, so it says that it does not know, and shows the operator what was
+  asked for.
+  """
+
+  run_unit: str
+  options: Mapping[str, Any]
+
+  def message(self) -> str:
+    return (
+      f"This application sets free-form docker options on {self.run_unit} "
+      f"that are not guaranteed to be safe. Please review them before "
+      f"continuing"
+    )
+
+  def option_lines(self) -> tuple[str, ...]:
+    """The offending keys as `key = value`, values rendered as written."""
+    return tuple(
+      f"{key} = {json.dumps(value, default=str)}" for key, value in self.options.items()
+    )
+
+
+@dataclass(frozen=True)
 class AppCommand:
   name: str
   argv: tuple[str, ...]
@@ -134,6 +167,20 @@ class AppStack:
     except OSError as e:
       raise ConfigError(f"cannot read manifest {manifest_path}: {e}") from e
     return cls.from_bytes(data, app_id, manifest_path)
+
+  @property
+  def compose_warnings(self) -> tuple[ComposeWarning, ...]:
+    """Every off-allowlist compose key this manifest passes through.
+
+    A property rather than a stored field: it is derived from `run_units` and
+    nothing else, so it cannot drift from what compose is actually handed.
+    """
+    warnings = []
+    for unit_name, unit in self.run_units.items():
+      options = unlisted_compose_options(unit.compose_extra)
+      if options:
+        warnings.append(ComposeWarning(run_unit=unit_name, options=options))
+    return tuple(warnings)
 
   @property
   def version(self) -> str:

@@ -244,6 +244,13 @@ def danger_callouts(stack: AppStack) -> list[str]:
   for name, volume in stack.volumes.items():
     if volume.kind == "host" and not volume.readonly:
       callouts.append(f"writable host bind '{name}'")
+  # Unmodelled compose passthrough is the same kind of claim as a writable host
+  # bind, and used to be the only one harbor made silently.
+  for warning in stack.compose_warnings:
+    callouts.append(
+      f"free-form docker options on {warning.run_unit}: "
+      + ", ".join(warning.option_lines())
+    )
   return callouts
 
 

@@ -137,7 +137,7 @@ def test_cmd_holds_the_app_lock(harbor_env):
 
 
 def _stage_cmd_demo(harbor_env):
-  app = harbor_env.root / "apps" / "cmd-demo.happ"
+  app = harbor_env.main_repo / "cmd-demo.happ"
   app.mkdir()
   (app / "manifest.toml").write_text(
     """\

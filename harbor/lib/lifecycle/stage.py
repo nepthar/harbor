@@ -9,7 +9,7 @@ import yaml
 
 from harbor.lib.apps import AppID, record_app_action
 from harbor.lib.happ import app_id_from_path, is_pathlike, load_happ
-from harbor.lib.harbor import HarborCtx, StagedAppPaths
+from harbor.lib.harbor import HarborCtx, StagedAppPaths, ambiguity_message
 from harbor.lib.lifecycle._common import logger, managed_volume_dirs
 from harbor.lib.run_layout import (
   AppRunData,
@@ -218,51 +218,92 @@ def materialize(stack: AppStack, ctx: HarborCtx) -> tuple[AppRunData, tuple[str,
   return run_data, dropped
 
 
+# Lives in the app's config store, so `--purge` clears it and nothing else does.
+BOUND_TO_META = "bound_to"
+
+
 @dataclass(frozen=True)
 class StagingTarget:
-  """What a `stage`/`start` argument named."""
+  """What a `stage`/`start` argument named, and where it came from."""
 
   app_id: AppID
   # None when the argument was a bare id; `ctx.bundle_path` answers that.
   bundle: Path | None
-  # The catalog entry created to reach the bundle, for the caller to report.
-  linked_entry: Path | None
+  # None for a bundle named by path, which belongs to no repo.
+  repo: str | None
+
+  @property
+  def bound_to(self) -> str | None:
+    """The source to record, or None to leave the recorded one alone."""
+    if self.repo:
+      return f"repo {self.repo}"
+    return str(self.bundle) if self.bundle else None
 
 
-def staging_target(ctx: HarborCtx, target: str) -> StagingTarget:
-  """Resolve a stage/start argument -- an app id, or a path to a bundle."""
-  if not is_pathlike(target):
-    return StagingTarget(ctx.resolve_app(target), None, None)
+def bound_to(app: AppID | str, ctx: HarborCtx) -> str | None:
+  """What an app is recorded as installed from, or None if nothing is."""
+  if not ctx.config.app_config_path(app).is_file():
+    return None
+  return ctx.app_store(app).get_meta(BOUND_TO_META)
 
-  bundle = Path(target).expanduser().resolve()
-  app = app_id_from_path(bundle)
-  catalogued = ctx.app_catalog().get(str(app), ())
 
-  for entry in catalogued:
-    if entry.path.resolve() == bundle:
-      return StagingTarget(app, entry.path, None)
+def staging_target(
+  ctx: HarborCtx, target: str, *, force: bool = False
+) -> StagingTarget:
+  """Resolve a stage/start argument -- a path, `<id>@<repo>`, or a bare id.
 
-  # refuse when the id is already backed by a different
-  # path, even if that entry is the other bundle flavor or another source.
-  if catalogued:
-    other = catalogued[0]
+  Raises ValueError if the target is ambiguous, or if it would install over an
+  id already bound to another source and `force` is not set.
+  """
+  if is_pathlike(target):
+    bundle = Path(target).expanduser().resolve()
+    resolved = StagingTarget(app_id_from_path(bundle), bundle, None)
+  else:
+    name, _, repo = target.partition("@")
+    resolved = _from_catalog(ctx, name, repo or None)
+
+  _check_binding(ctx, resolved, force=force)
+  return resolved
+
+
+def _from_catalog(ctx: HarborCtx, name: str, repo: str | None) -> StagingTarget:
+  app = ctx.resolve_app(name)
+  entries = ctx.app_catalog().get(str(app), ())
+
+  if repo is not None:
+    for entry in entries:
+      if entry.source == repo:
+        return StagingTarget(app, entry.path, repo)
+    carried = ", ".join(sorted(entry.source for entry in entries))
     raise ValueError(
-      f"App {app} is already in the catalog as {other.path} -> "
-      f"{other.path.resolve()}. Remove that entry to stage from {bundle} instead."
+      f"Repo {repo!r} does not carry {app}."
+      + (f" It is in: {carried}." if carried else " No repo carries it.")
     )
 
-  # The id comes from the bundle's own name, so the entry keeps the bundle's
-  # flavor suffix (`.happ` directory or `.happ.md` file).
-  link = ctx.config.apps_root / bundle.name
-  if link.is_symlink() or link.exists():
-    raise ValueError(
-      f"App {app} is already in the catalog as {link} -> {link.resolve()}. "
-      f"Remove that entry to stage from {bundle} instead."
-    )
+  if not entries:
+    # No catalog entry but a staged copy: `start` runs that copy as-is.
+    if ctx.is_staged(app):
+      return StagingTarget(app, None, None)
+    raise ValueError(f'No app found for "{app}"')
+  if len(entries) > 1:
+    raise ValueError(ambiguity_message(app, entries))
+  return StagingTarget(app, entries[0].path, entries[0].source)
 
-  link.parent.mkdir(parents=True, exist_ok=True)
-  link.symlink_to(bundle)
-  return StagingTarget(app, link, link)
+
+def _check_binding(ctx: HarborCtx, target: StagingTarget, *, force: bool) -> None:
+  """Refuse an id whose surviving config and secrets were made for another source."""
+  was = bound_to(target.app_id, ctx)
+  now = target.bound_to
+  if force or not was or not now or was == now:
+    return
+  raise ValueError(
+    f"{target.app_id} was previously installed from {was}, and this would "
+    f"install it from {now}.\n"
+    f"Its configuration, secrets and volume data were made for the old source "
+    f"and would carry over.\n"
+    f"Pass --force if you know that is fine. Otherwise remove it completely "
+    f"with `harbor uninstall --purge {target.app_id}` and install again."
+  )
 
 
 def apply_config_sets(
@@ -367,8 +408,12 @@ def stage(
   *,
   sets: list[tuple[str, str]] | None = None,
   binds: list[tuple[str, str]] | None = None,
+  bound: str | None = None,
 ) -> StageSuccess:
-  """Install `bundle` into `run/<id>/` without starting it."""
+  """Install `bundle` into `run/<id>/` without starting it.
+
+  `bound` is the source to record; None leaves the recorded one alone.
+  """
   paths = ctx.staged_paths(app)
 
   try:
@@ -407,6 +452,8 @@ def stage(
 
   store = ctx.app_store(app)
   store.set_meta("origin", str(bundle))
+  if bound is not None:
+    store.set_meta(BOUND_TO_META, bound)
 
   # Apply configuration sets if we're given them
   if sets:

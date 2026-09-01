@@ -34,15 +34,12 @@ def host_dir(harbor_env):
 
 def test_an_edit_keeps_the_comments_around_it(harbor_env, host_dir):
   original = harbor_env.config.read_text()
-  harbor_env.config.write_text(
-    original + "\n# a note the operator left\n# [[app_source]]\n# name = 'dev'\n"
-  )
+  harbor_env.config.write_text(original + "\n# a note the operator left\n")
 
   add_host_volume(ctx_of(harbor_env), "extra", str(host_dir))
 
   text = harbor_env.config.read_text()
   assert "# a note the operator left" in text
-  assert "# [[app_source]]" in text
   # Everything that was there before is still there, in order.
   assert text.startswith(original.rstrip() + "\n" or original)
   assert "[host_volume.media]" in text

@@ -41,7 +41,7 @@ pytest_plugins = ["pytester"]
 FIXTURES = Path(__file__).parent / "fixtures" / "apps"
 
 CONFIG = """\
-apps_root = "apps"
+repos_root = "repos"
 run_root = "run"
 volume_root = "volumes"
 master_keyfile = "master.key"
@@ -152,6 +152,10 @@ class HarborEnv:
   config: Path
   docker_state: Path
   docker_log: Path
+
+  @property
+  def main_repo(self) -> Path:
+    return self.root / "repos" / "main"
 
   @property
   def run_root(self) -> Path:
@@ -334,7 +338,7 @@ def harbor_env(
   block_real_docker: Path | None,
 ) -> HarborEnv:
   root = tmp_path / "harbor"
-  apps = root / "apps"
+  apps = root / "repos" / "main"
   apps.mkdir(parents=True)
   (root / "run").mkdir()
   (root / "config").mkdir()

@@ -83,15 +83,19 @@ def volume_rows(volumes):
   )
 
 
-def harbor_rows(var_bytes, snapshots_bytes):
+# Named by the `<name>_bytes` keys /volumes carries, in display order.
+HARBOR_DIRS = ("repos", "var", "snapshots")
+
+
+def harbor_rows(body):
+  rows = "".join(
+    f'<tr><td class="name">{esc(name)}</td>'
+    f'<td class="muted">{fmt_size(body.get(f"{name}_bytes"))}</td></tr>'
+    for name in HARBOR_DIRS
+  )
   return (
     '<div class="scroll"><table><thead><tr><th>Directory</th><th>Size</th>'
-    "</tr></thead><tbody>"
-    f'<tr><td class="name">var</td>'
-    f'<td class="muted">{fmt_size(var_bytes)}</td></tr>'
-    f'<tr><td class="name">snapshots</td>'
-    f'<td class="muted">{fmt_size(snapshots_bytes)}</td></tr>'
-    "</tbody></table></div>"
+    "</tr></thead><tbody>" + rows + "</tbody></table></div>"
   )
 
 
@@ -109,5 +113,5 @@ def volumes_page(notice=""):
     + f'<div class="card">{volume_rows(body.get("volumes") or [])}</div>'
     + "<h2>Harbor</h2>"
     + '<p class="lede">Harbor internal storage</p>'
-    + f'<div class="card">{harbor_rows(body.get("var_bytes"), body.get("snapshots_bytes"))}</div>'
+    + f'<div class="card">{harbor_rows(body)}</div>'
   )

@@ -1,6 +1,7 @@
 """Pydantic models for harbor TOML (happ manifests and catalog service definitions)."""
 
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -137,6 +138,58 @@ _COMPOSE_MANAGED_KEYS = frozenset(
     "network_mode",
   }
 )
+
+# Compose keys that pass through without comment: they shape how a container
+# runs, not what it can reach outside itself. An allowlist rather than a
+# denylist, so a key nobody has considered yet is remarked on rather than
+# sailing through -- which also catches typos, since a misspelled key is
+# silently ignored by compose today.
+_COMPOSE_ALLOWED_KEYS = frozenset(
+  {
+    # Lifecycle and health.
+    "healthcheck",
+    "depends_on",
+    "stop_grace_period",
+    "stop_signal",
+    "init",
+    "pull_policy",
+    "platform",
+    "profiles",
+    # Resources.
+    "deploy",
+    "cpus",
+    "cpu_shares",
+    "cpu_period",
+    "cpu_quota",
+    "mem_limit",
+    "mem_reservation",
+    "memswap_limit",
+    "shm_size",
+    "oom_score_adj",
+    "pids_limit",
+    "ulimits",
+    # Process and filesystem, container-local.
+    "user",
+    "working_dir",
+    "entrypoint",
+    "read_only",
+    "tmpfs",
+    "tty",
+    "stdin_open",
+    # Naming and logging.
+    "dns",
+    "dns_search",
+    "extra_hosts",
+    "expose",
+    "logging",
+    "labels_file",
+  }
+)
+
+
+def unlisted_compose_options(compose: Mapping[str, Any]) -> dict[str, Any]:
+  """The entries of a `[run.<unit>.compose]` table that are not on the allowlist."""
+  return {k: compose[k] for k in sorted(compose) if k not in _COMPOSE_ALLOWED_KEYS}
 
 
 class RunEntry(BaseModel):

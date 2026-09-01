@@ -130,19 +130,22 @@ class HarborStore:
   def del_secret(self, name: str) -> None:
     self._store.delete(f"system/secrets/{name}")
 
-  def set_app_source(self, app_id: str, *, source: str, current: str) -> None:
-    """Record where a catalog happ was fetched from, and which commit is on disk."""
-    self._store.write(f"app_source/{app_id}", {"source": source, "current": current})
+  def set_repo_state(self, name: str, *, sha: str, at: str) -> None:
+    """Record the commit a mirrored repo was last brought down at."""
+    self._store.write(f"repo/{name}", {"sha": sha, "at": at})
 
-  def get_app_source(self, app_id: str) -> dict[str, str] | None:
-    found = self._store.read(f"app_source/{app_id}")
+  def get_repo_state(self, name: str) -> dict[str, str] | None:
+    found = self._store.read(f"repo/{name}")
     if not isinstance(found, dict):
       return None
-    source = found.get("source")
-    current = found.get("current")
-    if not isinstance(source, str) or not isinstance(current, str):
+    sha = found.get("sha")
+    at = found.get("at")
+    if not isinstance(sha, str) or not isinstance(at, str):
       return None
-    return {"source": source, "current": current}
+    return {"sha": sha, "at": at}
+
+  def del_repo_state(self, name: str) -> None:
+    self._store.delete(f"repo/{name}")
 
   # App Management
   def app_ids(self) -> list[str]:
