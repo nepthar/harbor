@@ -8,7 +8,7 @@ NAV = (
   ("/snapshots", "Snapshots"),
   ("/apps", "Apps"),
   ("/volumes", "Volumes"),
-  ("/catalog", "Catalog"),
+  ("/catalog", "Repos"),
   ("/logs", "Activity"),
 )
 
@@ -140,6 +140,8 @@ main { flex: 1; padding: 28px 32px 48px; min-width: 0; overflow: auto; }
     var(--coral) 35% 65%, transparent 65% 70%, var(--gold) 70% 100%);
 }
 h1 { font-size: 19px; margin: 0; font-weight: 600; letter-spacing: -0.012em; }
+/* Beside the title on the head's baseline: what the page is, in one phrase. */
+.head-sub { color: var(--dim); font-size: 13px; margin: 0; }
 .head a { color: var(--dim); text-decoration: none; font-size: 12px; }
 .head a:hover { color: var(--coral); }
 .head .head-actions { order: 1; align-self: center; }
@@ -441,6 +443,22 @@ details.reveal > summary:hover { color: var(--coral); }
   border-left: 2px solid var(--bad); border-radius: var(--r);
 }
 .app-card .stale { border-left-color: var(--warn); }
+/* Free-form docker options the manifest passes through. Louder than `.stale`:
+   a tinted ground as well as a rule, because this is the one thing on the card
+   the operator is being asked to agree to. */
+.app-card .passthru {
+  margin: 12px 0 0; padding: 10px 12px; font-size: 12.5px;
+  border-left: 2px solid var(--bad); border-radius: var(--r);
+  background: color-mix(in srgb, var(--bad) 10%, var(--panel));
+  color: var(--dim);
+}
+.app-card .passthru b {
+  display: block; margin-bottom: 6px; font-weight: 600; color: var(--bad);
+}
+.app-card .passthru p { margin: 0 0 8px; }
+.app-card .passthru ul { margin: 0; padding-left: 16px; }
+.app-card .passthru li { margin: 3px 0; }
+.app-card .passthru li .mono { color: var(--fg); font-size: 12px; }
 .app-card .update {
   margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--line); font-size: 12.5px;
@@ -513,7 +531,7 @@ def nav_active(path):
   return None
 
 
-def page(path, title, body, version="", actions=""):
+def page(path, title, body, version="", actions="", subtitle=""):
   active = nav_active(path)
   links = "".join(
     f'<a href="{href}" title="{esc(label)}"'
@@ -529,6 +547,7 @@ def page(path, title, body, version="", actions=""):
     if path.startswith("/apps/") and path != "/apps"
     else f'<a href="{esc(path)}">Refresh</a>'
   )
+  lede = f'<p class="head-sub">{esc(subtitle)}</p>' if subtitle else ""
   return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -546,7 +565,7 @@ def page(path, title, body, version="", actions=""):
   <button type="button" class="nav-toggle" aria-label="Collapse sidebar">‹</button>
 </nav>
 <main>
-  <div class="head"><h1>{esc(title)}</h1>{refresh}{extra}</div>
+  <div class="head"><h1>{esc(title)}</h1>{lede}{refresh}{extra}</div>
   {body}
 </main>
 </div>

@@ -78,7 +78,24 @@ def _catalog_app(entry: CatalogEntry, ctx: HarborCtx) -> dict[str, Any]:
     "configured": config_status(stack, store) if stack else None,
     "manifest": manifest,
     "manifest_stale": _catalog_manifest_stale(entry, manifest, ctx),
+    "warnings": compose_warnings_view(stack) if stack else [],
   }
+
+
+def compose_warnings_view(stack: AppStack) -> list[dict[str, Any]]:
+  """`[run.<unit>.compose]` keys harbor does not model, for the UI to show.
+
+  Sent whether or not the app is installed: it is a property of the manifest,
+  and the point is to be readable *before* deciding to install.
+  """
+  return [
+    {
+      "run_unit": w.run_unit,
+      "message": w.message(),
+      "options": list(w.option_lines()),
+    }
+    for w in stack.compose_warnings
+  ]
 
 
 def _manifest_diff(current: str, remote: str) -> str:

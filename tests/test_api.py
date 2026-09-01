@@ -153,6 +153,8 @@ def test_catalog_keeps_a_broken_bundle(harbor_env, client):
     "configured": None,
     "manifest": "not toml",
     "manifest_stale": False,
+    # A bundle that does not parse has no stack, so nothing to warn about.
+    "warnings": [],
   }
 
 

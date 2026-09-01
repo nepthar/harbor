@@ -23,13 +23,15 @@ NO_STORE = {"Cache-Control": "no-store"}
 # The harbord API this UI is written against. harbord bumps its own number
 # when a response shape changes, so a mismatch means one of the two was
 # installed without the other and fields this UI reads may be missing.
-NEEDS_API = 14
+NEEDS_API = 15
 _daemon_api = None
 
 
-def html(path, title, body, version="", status_code=200, actions=""):
+def html(path, title, body, version="", status_code=200, actions="", subtitle=""):
   return HTMLResponse(
-    page(path, title, _skew_notice() + body, version, actions=actions),
+    page(
+      path, title, _skew_notice() + body, version, actions=actions, subtitle=subtitle
+    ),
     status_code=status_code,
     headers=NO_STORE,
   )
@@ -137,11 +139,13 @@ def volumes_get(ok: str | None = None, err: str | None = None):
 
 @app.get("/catalog")
 def catalog_get(app: str = "", ok: str | None = None, err: str | None = None):
-  version, unreachable = harbor_version("/catalog", "Catalog")
+  version, unreachable = harbor_version("/catalog", catalog.TITLE)
   if unreachable:
     return unreachable
   title, body, version, actions = catalog.page(version, banner(ok, err), app=app)
-  return html("/catalog", title, body, version, actions=actions)
+  return html(
+    "/catalog", title, body, version, actions=actions, subtitle=catalog.SUBTITLE
+  )
 
 
 @app.get("/logs")

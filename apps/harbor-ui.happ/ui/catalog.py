@@ -1,7 +1,10 @@
-"""The Catalog page: the repos apps come from, and the happs in each of them."""
+"""The Repos page: the repos apps come from, and the happs in each of them."""
 
 from api import ApiError, api
 from layout import error_card, esc, job_button, job_modal
+
+TITLE = "Repos"
+SUBTITLE = "Application repositories"
 
 
 def catalog_app_entry(catalogs, app_id):
@@ -203,12 +206,42 @@ def catalog_actions(app):
       title=f"{label} {app.get('display_name') or app_id}",
       desc=(
         f"Installs {app_id} from {repo} so it can be started. Any data and "
-        f"configuration it already has are kept."
+        f"configuration it already has are kept.{warning_desc(app)}"
       ),
       args={"app": target},
       done="/catalog",
     )
     + "</div>"
+  )
+
+
+def compose_warnings(app):
+  """Free-form docker options, beside the manifest that asks for them.
+
+  Harbor cannot say what an arbitrary compose key does, so this says that it
+  does not know and shows the operator exactly what was asked for.
+  """
+  blocks = []
+  for warning in app.get("warnings") or []:
+    items = "".join(
+      f'<li><span class="mono">{esc(option)}</span></li>'
+      for option in warning.get("options") or []
+    )
+    message = esc(warning.get("message"))
+    body = f"<b>Warning</b><p>{message}:</p><ul>{items}</ul>"
+    blocks.append(f'<div class="passthru">{body}</div>')
+  return "".join(blocks)
+
+
+def warning_desc(app):
+  """The same warning, as one line of prose for the Install confirmation."""
+  warnings = app.get("warnings") or []
+  if not warnings:
+    return ""
+  units = ", ".join(w.get("run_unit") or "" for w in warnings)
+  return (
+    f" Warning: this application sets free-form docker options on {units} "
+    f"that are not guaranteed to be safe. Review them before continuing."
   )
 
 
@@ -240,7 +273,8 @@ def catalog_card(app, card_id, hidden=True):
     f'<div class="app-card-head">'
     f'<div class="app-card-intro">'
     f'<div class="row between"><h2>{esc(name)}</h2>{side}</div>'
-    f"{summary}{contested}{catalog_stale_note(app)}</div>"
+    f"{summary}{contested}{catalog_stale_note(app)}"
+    f"{compose_warnings(app)}</div>"
     f"{catalog_actions(app)}</div>"
     f'<pre class="app-card-manifest">'
     f'<code class="language-toml">{manifest}</code></pre>'
@@ -256,11 +290,11 @@ def page(version, notice="", *, app=""):
     body = api("/catalog")
     repos = api("/repos").get("repos", [])
   except ApiError as e:
-    return "Catalog", error_card(e) + job_modal(), version, actions
+    return TITLE, error_card(e) + job_modal(), version, actions
   catalogs = body.get("catalogs", [])
   contested = body.get("contested", {})
   return (
-    "Catalog",
+    TITLE,
     notice
     + contested_note(contested)
     + catalog_tables(catalogs, repos, contested, open_app=open_app)

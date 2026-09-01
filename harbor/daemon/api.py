@@ -44,7 +44,8 @@ from harbor.lib.stack import AppStack
 # 10: GET /metrics (gauge history).
 # 11: /volumes bytes come from gauges; sizes=1 is gone; host volumes carry bytes.
 # 12: restart is a job verb.
-API_VERSION = 14
+# 15: catalog apps carry `warnings` -- unmodelled [run.<unit>.compose] keys.
+API_VERSION = 15
 
 CtxFactory = Callable[[], HarborCtx]
 

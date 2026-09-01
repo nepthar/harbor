@@ -575,3 +575,104 @@ def test_config_env_names_every_value_including_the_unset_ones():
     "__HARBOR_CONFIG__admin_user": "alice",
     "__HARBOR_CONFIG__api_key": "",
   }
+
+
+# --- unmodelled compose keys ------------------------------------------------
+#
+# The allowlist exists so that `[run.<unit>.compose]` cannot ask for host root
+# without saying so. Nothing here refuses a manifest: the box is the operator's,
+# and harbor cannot say what an arbitrary compose key does -- only that it does
+# not know, and what was asked for.
+
+
+def test_allowed_compose_keys_warn_about_nothing(tmp_path):
+  """Everything the example happs already use passes through silently."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+compose = { mem_limit = "256m", user = "1000:1000", depends_on = ["db"] }
+
+[run.db]
+image = "postgres:16"
+
+[run.db.compose]
+shm_size = "128mb"
+healthcheck = { test = "pg_isready" }
+""",
+  )
+
+  assert stack.compose_warnings == ()
+
+
+def test_unmodelled_compose_keys_warn_once_per_run_unit(tmp_path):
+  """One warning per unit, carrying the keys and the values as written."""
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+compose = { privileged = true, devcies = ["/dev/sda"], mem_limit = "256m" }
+
+[run.side]
+image = "alpine"
+compose = { pid = "host" }
+""",
+  )
+
+  main, side = stack.compose_warnings
+
+  assert main.run_unit == "main"
+  # mem_limit is allowed, so it is not part of what the operator is shown.
+  assert main.option_lines() == ('devcies = ["/dev/sda"]', "privileged = true")
+  assert "free-form docker options on main" in main.message()
+  assert side.option_lines() == ('pid = "host"',)
+
+  # Still copied through verbatim -- warning is not refusing.
+  services = make_compose_dict(stack, run_data(stack))["services"]
+  assert services["main"]["privileged"] is True
+  assert services["side"]["pid"] == "host"
+
+
+def test_compose_warnings_reach_the_capability_receipt(tmp_path):
+  """`harbor inspect` reads these beside host networking and writable binds."""
+  from harbor.lib.receipt import danger_callouts
+
+  stack = stack_of(
+    tmp_path,
+    """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+compose = { privileged = true }
+""",
+  )
+
+  assert danger_callouts(stack) == [
+    "free-form docker options on main: privileged = true"
+  ]
+
+
+def test_a_managed_key_is_still_refused_outright(tmp_path):
+  """The allowlist is a second gate, not a replacement for the managed set."""
+  with pytest.raises(ConfigError, match="harbor manages these service keys"):
+    stack_of(
+      tmp_path,
+      """\
+[app]
+version = "1"
+
+[run.main]
+image = "alpine"
+compose = { image = "nginx" }
+""",
+    )
