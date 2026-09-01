@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID, record_app_action
@@ -169,6 +170,47 @@ def run_command(
   finally:
     if was_fully_stopped:
       unlink_host_volumes(state.run_path)
+
+
+@dataclass(frozen=True)
+class ReloadResult:
+  """What a reload did, so a caller can say so without re-deriving it."""
+
+  stage: StageSuccess
+  # Whether the app was running when the reload began, and so was started
+  # again at the end. A reload never starts an app that was not running.
+  was_running: bool
+
+
+def reload_app(
+  app: AppID,
+  bundle: Path,
+  ctx: HarborCtx,
+  *,
+  bound: str | None = None,
+) -> ReloadResult:
+  """Stop if running, re-stage from the bundle, and start again if it was.
+
+  The point is picking up a changed manifest or pending configuration without
+  the operator having to remember which of stop/install/start apply. Whether
+  the app comes back up is decided by whether it was up to begin with -- a
+  reload is never a way to start something.
+
+  The caller holds the app lock: both the running check and the decision to
+  start again depend on nothing else touching the app in between.
+  """
+  try:
+    running = bool(ctx.run_state(app).running_count)
+  except ValueError:
+    # Never installed, so nothing to stop -- staging below is the whole job.
+    running = False
+
+  if running:
+    stop(app, ctx)
+  result = stage(app, bundle, ctx, bound=bound)
+  if running:
+    start(app, ctx.config.app_run_path(app), ctx)
+  return ReloadResult(stage=result, was_running=running)
 
 
 def stop(app_id: AppID, ctx: HarborCtx) -> None:

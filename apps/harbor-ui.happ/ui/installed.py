@@ -71,7 +71,7 @@ def apps_table(apps):
 
 
 def lifecycle_bar(app):
-  """Start or stop, then restart, snapshot, uninstall. Each opens the job modal."""
+  """Start or stop, then reload, snapshot, uninstall. Each opens the job modal."""
   app_id = app["app_id"]
   name = app.get("display_name") or app_id
   running = app["status"] == "running"
@@ -98,9 +98,9 @@ def lifecycle_bar(app):
   buttons = [
     primary,
     job_button(
-      "Restart",
-      "restart",
-      title=f"Restart {name}",
+      "Reload",
+      "reload",
+      title=f"Reload {name}",
       desc=(
         f"Stops {app_id} if it is running, rebuilds its installation from the "
         f"catalog copy (pending configuration and a changed manifest included), "

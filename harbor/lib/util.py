@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 import re
 import string
@@ -26,23 +25,6 @@ def now_ts() -> str:
 
 def ts_to_seconds(ts: str) -> int:
   return int(datetime.fromisoformat(ts).timestamp())
-
-
-# How harbor spells log levels: lower case, all the same width, so lines stay
-# in columns whether they land on a terminal or in a run log under var/logs.
-LOG_LEVEL_NAMES = {
-  logging.DEBUG: "debug",
-  logging.INFO: "info ",
-  logging.WARNING: "warn ",
-  logging.ERROR: "error",
-  logging.CRITICAL: "crit ",
-}
-
-
-def name_log_levels() -> None:
-  """Apply `LOG_LEVEL_NAMES` process-wide."""
-  for level, name in LOG_LEVEL_NAMES.items():
-    logging.addLevelName(level, name)
 
 
 def refuse_root(who: str) -> None:

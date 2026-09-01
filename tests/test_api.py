@@ -292,14 +292,14 @@ def _compose_calls(harbor_env) -> list[list[str]]:
   ]
 
 
-def test_restart_stops_restages_and_starts_a_running_app(harbor_env, client, jobs):
+def test_reload_stops_reinstalls_and_starts_a_running_app(harbor_env, client, jobs):
   harbor_env.run("start", APP, "--set", "admin_user=root")
   manifest = harbor_env.main_repo / f"{APP}.happ" / "manifest.toml"
   manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
 
-  job = submit(client, jobs, "restart", {"app": APP})
+  job = submit(client, jobs, "reload", {"app": APP})
   assert job["state"] == "done", job["error"]
-  assert f"Restarted {APP}" in read_log(job)
+  assert f"Reloaded {APP}" in read_log(job)
   assert client.get(f"/apps/{APP}").json()["status"] == "running"
   staged = (harbor_env.run_root / APP / "happ" / "manifest.toml").read_text()
   assert 'version      = "0.2.0"' in staged
@@ -310,22 +310,22 @@ def test_restart_stops_restages_and_starts_a_running_app(harbor_env, client, job
   ]
 
 
-def test_restart_restages_a_stopped_app_without_starting(harbor_env, client, jobs):
+def test_reload_reinstalls_a_stopped_app_without_starting(harbor_env, client, jobs):
   harbor_env.run("install", APP)
   manifest = harbor_env.main_repo / f"{APP}.happ" / "manifest.toml"
   manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
 
-  job = submit(client, jobs, "restart", {"app": APP})
+  job = submit(client, jobs, "reload", {"app": APP})
   assert job["state"] == "done", job["error"]
-  assert f"Restaged {APP}" in read_log(job)
+  assert f"Re-installed {APP}" in read_log(job)
   assert client.get("/apps").json()["apps"][0]["status"] == "stopped"
   staged = (harbor_env.run_root / APP / "happ" / "manifest.toml").read_text()
   assert 'version      = "0.2.0"' in staged
   assert _compose_calls(harbor_env) == []
 
 
-def test_restart_unknown_app_is_refused(harbor_env, client):
-  response = client.post("/jobs", json={"verb": "restart", "args": {"app": "nope"}})
+def test_reload_unknown_app_is_refused(harbor_env, client):
+  response = client.post("/jobs", json={"verb": "reload", "args": {"app": "nope"}})
   assert response.status_code == 400
   assert "No app found" in response.json()["error"]
 

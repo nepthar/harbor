@@ -21,7 +21,15 @@ from harbor.lib.lifecycle.routes import (
   register_app_routes,
   unregister_app_routes,
 )
-from harbor.lib.lifecycle.run import logs, recovery_lines, run_command, start, stop
+from harbor.lib.lifecycle.run import (
+  ReloadResult,
+  logs,
+  recovery_lines,
+  reload_app,
+  run_command,
+  start,
+  stop,
+)
 from harbor.lib.lifecycle.snapshot import snapshot
 from harbor.lib.lifecycle.stage import (
   StageSuccess,
@@ -38,6 +46,7 @@ from harbor.lib.lifecycle.stage import (
 
 __all__ = [
   "DevPlan",
+  "ReloadResult",
   "RemovalPlan",
   "RestorePlan",
   "StageSuccess",
@@ -53,6 +62,7 @@ __all__ = [
   "assigned_routes",
   "preflight_app_routes",
   "recovery_lines",
+  "reload_app",
   "register_app_routes",
   "PURGE",
   "RESET",

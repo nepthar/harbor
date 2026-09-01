@@ -458,6 +458,35 @@ def test_removed_app_bundle_remains_runnable_from_the_staged_copy(harbor_env):
   assert "No app found" in restaged.stderr
 
 
+def test_reload_picks_up_a_changed_manifest_and_comes_back_up(harbor_env):
+  """The whole point: edit the bundle, reload, and the running app has it."""
+  app_id = "ports-demo"
+  assert harbor_env.run("start", app_id).returncode == 0
+  manifest = harbor_env.main_repo / f"{app_id}.happ" / "manifest.toml"
+  manifest.write_text(manifest.read_text().replace("0.1.0", "0.2.0"))
+
+  reloaded = harbor_env.run("reload", app_id)
+  assert reloaded.returncode == 0, reloaded.stderr
+  assert f"Reloaded {app_id}" in reloaded.stdout
+
+  staged = (harbor_env.run_root / app_id / "happ" / "manifest.toml").read_text()
+  assert "0.2.0" in staged
+  assert _ps_row(harbor_env.run("ps").stdout, app_id)[1] == "running"
+
+
+def test_reload_of_a_stopped_app_does_not_start_it(harbor_env):
+  """A reload is never a way to start something: it puts back what it found."""
+  app_id = "ports-demo"
+  assert harbor_env.run("install", app_id).returncode == 0
+
+  reloaded = harbor_env.run("reload", app_id)
+  assert reloaded.returncode == 0, reloaded.stderr
+  assert f"Re-installed {app_id}" in reloaded.stdout
+  assert "it was not running" in reloaded.stdout
+  # Installed but never started reads as "-", not "stopped".
+  assert _ps_row(harbor_env.run("ps").stdout, app_id)[1] == "-"
+
+
 def test_missing_config_is_an_actionable_error(harbor_env, monkeypatch, tmp_path):
   monkeypatch.setenv("HARBOR_CONFIG", str(tmp_path / "missing.toml"))
 
@@ -1589,16 +1618,3 @@ def test_inspect_falls_back_to_the_bundle_when_uninstalled(harbor_env):
   assert "No such file" not in inspected.stderr
   assert f"{BASIC} is not installed" in inspected.stdout
   assert f"harbor install {BASIC}" in inspected.stdout
-
-
-def test_log_level_names_are_lower_case_and_padded(harbor_env):
-  """One spelling of every level, whichever entrypoint wrote the line."""
-  import logging
-
-  assert [logging.getLevelName(level) for level in (10, 20, 30, 40, 50)] == [
-    "debug",
-    "info ",
-    "warn ",
-    "error",
-    "crit ",
-  ]

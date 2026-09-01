@@ -47,7 +47,8 @@ from harbor.lib.stack import AppStack
 # 15: catalog apps carry `warnings` -- unmodelled [run.<unit>.compose] keys.
 # 16: /volumes carries `harbor_dirs` (name, description, bytes) in place of
 #     the flat `<name>_bytes` keys.
-API_VERSION = 16
+# 17: the `restart` job verb is now `reload`.
+API_VERSION = 17
 
 CtxFactory = Callable[[], HarborCtx]
 
