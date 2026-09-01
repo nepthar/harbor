@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
@@ -41,6 +43,39 @@ _SKIP_FS = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class HarborDir:
+  """One of harbor's own directories, as gauged and as shown to an operator."""
+
+  name: str
+  description: str
+  root: Callable[[HarborCtx], Path]
+
+  @property
+  def gauge(self) -> str:
+    return f"{self.name}_size_bytes"
+
+
+# Hardcoded here because it's harbor's internal layout.
+HARBOR_DIRS = (
+  HarborDir(
+    "repos",
+    "Application repository folders",
+    lambda ctx: ctx.config.repos_root,
+  ),
+  HarborDir(
+    "snapshots",
+    "Total size of all application snapshots",
+    lambda ctx: ctx.config.snapshot_root,
+  ),
+  HarborDir(
+    "var",
+    "Logs, locks, sockets, and temporary files",
+    lambda ctx: ctx.config.var_root,
+  ),
+)
+
+
 def record_volume_sizes(ctx: HarborCtx) -> int:
   """Walk volumes, host volumes, and the harbor directories. Returns how many."""
   n = 0
@@ -63,14 +98,11 @@ def record_volume_sizes(ctx: HarborCtx) -> int:
       continue
     ctx.record_gauge(f"volume_size_bytes//host/{tag}", path_size(volume.path))
     n += 1
-  for name, root in (
-    ("var", ctx.config.var_root),
-    ("snapshots", ctx.config.snapshot_root),
-    ("repos", ctx.config.repos_root),
-  ):
+  for entry in HARBOR_DIRS:
+    root = entry.root(ctx)
     if not root.exists():
       continue
-    ctx.record_gauge(f"{name}_size_bytes", path_size(root))
+    ctx.record_gauge(entry.gauge, path_size(root))
     n += 1
   return n
 

@@ -83,18 +83,19 @@ def volume_rows(volumes):
   )
 
 
-# Named by the `<name>_bytes` keys /volumes carries, in display order.
-HARBOR_DIRS = ("repos", "var", "snapshots")
-
-
-def harbor_rows(body):
+def harbor_rows(entries):
+  """Whatever directories harbord names, in the order it names them."""
+  if not entries:
+    return '<p class="empty">Harbor reported no directories.</p>'
   rows = "".join(
-    f'<tr><td class="name">{esc(name)}</td>'
-    f'<td class="muted">{fmt_size(body.get(f"{name}_bytes"))}</td></tr>'
-    for name in HARBOR_DIRS
+    f'<tr><td class="name">{esc(entry.get("name"))}</td>'
+    f'<td class="muted wrap">{esc(entry.get("description") or "")}</td>'
+    f'<td class="muted">{fmt_size(entry.get("bytes"))}</td></tr>'
+    for entry in entries
   )
   return (
-    '<div class="scroll"><table><thead><tr><th>Directory</th><th>Size</th>'
+    '<div class="scroll"><table><thead><tr><th>Directory</th>'
+    "<th>Description</th><th>Size</th>"
     "</tr></thead><tbody>" + rows + "</tbody></table></div>"
   )
 
@@ -113,5 +114,5 @@ def volumes_page(notice=""):
     + f'<div class="card">{volume_rows(body.get("volumes") or [])}</div>'
     + "<h2>Harbor</h2>"
     + '<p class="lede">Harbor internal storage</p>'
-    + f'<div class="card">{harbor_rows(body)}</div>'
+    + f'<div class="card">{harbor_rows(body.get("harbor_dirs") or [])}</div>'
   )

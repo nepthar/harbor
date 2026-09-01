@@ -1234,17 +1234,20 @@ def test_gen_masterkey_appends_to_the_keyfile(harbor_env):
 
 
 def test_every_shipped_happ_stages(harbor_env):
-  """The happs in apps/ are what a reader installs first; they must parse.
+  """Every happ this repo ships must parse -- real apps and demos alike.
 
   This previously pointed at an `examples/` directory that does not exist, so
   it globbed nothing and passed unconditionally.
   """
-  apps_dir = Path(__file__).parents[1] / "apps"
-  shipped = list(scan_happs(apps_dir))
-  assert shipped, "no happs found in apps/"
+  root = Path(__file__).parents[1]
+  shipped = [
+    (app_id, apps_dir / rel_path)
+    for apps_dir in (root / "apps", root / "demo-apps")
+    for app_id, rel_path in scan_happs(apps_dir)
+  ]
+  assert shipped, "no happs found in apps/ or demo-apps/"
 
-  for app_id, rel_path in shipped:
-    source = apps_dir / rel_path
+  for app_id, source in shipped:
     dest = harbor_env.main_repo / source.name
     if source.is_dir():
       shutil.copytree(source, dest, dirs_exist_ok=True)
@@ -1264,7 +1267,7 @@ def test_readme_quickstart_from_repo_apps(harbor_env):
   break if the shipped happs do. `demo-routes` because its `lan_only` route
   keeps the LAN receipt line under test.
   """
-  happ = Path(__file__).parents[1] / "apps" / "demo-routes.happ.md"
+  happ = Path(__file__).parents[1] / "demo-apps" / "demo-routes.happ.md"
   assert happ.is_file(), happ
 
   started = harbor_env.run("start", str(happ))

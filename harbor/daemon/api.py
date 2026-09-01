@@ -45,7 +45,9 @@ from harbor.lib.stack import AppStack
 # 11: /volumes bytes come from gauges; sizes=1 is gone; host volumes carry bytes.
 # 12: restart is a job verb.
 # 15: catalog apps carry `warnings` -- unmodelled [run.<unit>.compose] keys.
-API_VERSION = 15
+# 16: /volumes carries `harbor_dirs` (name, description, bytes) in place of
+#     the flat `<name>_bytes` keys.
+API_VERSION = 16
 
 CtxFactory = Callable[[], HarborCtx]
 
@@ -195,7 +197,10 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
   @app.get("/volumes", tags=["volumes"])
   def list_volumes(ctx: Ctx) -> dict:
     """Harbor-managed volumes, with sizes from the last volume-metrics run."""
-    return {"volumes": views.volumes_view(ctx), **views.harbor_dir_sizes(ctx)}
+    return {
+      "volumes": views.volumes_view(ctx),
+      "harbor_dirs": views.harbor_dirs_view(ctx),
+    }
 
   @app.get("/host-volumes", tags=["host volumes"])
   def list_host_volumes(ctx: Ctx) -> dict:

@@ -699,9 +699,11 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   assert volumes["config"]["in_use"] is True
   assert volumes["config"]["declared"] is True
   assert volumes["config"]["bytes"] is None
-  assert body["var_bytes"] is None
-  assert body["snapshots_bytes"] is None
-  assert body["repos_bytes"] is None
+  # The set of directories is harbord's to name; the UI renders what it sends.
+  dirs = {d["name"]: d for d in body["harbor_dirs"]}
+  assert set(dirs) == {"repos", "snapshots", "var"}
+  assert all(d["description"] for d in dirs.values())
+  assert all(d["bytes"] is None for d in dirs.values())
 
   media_dir = harbor_env.root / "external-data"
   media_dir.mkdir(exist_ok=True)
@@ -710,9 +712,10 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   body = client.get("/volumes").json()
   volumes = {v["name"]: v for v in body["volumes"]}
   assert volumes["config"]["bytes"] == 2
-  assert body["var_bytes"] > 0
+  dirs = {d["name"]: d for d in body["harbor_dirs"]}
+  assert dirs["var"]["bytes"] > 0
   # repos/main holds the fixture happs, so it is gauged and non-empty.
-  assert body["repos_bytes"] > 0
+  assert dirs["repos"]["bytes"] > 0
   media = {v["tag"]: v for v in client.get("/host-volumes").json()["host_volumes"]}
   assert media["media"]["bytes"] == 4
 

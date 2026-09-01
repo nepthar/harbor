@@ -18,6 +18,7 @@ from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
 from harbor.lib.lifecycle.restore import snapshot_names, snapshotted_app_ids
 from harbor.lib.lifecycle.snapshot import snapshot_archive, split_snapshot_name
+from harbor.lib.metric import HARBOR_DIRS
 from harbor.lib.observations import AppObservation
 from harbor.lib.receipt import published_route_urls
 from harbor.lib.repo import MAIN_REPO, bound_apps
@@ -238,18 +239,21 @@ def host_volumes_view(ctx: HarborCtx) -> list[dict[str, Any]]:
   ]
 
 
-# The directories `record_volume_sizes` gauges by name, in display order.
-HARBOR_DIRS = ("var", "snapshots", "repos")
+def harbor_dirs_view(ctx: HarborCtx) -> list[dict[str, Any]]:
+  """Harbor's own directories, as last recorded by volume-metrics.
 
-
-def harbor_dir_sizes(ctx: HarborCtx) -> dict[str, int | None]:
-  """Harbor's own directories, as last recorded by volume-metrics."""
-  return {
-    f"{name}_bytes": _gauge_bytes(
-      ctx.read_gauges(f"{name}_size_bytes"), f"{name}_size_bytes"
-    )
-    for name in HARBOR_DIRS
-  }
+  The list comes from `metric.HARBOR_DIRS`, so a caller renders whatever
+  harbord names rather than knowing the set in advance. `bytes` is None until
+  volume-metrics has run over that directory at least once.
+  """
+  return [
+    {
+      "name": entry.name,
+      "description": entry.description,
+      "bytes": _gauge_bytes(ctx.read_gauges(entry.gauge), entry.gauge),
+    }
+    for entry in HARBOR_DIRS
+  ]
 
 
 def snapshots_view(ctx: HarborCtx) -> list[dict[str, Any]]:
