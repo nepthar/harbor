@@ -93,6 +93,25 @@ def record_volume_sizes(ctx: HarborCtx) -> int:
           path_size(volume_dir),
         )
         n += 1
+  # `app` volumes are not under a volume root: they are the staged happ's own
+  # files, symlinked into `run/<app>/volumes/app/`. Gauged here so that every
+  # volume a manifest declares has a size a reader can look up, rather than the
+  # app detail page walking the tree itself on every load.
+  if ctx.config.run_root.is_dir():
+    for app_dir in ctx.config.run_root.iterdir():
+      app_volumes = app_dir / "volumes" / "app"
+      if not app_volumes.is_dir():
+        continue
+      # `exists` rather than `is_dir`: an app volume may name a single file
+      # (`pkg -> ../../happ/package.json`), and `path_size` sizes either.
+      for entry in app_volumes.iterdir():
+        if not entry.exists():
+          continue
+        ctx.record_gauge(
+          f"volume_size_bytes/{app_dir.name}/app/{entry.name}",
+          path_size(entry),
+        )
+        n += 1
   for tag, volume in ctx.config.host_volumes.items():
     if not volume.path.exists():
       continue

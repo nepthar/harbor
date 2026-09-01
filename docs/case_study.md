@@ -14,7 +14,7 @@ The Unifi Network Application is a piece of software that Ubiquity developed to 
 
 Linuxserver.io takes this software, packages it, and distributes it in a container that we can run. However, their instructions require a fair amount of setup and knowledge to actually stand up a robust, "home-production-ready" deployment. The harbor ecosystem solves this for us.
 
-Feel free to skip to the completed harbor app at [apps/unifi-network-application.happ](apps/unifi-network-application.happ).
+Feel free to skip to the completed harbor app at [apps/unifi-network-application.happ](../apps/unifi-network-application.happ).
 
 
 ## Step 1. Make the bare harbor app:
