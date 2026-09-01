@@ -4,8 +4,8 @@
 uv run pytest
 ```
 
-Around 200 tests in ~15s. If that number starts climbing, something below has
-been violated.
+Around 560 tests in ~65s. If the per-test cost starts climbing, something
+below has been violated.
 
 ## How it works
 
@@ -41,16 +41,21 @@ to 0.25s.
 | `test_routes.py`, `test_ports.py` | Route records and host port allocation |
 | `test_config_schema.py` | Config store, encryption, binds, metadata |
 | `test_stack.py` | Manifest bytes in, `AppStack` out |
+| `test_happ_md.py` | Single-file `.happ.md` bundles |
 | `test_compose.py` | `AppStack` + run data out to a compose file; readiness |
 | `test_repo.py` | Repos and mirroring, against an in-process fake GitHub |
 | `test_repo_catalog.py` | Several repos: the catalog, ambiguity, and bindings |
 | `test_layout.py` | Staging: the run dir, volume links, re-staging |
+| `test_observations.py` | Where an app stands, and whether what runs is current |
 | `test_cli.py` | The command surface — exit codes, output, disk state |
 | `test_lock.py` | Harbor + app locks; who holds them and for how long |
 | `test_restore.py` | Snapshot and restore, including data volumes |
 | `test_docker.py` | That the docker guard actually fails a stray call |
 | `test_config_edit.py` | Editing config.toml: comments kept, invalid results refused |
 | `test_api.py` | harbord's routes, its refusals, and jobs run to completion |
+| `test_jobs.py` | Job: parse first, then file a run log, then do the work |
+| `test_activity.py` | The activity log: harbor's own run output, on disk and indexed |
+| `test_metrics.py` | Volume-size and host-resource metric jobs |
 
 `test_stack.py` and `test_compose.py` share `stack_of` from `conftest.py`:
 manifest TOML in, `AppStack` out, through the real parse-and-validate path.

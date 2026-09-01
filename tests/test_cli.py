@@ -1226,6 +1226,24 @@ def test_stop_uses_staged_manifest_when_bundle_is_missing(
 # --- bootstrap -------------------------------------------------------------
 
 
+def test_init_configures_the_default_repos(harbor_env, tmp_path):
+  """A fresh root is not an empty store: the catalog has somewhere to come from."""
+  root = tmp_path / "fresh"
+  result = harbor_env.run("--root", str(root), "init", "--no-mirror", input="\n")
+  assert result.returncode == 0, result.stderr
+
+  config = load_config_file(root / "config.toml")
+
+  assert set(config.repos) == {"main", "staples", "demos"}
+  assert config.repos["staples"].remote.url == "github://nepthar/harbor/main/apps"
+  assert config.repos["demos"].remote.url == "github://nepthar/harbor/main/demo-apps"
+  # main is the hand-drop directory and is never mirrored.
+  assert not config.repos["main"].mirrored
+  # --no-mirror leaves them configured but unfetched, and says so.
+  assert "Skipped mirroring" in result.stdout
+  assert "harbor repo update" in result.stdout
+
+
 def test_init_bootstraps_a_usable_root(harbor_env, tmp_path):
   """`harbor init` runs before any config or lock exists.
 
@@ -1234,7 +1252,10 @@ def test_init_bootstraps_a_usable_root(harbor_env, tmp_path):
   """
   root = tmp_path / "fresh"
   # init prompts for the root; an empty line accepts the --root default.
-  result = harbor_env.run("--root", str(root), "init", input="\n")
+  # --no-mirror because the default repos are on GitHub and the suite does not
+  # touch the network; `test_init_configures_the_default_repos` covers the
+  # tables it writes.
+  result = harbor_env.run("--root", str(root), "init", "--no-mirror", input="\n")
 
   assert result.returncode == 0, result.stderr
   assert (root / "config.toml").is_file()

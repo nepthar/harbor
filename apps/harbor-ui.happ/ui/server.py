@@ -145,16 +145,22 @@ def catalog_get(app: str = "", ok: str | None = None, err: str | None = None):
   )
 
 
-@app.get("/logs")
-def logs():
-  version, unreachable = harbor_version("/logs", "Activity")
+@app.get("/activity")
+def activity_page():
+  version, unreachable = harbor_version("/activity", "Activity")
   if unreachable:
     return unreachable
   try:
     body = activity.page()
   except ApiError as e:
-    return html("/logs", "Activity", error_card(e), version)
-  return html("/logs", "Activity", body, version)
+    return html("/activity", "Activity", error_card(e), version)
+  return html("/activity", "Activity", body, version)
+
+
+@app.get("/logs")
+def logs():
+  """The page this used to live at; old links land on it rather than 404."""
+  return see("/activity")
 
 
 @app.post("/volumes")

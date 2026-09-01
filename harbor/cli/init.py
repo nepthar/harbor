@@ -20,17 +20,29 @@ port_base = 41000
 
 # Repos are where the catalog comes from. `repos/main` is always there and is
 # where you drop happs by hand. Add more with `harbor repo add`, which writes
-# the tables below -- a directory on this machine, or a folder in a GitHub
-# repository that harbor mirrors into repos/<name>.
+# tables like the ones below -- a directory on this machine, or a folder in a
+# GitHub repository that harbor mirrors into repos/<name>.
 #
 # An app id carried by two repos is ambiguous: `harbor doctor` reports those,
 # and you install one by naming its repo, `harbor install <app>@<repo>`.
 #
+# Adding a repo is a standing commitment to whatever appears in it later, not
+# just to what is in it today. These two ship enabled; remove either table to
+# drop it, or run `harbor repo remove <name>`.
+
+# The apps harbor maintains and expects you to actually run.
+[repo.staples]
+url = "github://nepthar/harbor/main/apps"
+
+# Small happs that demonstrate one feature each. Useful while learning what a
+# manifest can do, and safe to remove once you are done.
+[repo.demos]
+url = "github://nepthar/harbor/main/demo-apps"
+
+# A directory on this machine, for happs you are writing yourself:
+#
 # [repo.dev]
 # path = "~/code/happs"
-#
-# [repo.harbor]
-# url = "github://nepthar/harbor/main/apps"
 
 # The address by which harbor is reachable on your network, used for setting
 # up routes. Every route provider that proxies traffic points at it, so it is
@@ -87,7 +99,42 @@ port_base = 41000
 
 def register(subparsers) -> None:
   parser = subparsers.add_parser("init", help="Initialize a harbor root directory")
+  parser.add_argument(
+    "--no-mirror",
+    action="store_true",
+    help="Skip fetching the default repos; `harbor repo update` gets them later",
+  )
   parser.set_defaults(func=run)
+
+
+def _mirror_default_repos(config, conn) -> None:
+  """Fetch the repos the template ships with, so day one is not an empty store.
+
+  Best-effort on purpose: `init` otherwise touches nothing but the filesystem,
+  and an install on a plane should still produce a working harbor root. A repo
+  that does not mirror now is still configured, and `harbor repo update` picks
+  it up later.
+  """
+  from harbor.lib import repo as repo_lib
+  from harbor.lib.harbor import HarborCtx
+
+  remotes = [r for r in config.repos.values() if r.mirrored]
+  if not remotes:
+    return
+
+  conn.out("")
+  ctx = HarborCtx(config)
+  for repo in remotes:
+    try:
+      result = repo_lib.mirror(repo, ctx)
+    except Exception as e:
+      conn.err(
+        f"Could not mirror {repo.name} from {repo.describe()}: {e}\n"
+        f"  It is still configured. Run `harbor repo update {repo.name}` "
+        f"when you can reach GitHub."
+      )
+      continue
+    conn.out(f"Mirrored {repo.name}: {len(result.happs)} happs at {result.sha[:8]}")
 
 
 def run(args: argparse.Namespace, _ctx, conn) -> None:
@@ -123,7 +170,7 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   )
   master_key_path.chmod(0o600)
 
-  load_config_file(config_path)
+  config = load_config_file(config_path)
 
   conn.out(f"Initialized harbor root at {root}")
   conn.out(f"  repos:       {root / 'repos'}")
@@ -132,13 +179,23 @@ def run(args: argparse.Namespace, _ctx, conn) -> None:
   conn.out(f"  volumes:     {root / 'volumes'} ({', '.join(VOLUME_KINDS)})")
   conn.out(f"  var:         {root / 'var'} ({', '.join(VAR_DIRS)})")
   conn.out(f"  master.key:  {master_key_path}")
+  if args.no_mirror:
+    conn.out("\nSkipped mirroring the default repos (--no-mirror).")
+    conn.out("  Fetch them with `harbor repo update`.")
+  else:
+    _mirror_default_repos(config, conn)
+
   conn.out(f"\nTo change your configuration, edit {config_path}")
   conn.out(
-    "\nNext: put a happ in repos/main/ (or `harbor repo add <url>`), then\n"
+    "\nNext: pick something from `harbor catalog`, then\n"
     "  harbor install <app>   install it without starting it\n"
     "  harbor start <app>     start it (installing first if needed)\n"
     "  harbor stop <app>      stop it\n"
     "  harbor uninstall <app> remove the installation, keeping data and config"
+  )
+  conn.out(
+    "\nThe `demos` repo is there to explore what a happ can do. You may wish "
+    "to remove\nit once you are finished: `harbor repo remove demos`."
   )
 
   default_root = DEFAULT_ROOT.expanduser().resolve()

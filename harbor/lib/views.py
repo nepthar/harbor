@@ -25,7 +25,6 @@ from harbor.lib.repo import MAIN_REPO, bound_apps
 from harbor.lib.run_layout import AppRunData, load_run_data
 from harbor.lib.stack import AppStack
 from harbor.lib.store import AppStore
-from harbor.lib.util import path_size
 
 
 def apps_view(ctx: HarborCtx) -> list[dict[str, Any]]:
@@ -446,20 +445,29 @@ def _volumes(
   stack: AppStack, run_data: AppRunData, ctx: HarborCtx
 ) -> list[dict[str, Any]]:
   binds = ctx.app_store(stack.app).list_binds()
+  # One read for every volume on this page. Sizes come from the gauges
+  # volume-metrics records, never from walking the tree here: a `bulk` volume
+  # or a bound media library is unbounded, and this runs on every page load.
+  gauges = ctx.read_gauges("volume_size_bytes/")
   volumes = []
   for name, volume in stack.volumes.items():
     link = run_data.volume_links.get(name)
     source = link.source if link else None
+    # Host volumes are gauged under the tag they are bound to, since two apps
+    # binding one host volume are looking at the same directory.
+    if volume.kind == "host":
+      tag = binds.get(name)
+      key = f"volume_size_bytes//host/{tag}" if tag else None
+    else:
+      key = f"volume_size_bytes/{stack.app}/{volume.kind}/{name}"
     volumes.append(
       {
         "name": name,
         "kind": volume.kind,
         "readonly": volume.readonly,
         "path": str(source) if source else None,
-        # `app` volumes live inside the run dir and are shipped with the happ,
-        # so their size is a property of the download, not of what the app has
-        # accumulated. Host volumes can be an entire media library.
-        "bytes": path_size(source) if source and volume.kind != "host" else None,
+        # None until volume-metrics has run over this volume at least once.
+        "bytes": _gauge_bytes(gauges, key) if key else None,
         # Only `host` volumes are bindable; the rest are harbor's to place.
         "bind": binds.get(name) if volume.kind == "host" else None,
       }

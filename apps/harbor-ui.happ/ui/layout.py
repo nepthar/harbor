@@ -13,7 +13,7 @@ NAV = (
   ("/snapshots", "Snapshots"),
   ("/volumes", "Volumes"),
   ("/catalog", "Repos"),
-  ("/logs", "Activity"),
+  ("/activity", "Activity"),
 )
 
 # The stylesheet lives in static/harbor.css, served like any other asset.

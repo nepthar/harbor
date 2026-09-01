@@ -720,6 +720,25 @@ def test_volumes_view_reports_ownership_and_use(harbor_env, client):
   assert media["media"]["bytes"] == 4
 
 
+def test_app_detail_volume_sizes_come_from_gauges(harbor_env, client):
+  """The detail page reads the metric; it never walks the tree per request."""
+  assert harbor_env.run("start", APP, "--set", "admin_user=root").returncode == 0
+  (harbor_env.volumes_root / "data" / APP / "config" / "db.txt").write_text("xyz")
+
+  # Before volume-metrics has run there is no gauge, and no size is invented.
+  before = {v["name"]: v for v in client.get(f"/apps/{APP}").json()["volumes"]}
+  assert before["config"]["bytes"] is None
+
+  record_volume_sizes(ctx())
+
+  after = {v["name"]: v for v in client.get(f"/apps/{APP}").json()["volumes"]}
+  assert after["config"]["bytes"] == 3
+  # `bin` is an app volume: shipped with the happ, under the run dir rather
+  # than a volume root, and gauged there so it is not the one hole left.
+  assert after["bin"]["kind"] == "app"
+  assert after["bin"]["bytes"] is not None
+
+
 def test_volume_data_outliving_its_manifest_still_shows_up(harbor_env, client):
   """Re-staging drops the link of a volume the manifest stopped declaring and
   leaves the data. Nothing else would ever tell you it is still on disk."""

@@ -11,7 +11,7 @@ from harbor.lib.util import Conn
 def register(subparsers) -> None:
   parser = subparsers.add_parser(
     "install",
-    help="Install a fetched happ so it can be started (accepts app id or .happ path)",
+    help="Install an application so it can be started (accepts app id or .happ path)",
   )
   parser.add_argument(
     "app",

@@ -37,7 +37,7 @@ server {
     listen 8081;
     location / {
         default_type text/plain;
-        return 200 'Hello from the server listening on the "main" route! This should be accessable by https://${HAPP_DOMAIN}\n';
+        return 200 'Hello from the server listening on the "main" route! This should be accessible by https://${HAPP_DOMAIN}\n';
     }
 }
 
@@ -45,7 +45,7 @@ server {
     listen 8082;
     location / {
         default_type text/plain;
-        return 200 'Hello from the secondary domain! This should be accessable at https://sub1-${HAPP_DOMAIN}\n';
+        return 200 'Hello from the secondary domain! This should be accessible at https://sub1-${HAPP_DOMAIN}\n';
     }
 }
 
@@ -53,7 +53,7 @@ server {
     listen 8083;
     location / {
         default_type text/plain;
-        return 200 'Hello from the route only accessable via host port\n';
+        return 200 'Hello from the route only accessible via host port\n';
     }
 }
 ```
