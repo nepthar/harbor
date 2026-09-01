@@ -95,11 +95,8 @@ def dashboard_get():
 
 @app.get("/apps")
 def apps_list():
-  version, err = harbor_version("/apps", "Apps")
-  if err:
-    return err
-  title, body, version = installed.list_page(version)
-  return html("/apps", title, body, version)
+  """The list moved onto the dashboard; old links land there rather than 404."""
+  return see("/")
 
 
 @app.get("/snapshots")

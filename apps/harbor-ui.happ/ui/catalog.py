@@ -185,29 +185,43 @@ def catalog_stale_note(app):
     return ""
   return (
     '<p class="stale">The manifest shown here has changed since this app '
-    "was installed. Re-install to pick up the new one.</p>"
+    "was installed. Reload to pick up the new one.</p>"
   )
 
 
 def catalog_actions(app):
-  """Install from this repo. Starting is the app page's job."""
+  """Install from this repo, or reload an app already installed from it.
+
+  The two differ where it matters: `install` re-stages and leaves whatever is
+  running on the old copy, so an installed app is offered `reload`, which puts
+  the new manifest in front of the containers actually serving it.
+  """
   if app.get("configured") is None:
     return ""
   app_id = app.get("app_id") or ""
   repo = app.get("repo") or ""
-  label = "Re-install" if app.get("state") == "installed" else "Install"
+  installed = app.get("state") == "installed"
   # Opening this card is the choice of repo, so it is always named.
   target = f"{app_id}@{repo}" if repo else app_id
+  if installed:
+    label, verb = "Reload", "reload"
+    desc = (
+      f"Rebuilds {app_id} from {repo}, restarting it if it is running. Any "
+      f"data and configuration it already has are kept.{warning_desc(app)}"
+    )
+  else:
+    label, verb = "Install", "install"
+    desc = (
+      f"Installs {app_id} from {repo} so it can be started. Any data and "
+      f"configuration it already has are kept.{warning_desc(app)}"
+    )
   return (
     '<div class="row actions">'
     + job_button(
       label,
-      "install",
+      verb,
       title=f"{label} {app.get('display_name') or app_id}",
-      desc=(
-        f"Installs {app_id} from {repo} so it can be started. Any data and "
-        f"configuration it already has are kept.{warning_desc(app)}"
-      ),
+      desc=desc,
       args={"app": target},
       done="/catalog",
     )

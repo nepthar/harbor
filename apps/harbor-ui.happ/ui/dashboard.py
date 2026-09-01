@@ -1,8 +1,9 @@
-"""The dashboard: host CPU and memory over the last hour."""
+"""The dashboard: host CPU and memory, and every installed app."""
 
 import json
 
 from api import api, where
+from installed import apps_table
 from layout import esc
 
 _CHART_JS = """
@@ -87,7 +88,9 @@ def page(version):
     '<div class="card pad"><h2>Host memory</h2>'
     '<div class="chart" id="chart-mem"></div></div>'
     "</div>"
-    f'<script type="application/json" id="host-metrics">{payload}</script>'
-    '<script src="/static/uplot-1.6.32/uPlot.iife.min.js"></script>'
+    + "<h2>Installed apps</h2>"
+    + apps_table(api("/apps").get("apps", []))
+    + f'<script type="application/json" id="host-metrics">{payload}</script>'
+    + '<script src="/static/uplot-1.6.32/uPlot.iife.min.js"></script>'
     + _CHART_JS
   )

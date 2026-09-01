@@ -11,7 +11,6 @@ from pathlib import Path
 NAV = (
   ("/", "Dashboard"),
   ("/snapshots", "Snapshots"),
-  ("/apps", "Apps"),
   ("/volumes", "Volumes"),
   ("/catalog", "Repos"),
   ("/logs", "Activity"),
@@ -51,8 +50,13 @@ def esc(value):
 
 
 def nav_active(path):
-  """Which nav entry a path belongs to. `/apps/<id>` keeps Apps lit, and the
-  Apps link still goes back to the list."""
+  """Which nav entry a path belongs to.
+
+  App detail pages have no nav entry of their own -- the list they belong to
+  lives on the dashboard now -- so they light Dashboard instead of nothing.
+  """
+  if path.startswith("/apps"):
+    return "/"
   for href, _ in NAV:
     if path == href or (href != "/" and path.startswith(href + "/")):
       return href

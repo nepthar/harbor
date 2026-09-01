@@ -1,4 +1,4 @@
-"""The Apps list and the single-app detail page."""
+"""The single-app detail page, and the apps table the dashboard shows."""
 
 from urllib.parse import quote, unquote
 
@@ -44,7 +44,7 @@ def apps_table(apps):
   if not apps:
     return (
       '<div class="card"><p class="empty">No apps installed yet. '
-      "Fetch one with <code>harbor fetch</code>.</p></div>"
+      'Pick one from <a href="/catalog">Repos</a>.</p></div>'
     )
   rows = []
   for app in apps:
@@ -168,9 +168,23 @@ def pending_card(app):
   if not app.get("config_pending"):
     return ""
   return (
-    '<div class="notice"><b>Restart to apply pending configuration changes.</b>'
+    '<div class="notice"><b>Reload to apply pending configuration changes.</b>'
     '<span class="sub">Settings and route assignments were changed after '
     "this app was started, so what is running does not have them yet.</span>"
+    "</div>"
+  )
+
+
+def stale_card(app):
+  """The bundle's manifest has moved on from the copy this app was installed
+  from -- the same drift the Repos page marks, said where it can be acted on."""
+  if not app.get("manifest_stale"):
+    return ""
+  return (
+    '<div class="notice"><b>Manifest differs, reload to pick up the latest '
+    "changes.</b>"
+    '<span class="sub">The manifest in the repo has changed since this app '
+    "was installed. What is installed keeps running until you reload.</span>"
     "</div>"
   )
 
@@ -405,6 +419,7 @@ def app_page(app, notice=""):
     notice + f'<div class="apphead">{status_cell(app)}'
     f'<p class="lede">{esc(app.get("description") or "")}</p>'
     f'<p class="muted mono">{esc(app["app_id"])}</p></div>'
+    + stale_card(app)
     + pending_card(app)
     + issues_card(app)
     + "<h2>Manifest</h2>"
@@ -425,13 +440,6 @@ def app_page(app, notice=""):
     + units_section(app)
     + job_modal()
   )
-
-
-def list_page(version):
-  try:
-    return "Apps", apps_table(api("/apps").get("apps", [])), version
-  except ApiError as e:
-    return "Apps", error_card(e), version
 
 
 def detail_page(app_id, version, notice=""):
