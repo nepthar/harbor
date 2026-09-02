@@ -1,5 +1,5 @@
 [app]
-version      = "0.5.0"
+version      = "0.6.0"
 display_name = "Harbor UI"
 description  = "Web interface for harbor, over the harbord admin socket"
 subdomain    = "harbor"
@@ -10,21 +10,25 @@ subdomain    = "harbor"
 # point this at `harbord --port N --host 0.0.0.0` instead. Empty means use the
 # socket, which is what a Linux host should do.
 api_address = { default = "", desc = "host:port of harbord, instead of the admin socket" }
+admin_pass  = { secret = true, desc = "password for the web ui" }
 
 [volumes]
 ui   = { kind = "app", src = "ui", desc = "The application"}
 venv = { kind = "temp", desc = "virtual env, dependencies, etc." }
+tls  = { kind = "data", desc = "self-signed cert for the https listener" }
 conn = { kind = "host", desc = "The $harbor/var/conn directory holding admin.sock" }
 
 [run.main]
 image   = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
 cmd     = ["/app/start.sh"]
-volumes = { ui = "/app", venv = "/venv", conn = "/harbor/conn" }
-routes  = { main = { port = "8080" } }
+volumes = { ui = "/app", venv = "/venv", tls = "/tls", conn = "/harbor/conn" }
+routes  = { main = { port = "8080", scheme = "https" } }
 
 [run.main.env]
 HARBOR_SOCKET            = "/harbor/conn/admin.sock"
 HARBOR_API               = "${api_address}"
+ADMIN_PASSWORD           = "${admin_pass}"
+TLS_DOMAIN               = "${happ.domain}"
 PORT                     = "8080"
 PYTHONUNBUFFERED         = "1"
 UV_PROJECT_ENVIRONMENT   = "/venv"

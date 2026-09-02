@@ -93,18 +93,32 @@ nav a {
 }
 nav a:hover { color: var(--fg); border-left-color: var(--line); }
 nav a.active { color: var(--coral); border-left-color: var(--coral); font-weight: 500; }
+.nav-out { margin-top: auto; }
+.nav-out button {
+  display: block; width: 100%; text-align: left;
+  padding: 5px 10px; margin-bottom: 1px;
+  background: none; border: 0; border-left: 2px solid transparent;
+  color: var(--muted); text-transform: lowercase; font: inherit; font-size: 14px;
+  cursor: pointer;
+}
+.nav-out button:hover { color: var(--fg); border-left-color: var(--line); }
+.nav-out .mark { display: none; }
+/* `.nav-out` above holds the auto margin that pushes both to the foot; two
+   auto margins in one column would split the slack between them instead. */
 .nav-toggle {
   background: none; color: var(--muted); border: 0; border-radius: var(--r);
-  padding: 6px; margin-top: auto; cursor: pointer; font: inherit; width: 100%;
+  padding: 6px; margin-top: 4px; cursor: pointer; font: inherit; width: 100%;
 }
 .nav-toggle:hover { color: var(--fg); background: var(--panel); }
 html.nav-collapsed nav { width: 52px; flex-basis: 52px; padding: calc(var(--chamfer) + 4px) 8px 16px; }
 html.nav-collapsed .brand { padding: 0 0 24px; }
 html.nav-collapsed .brand .name, html.nav-collapsed .brand .ver,
-html.nav-collapsed nav a .label { display: none; }
+html.nav-collapsed nav a .label, html.nav-collapsed .nav-out .label { display: none; }
 html.nav-collapsed .brand .mark { display: block; font-weight: 600; font-size: 17px; }
 html.nav-collapsed nav a { padding: 5px 0 5px 8px; }
 html.nav-collapsed nav a .mark { display: inline; }
+html.nav-collapsed .nav-out button { padding: 5px 0 5px 8px; }
+html.nav-collapsed .nav-out .mark { display: inline; }
 
 /* --- page head ---------------------------------------------------------- */
 main { flex: 1; padding: 28px 32px 48px; min-width: 0; overflow: auto; }
@@ -250,13 +264,14 @@ button.link {
 button.link:hover:not(:disabled) { color: var(--bad); border: 0; }
 /* The committing action -- one filled control per surface, warm with dark
    ink. Everything else on the page stays a hairline. */
-.cfg-save, #job-go, #ask-go,
+.cfg-save, #job-go, #ask-go, .signin-go,
 .app-card-head > .actions > .job-open:first-child {
   background: var(--coral); border-color: var(--coral); color: var(--ink);
   font-weight: 600;
 }
 .cfg-save:hover:not(:disabled),
 #job-go:hover:not(:disabled), #ask-go:hover:not(:disabled),
+.signin-go:hover:not(:disabled),
 .app-card-head > .actions > .job-open:first-child:hover:not(:disabled) {
   background: color-mix(in srgb, var(--coral) 86%, white);
   border-color: color-mix(in srgb, var(--coral) 86%, white); color: var(--ink);
@@ -470,6 +485,20 @@ details.reveal > summary:hover { color: var(--coral); }
 .hljs-string { color: var(--gold); }
 .hljs-number, .hljs-literal { color: var(--ok); }
 .hljs-punctuation { color: var(--muted); }
+
+/* --- the no-nav surface --------------------------------------------------
+   Sign in and rate limited: the frame, the rule under the wordmark, and the
+   one thing the page is for. Nothing to navigate to from either. */
+.app.solo { align-items: center; justify-content: center; padding: 24px; }
+.solo-box { width: 21rem; max-width: 100%; }
+.solo-box .head { margin-bottom: 20px; }
+.solo-box form { display: flex; flex-direction: column; gap: 8px; }
+.solo-box input[type=password] { width: 100%; padding: 8px 10px; }
+.solo-box .notice, .solo-box .error { margin-bottom: 0; }
+.signin-go { margin-top: 8px; align-self: flex-start; }
+.solo-hint {
+  margin: 20px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7;
+}
 
 /* --- charts --------------------------------------------------------------- */
 .charts { display: flex; gap: 20px; align-items: stretch; }

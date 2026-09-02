@@ -1,9 +1,6 @@
 """JSON projections of harbor state.
 
-The one rule here: **no secret ever leaves this module.** `AppRunData` carries
-resolved config values, secrets included, because compose needs them; what a
-viewer gets is a non-secret value or the fact that a secret is set. Shapes are
-shared by the daemon's HTTP API and the CLI's `--json` output.
+Note that secrets should never be rendered to the user through this module.
 """
 
 from __future__ import annotations

@@ -2,6 +2,8 @@
 
 Harbor is an opinionated runtime and management layer that makes container stacks (ie. docker compose) easy to distribute, inspect, snapshot, and manage. It was designed for folks who want to spend their time *using* their selfhosted apps instead of *sys-administering* them.
 
+Harbor asks you to compose stacks by defining *what* rather than *how*. For instance, you define that your app "needs a volume to store user data and a master password", rather than "mount /mnt/zxy at this point in my app and read secrets from this .env file".
+
 ## How does it work? 
 Harbor runs and manages "happs", that 1) define a `manifest.toml` which fully describes the container stack and 2) optionally contain any helper scripts or files. A happ is either a `<app_id>.happ` folder or, for small apps, a single `<app_id>.happ.md` markdown file with the same files embedded in code blocks (see [demo-markdown](demo-apps/demo-markdown.happ.md)). Here's a simplified example:
 

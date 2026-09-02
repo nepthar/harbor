@@ -1,9 +1,11 @@
 """HTTP front door: route a request to a page, or run a POST as a harbor verb."""
 
+import time
 from pathlib import Path
 from urllib.parse import quote, unquote
 
 import activity
+import auth
 import catalog
 import dashboard
 import installed
@@ -13,9 +15,11 @@ from api import ApiError, api
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from layout import error_card, esc, page
+from layout import RATE_LIMITED, error_card, esc, limited_page, page, signin_page
 
-app = FastAPI()
+# No OpenAPI: this app has no API consumers, and /docs would be one more
+# surface behind the same one password.
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 NO_STORE = {"Cache-Control": "no-store"}
 
@@ -79,6 +83,142 @@ def harbor_version(path, title):
 def field(form, name):
   value = form.get(name)
   return "" if value is None else str(value).strip()
+
+
+GENERAL_HINT = (
+  "Every request to this app shares one budget, so a browser left hammering it "
+  "holds everyone up. Wait a moment, then reload."
+)
+
+
+RELOAD = "harbor reload harbor-ui"
+
+
+def auth_hint(seconds):
+  return (
+    f"Ten sign-in attempts an hour, shared by everyone. Another opens in about "
+    f"{max(1, round(seconds / 60))} minutes, or clear the count by restarting:"
+  )
+
+
+def wants_html(request):
+  """A browser navigating or submitting a form, rather than the job modal's fetch.
+
+  The method cannot tell these apart -- the sign-in form is a POST too -- and
+  `fetch` asks for `*/*` where a browser names text/html.
+  """
+  return "text/html" in request.headers.get("accept", "")
+
+
+def limited(request, bucket, hint, command=""):
+  headers = {"Cache-Control": "no-store", "Retry-After": str(bucket.retry_after())}
+  if not wants_html(request):
+    return JSONResponse({"error": RATE_LIMITED}, 429, headers=headers)
+  return HTMLResponse(limited_page(hint, command), status_code=429, headers=headers)
+
+
+def safe_next(value):
+  """A path on this server, or `/`. Keeps `?next=` from becoming a redirector."""
+  return value if value.startswith("/") and not value.startswith("//") else "/"
+
+
+class Bucket:
+  """A fixed window: `limit` through it, then nothing until it turns over.
+
+  The window is anchored to the first request after an idle gap, not to the
+  wall clock, and a refusal does not move it -- so a flood costs the rest of
+  the current window and nothing beyond it.
+  """
+
+  def __init__(self, limit, window):
+    self.limit = limit
+    self.window = window
+    self.count = 0
+    self.reset_at = 0.0
+
+  def check(self):
+    now = time.monotonic()
+    if now - self.reset_at >= self.window:
+      self.count = 0
+      self.reset_at = now
+    self.count += 1
+    return self.count <= self.limit
+
+  def retry_after(self):
+    """Seconds left in the open window. Only meaningful just after a refusal."""
+    return max(1, int(self.reset_at + self.window - time.monotonic()) + 1)
+
+
+# One budget for the whole process, not one per client: behind a reverse proxy
+# every request arrives from the proxy's address. `/static` is outside both --
+# a refused stylesheet renders a page that looks broken rather than limited.
+_general = Bucket(10, 1.0)
+_auth = Bucket(10, 3600.0)
+
+
+@app.middleware("http")
+async def front_door(request: Request, call_next):
+  """Rate limit, then session. Everything reaches a page through here."""
+  path = request.url.path
+  if path.startswith("/static/"):
+    return await call_next(request)
+
+  # Everything answers to the general bucket; a sign-in attempt answers to both,
+  # so a flood spends itself on the per-second budget before it can eat far into
+  # the hour's worth of guesses.
+  if not _general.check():
+    return limited(request, _general, GENERAL_HINT)
+  if path == "/login" and request.method == "POST" and not _auth.check():
+    return limited(request, _auth, auth_hint(_auth.retry_after()), RELOAD)
+
+  if auth.is_open(path) or auth.valid(request.cookies.get(auth.COOKIE)):
+    return await call_next(request)
+  if not wants_html(request):
+    return JSONResponse({"error": "Session expired. Reload and sign in."}, 401)
+  # A form submission that lost its session cannot be replayed by landing on
+  # it, and `next` would point at a path with no GET. Send those to the door.
+  if request.method != "GET":
+    return see("/login")
+  here = path + (f"?{request.url.query}" if request.url.query else "")
+  return see(f"/login?next={quote(here)}")
+
+
+@app.get("/login")
+def login_get(next: str = "/"):
+  return HTMLResponse(signin_page(safe_next(next)), headers=NO_STORE)
+
+
+@app.post("/login")
+async def login_post(request: Request):
+  form = await request.form()
+  target = safe_next(field(form, "next"))
+  if not auth.check_password(field(form, "password")):
+    return HTMLResponse(
+      signin_page(target, "That is not the admin password."),
+      status_code=401,
+      headers=NO_STORE,
+    )
+  value, max_age = auth.issue()
+  response = see(target)
+  # SameSite=Lax is what keeps another site from POSTing a harbor verb with
+  # this cookie attached; there is no CSRF token anywhere in this app.
+  response.set_cookie(
+    auth.COOKIE,
+    value,
+    max_age=max_age,
+    path="/",
+    httponly=True,
+    samesite="lax",
+    secure=request.url.scheme == "https",
+  )
+  return response
+
+
+@app.post("/logout")
+def logout():
+  response = see("/login")
+  response.delete_cookie(auth.COOKIE, path="/")
+  return response
 
 
 @app.get("/")
