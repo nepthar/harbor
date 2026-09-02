@@ -11,9 +11,6 @@ Our feature roadmap, roughly in order of priority
 ### Systemd unit and one-command installer
 At the moment, `harbord` runs foreground-only. We need persistence and installability
 
-### harbor-ui authentication
-There is currently none, it's just an open web server
-
 ### live container logs
 `docker compose logs -f` in the webui
 
@@ -40,12 +37,6 @@ Allow happ developers to better focus on their own app by saying "Just give me a
 
 
 ## Other issues the LLMs find:
-- **The web UI has no authentication** (see item 2 above). Anything that can
-  open `admin.sock` runs every verb the API exposes. Fine over an ssh tunnel;
-  not fine on a public route. `HarborStore.set_token` already has expiring
-  tokens.  FastAPI also left `/docs`, `/redoc`,
-  and `/openapi.json` there.
-
 - **A `cmd` job holds the app lock for the command's whole run.** Harbor-wide
   ops can proceed; the same app cannot be staged, started, or stopped until it
   exits. Fine for the batch-style commands the UI is for; a long-runner still

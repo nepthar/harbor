@@ -12,10 +12,10 @@ considered. Reaching for a new value because this one spot wants it is what
 makes it look assembled. When a screen needs something the language doesn't
 have, say so and we'll add it to the language — don't add it locally.
 
-**Every style lives in the `STYLE` constant in `layout.py`.** No per-page
-`<style>` blocks, no inline `style=` attributes, no color or size literals in
-page modules. Pages emit semantic class names; if the class doesn't exist yet,
-add it to `STYLE`.
+**Every style lives in `static/harbor.css`.** No per-page `<style>` blocks, no
+inline `style=` attributes, no color or size literals in page modules. Pages
+emit semantic class names; if the class doesn't exist yet, add it to the
+stylesheet.
 
 **Build with the tokens, never past them.** If you type a hex value, a radius,
 or a font stack anywhere outside `:root`, you have gone around the design.
@@ -88,7 +88,7 @@ a third instance.
 
 **Layout rhythm comes off the scale**: 4 / 8 / 12 / 16 / 20 / 24 / 32 / 48,
 for margins between blocks, flex gaps and section spacing. Padding inside a
-control is optical, tuned once on the component in `STYLE` — read it off the
+control is optical, tuned once on the component in the stylesheet — read it off the
 existing rule rather than re-tuning it at the call site.
 
 ## Working on it
@@ -98,10 +98,14 @@ and it is the only way to see whether a change landed:
 
 ```
 HARBOR_ROOT=$HOME/harbor uv run --extra daemon harbord --port 9797 --host 127.0.0.1
-cd apps/harbor-ui.happ/ui && HARBOR_API=127.0.0.1:9797 \
+cd apps/harbor-ui.happ/ui && HARBOR_API=127.0.0.1:9797 ADMIN_PASSWORD=dev \
   ./.venv/bin/uvicorn server:app --port 9798 --reload
 ```
 
+`ADMIN_PASSWORD` is not optional — `auth.py` refuses to import without one.
+Plain http is fine here: the session cookie only asks to be `Secure` when the
+request that minted it arrived over TLS, which in the container it does.
+
 Then look at every page you touched — `/`, `/apps`, `/apps/<id>`, `/volumes`,
-`/catalog`, `/logs`, `/snapshots` — plus the collapsed nav and one modal.
-Layout regressions here are invisible in a diff and obvious on screen.
+`/catalog`, `/logs`, `/snapshots`, `/login` — plus the collapsed nav and one
+modal. Layout regressions here are invisible in a diff and obvious on screen.

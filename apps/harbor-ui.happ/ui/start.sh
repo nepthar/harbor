@@ -3,4 +3,6 @@
 set -eu
 
 uv sync --frozen --no-dev --project /app
-exec /venv/bin/uvicorn server:app --host 0.0.0.0 --port "$PORT" --app-dir /app
+/venv/bin/python /app/tls.py /tls
+exec /venv/bin/uvicorn server:app --host 0.0.0.0 --port "$PORT" --app-dir /app \
+  --ssl-certfile /tls/cert.pem --ssl-keyfile /tls/key.pem

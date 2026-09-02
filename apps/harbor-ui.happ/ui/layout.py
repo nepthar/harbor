@@ -63,6 +63,20 @@ def nav_active(path):
   return None
 
 
+def _head(title):
+  """Everything from `<!doctype>` to `<body>`. Shared by every page."""
+  return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(title)} · harbor</title>
+<script>if (localStorage.getItem("harbor-nav") === "collapsed") document.documentElement.classList.add("nav-collapsed");</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{STYLE_HREF}"></head>
+<body>"""
+
+
 def page(path, title, body, version="", actions="", subtitle=""):
   active = nav_active(path)
   links = "".join(
@@ -80,20 +94,16 @@ def page(path, title, body, version="", actions="", subtitle=""):
     else f'<a href="{esc(path)}">Refresh</a>'
   )
   lede = f'<p class="head-sub">{esc(subtitle)}</p>' if subtitle else ""
-  return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(title)} · harbor</title>
-<script>if (localStorage.getItem("harbor-nav") === "collapsed") document.documentElement.classList.add("nav-collapsed");</script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{STYLE_HREF}"></head>
-<body>
+  return f"""{_head(title)}
 <div class="app">
 <nav>
   <div class="brand"><span class="name">Harbor</span><span class="mark" aria-hidden="true">H</span>{sub}</div>
   {links}
+  <form class="nav-out" method="post" action="/logout">
+    <button type="submit" title="Sign out">
+      <span class="label">sign out</span><span class="mark" aria-hidden="true">⏻</span>
+    </button>
+  </form>
   <button type="button" class="nav-toggle" aria-label="Collapse sidebar">‹</button>
 </nav>
 <main>
@@ -573,3 +583,48 @@ def kv_table(pairs):
     for k, v in pairs
   )
   return f'<div class="scroll"><table class="kv"><tbody>{rows}</tbody></table></div>'
+
+
+RATE_LIMITED = "Rate limiter hit - something is hitting this page too often."
+
+
+def _solo(title, sub, body):
+  """A page with no nav: the frame, the rule under the wordmark, and one thing."""
+  return f"""{_head(title)}
+<div class="app solo">
+<div class="solo-box">
+  <div class="head"><h1>Harbor</h1><p class="head-sub">{esc(sub)}</p></div>
+  {body}
+</div>
+</div>
+</body></html>"""
+
+
+def signin_page(next_to, error=""):
+  """The password prompt. One field, and the one control you came for."""
+  notice = f'<div class="error"><p>{esc(error)}</p></div>' if error else ""
+  return _solo(
+    "Sign in",
+    "sign in",
+    f"""{notice}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{esc(next_to)}">
+    <label for="pw">Admin password</label>
+    <input id="pw" type="password" name="password" placeholder="password or token"
+      autocomplete="current-password" autofocus required>
+    <button type="submit" class="signin-go">Sign in</button>
+  </form>
+  <p class="solo-hint">Set or reset it with
+    <code>harbor config harbor-ui --set admin_pass=&lt;password&gt;</code></p>""",
+  )
+
+
+def limited_page(hint, command=""):
+  """What a full bucket serves. No reload button: that is more of the problem."""
+  fix = f"<br><code>{esc(command)}</code>" if command else ""
+  return _solo(
+    "Rate limited",
+    "rate limited",
+    f"""<div class="notice contested"><p>{esc(RATE_LIMITED)}</p></div>
+  <p class="solo-hint">{esc(hint)}{fix}</p>""",
+  )
