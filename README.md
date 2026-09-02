@@ -60,6 +60,9 @@ Prerequisites: `docker`, `docker compose plugin`, `uv` (and therefore `python`)
 and `demos`, small happs that each demonstrate one feature. Remove the second
 once you are done exploring: `harbor repo remove demos`.
 
+That install carries both commands: `harbor`, the CLI, and `harbord`, the
+admin API the web UI talks to.
+
 ## Why harbor?
 
 - **Configure your system layout once, install any app**

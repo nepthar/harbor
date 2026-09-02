@@ -15,21 +15,14 @@ import socket
 import sys
 from pathlib import Path
 
+import uvicorn
+
 from harbor import VERSION
+from harbor.daemon.api import create_app
 from harbor.jobs import JobRunner
 from harbor.lib.config import Config, load_config
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.util import refuse_root
-
-try:
-  import uvicorn
-
-  from harbor.daemon.api import create_app
-except ImportError as e:  # pragma: no cover - depends on how harbor was installed
-  raise ImportError(
-    "harbord needs starlette and uvicorn, which a plain harbor install does "
-    "not pull in. Install them with: uv tool install 'harbor[daemon]'"
-  ) from e
 
 logger = logging.getLogger("harbord")
 

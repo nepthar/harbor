@@ -97,7 +97,7 @@ Run it against your real harbor rather than guessing — it takes two commands
 and it is the only way to see whether a change landed:
 
 ```
-HARBOR_ROOT=$HOME/harbor uv run --extra daemon harbord --port 9797 --host 127.0.0.1
+HARBOR_ROOT=$HOME/harbor uv run harbord --port 9797 --host 127.0.0.1
 cd apps/harbor-ui.happ/ui && HARBOR_API=127.0.0.1:9797 ADMIN_PASSWORD=dev \
   ./.venv/bin/uvicorn server:app --port 9798 --reload
 ```

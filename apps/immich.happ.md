@@ -1,15 +1,13 @@
 # Immich - Photo and Video Storage, Sharing, and Backup
 
 > Immich is a self-hosted photo and video management solution. Easily back up,
-> organize, and share your photos. ~ https://immich.app
+> organize, and share your photos. ~ [https://immich.app](https://immich.app)
 
 No hardware acceleration yet.
 
 ## Installing
 
-The photo library has to be a directory on the host first — harbor binds a
-path, it does not speak NFS. Mount the share through fstab, autofs, or a
-systemd `.mount` unit, declare it in config.toml, then bind:
+The photo library has to be a directory on the host first — harbor binds a path, it does not speak NFS. Mount the share through fstab, autofs, or a systemd `.mount` unit, declare it in config.toml, then bind:
 
 ```toml
 [host_volume.photos]
@@ -21,6 +19,7 @@ harbor start immich --bind photos=photos
 ```
 
 ## manifest.toml
+
 ```toml happ_path="manifest.toml"
 [app]
 version      = "3.1.0"
@@ -76,3 +75,4 @@ POSTGRES_USER        = "postgres"
 POSTGRES_DB          = "immich"
 POSTGRES_INITDB_ARGS = "--data-checksums"
 ```
+
