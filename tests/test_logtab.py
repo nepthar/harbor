@@ -1,4 +1,4 @@
-"""Tests for LogTab, the append-only key/value log backing the harbor store.
+"""Tests for LogTab, the append-only key/value log backing the kelso store.
 
 LogTab is a stable, low-level component; these tests pin down its full contract:
 round-trips, prefix/suffix scans, prefix-clear vs exact-delete, append-only
@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from harbor.lib.logtab import LogTab
+from kelso.lib.logtab import LogTab
 
 
 @pytest.fixture
@@ -58,8 +58,8 @@ def test_write_uses_atomic_append_and_retries_short_write(
     size = 4 if len(requested) == 1 else len(data)
     return real_write(fd, data[:size])
 
-  monkeypatch.setattr("harbor.lib.logtab.os.open", recording_open)
-  monkeypatch.setattr("harbor.lib.logtab.os.write", short_first_write)
+  monkeypatch.setattr("kelso.lib.logtab.os.open", recording_open)
+  monkeypatch.setattr("kelso.lib.logtab.os.write", short_first_write)
 
   with caplog.at_level(logging.ERROR):
     tab.write("a", "value")

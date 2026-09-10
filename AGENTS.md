@@ -1,4 +1,4 @@
-# Harbor
+# Kelso
 
 Container stack management for self-hosters. **Pre-beta: one operator, no users
 to migrate, no backwards compatibility.** Delete old code paths rather than
@@ -52,9 +52,9 @@ this size. Handing over a document produces a document's worth of code.
   it deliberately doesn't. Not a design record, not history.
 - Errors are `ValueError` / `RuntimeError` whose message names the fix.
 - Tests must never reach the real docker daemon — `tests/conftest.py` enforces
-  this. Test doubles live in `tests/`, never in `harbor/`.
+  this. Test doubles live in `tests/`, never in `kelso/`.
 - The suite runs in ~65s and commands run in-process; see `docs/testing.md`
   before adding a test that spawns a subprocess or waits on a timeout. What
   cannot be tested without a real daemon is a live test, listed in that doc.
-- Run `uv run ruff check harbor tests`, `uv run ruff format --check harbor tests`,
+- Run `uv run ruff check kelso tests`, `uv run ruff format --check kelso tests`,
   and `uv run pytest` before reporting done. Don't report unrun tests as passing.

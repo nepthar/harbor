@@ -1,0 +1,476 @@
+from __future__ import annotations
+
+import os
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+from kelso.lib.apps import AppID, record_app_action
+from kelso.lib.bundle import app_id_from_path, is_pathlike, load_bundle
+from kelso.lib.kelso import KelsoCtx, StagedAppPaths, ambiguity_message
+from kelso.lib.lifecycle._common import logger, managed_volume_dirs
+from kelso.lib.run_layout import (
+  AppRunData,
+  AssignedRoute,
+  load_run_data,
+  make_compose_dict,
+  resolved_subdomain,
+)
+from kelso.lib.secrets import SecretGenerationError, generate_secret
+from kelso.lib.stack import AppStack
+from kelso.lib.util import now_ts, validate_identifier
+
+# Scratch names used while swapping in a new bundle copy. Both are inside the run
+# dir so the swap is a rename on one filesystem rather than a second copy.
+INCOMING = ".bundle.incoming"
+OUTGOING = ".bundle.outgoing"
+
+
+def _has_volume_data(app_id: AppID, ctx: KelsoCtx) -> bool:
+  """Whether any managed volume holds something an app could depend on."""
+  for app_dir in managed_volume_dirs(app_id, ctx):
+    if not app_dir.is_dir():
+      continue
+    if any(not entry.is_dir() for entry in app_dir.rglob("*")):
+      return True
+  return False
+
+
+def _stage_incoming(source: Path, run_path: Path) -> Path:
+  """Extract the bundle into ``run/<id>/.bundle.incoming`` (not yet live)."""
+  bundle = load_bundle(source)
+  incoming = run_path / INCOMING
+  outgoing = run_path / OUTGOING
+  for scratch in (incoming, outgoing):
+    if scratch.exists():
+      shutil.rmtree(scratch)
+
+  bundle.extract_to(incoming)
+  return incoming
+
+
+def _commit_incoming(paths: StagedAppPaths, incoming: Path) -> None:
+  """Promote a validated incoming copy to ``bundle/``."""
+  outgoing = paths.run_path / OUTGOING
+  bundle = paths.bundle_path
+  if bundle.exists():
+    os.replace(bundle, outgoing)
+  os.replace(incoming, bundle)
+  if outgoing.exists():
+    shutil.rmtree(outgoing)
+
+
+def _discard_incoming(run_path: Path) -> None:
+  """Drop a failed incoming copy; remove an empty run dir left behind."""
+  incoming = run_path / INCOMING
+  if incoming.exists():
+    shutil.rmtree(incoming)
+  if run_path.is_dir() and not any(run_path.iterdir()):
+    run_path.rmdir()
+
+
+def _generate_missing_config(stack: AppStack, ctx: KelsoCtx) -> None:
+  """Fill in defaults and generate secrets for all keys possible"""
+  store = ctx.app_store(stack.app)
+  for config_name, config in stack.config.items():
+    if config.default is None or store.has_config(config_name):
+      continue
+    try:
+      value = generate_secret(config.default) if config.secret else config.default
+      store.set_config(config_name, config.secret, value)
+    except SecretGenerationError as e:
+      logger.error(f"{config_name}: {e}")
+
+
+def _clear_and_reallocate_ports(stack: AppStack, ctx: KelsoCtx) -> None:
+  """Claim pinned host ports and allocate free ones in kelsodb."""
+  if stack.network_mode == "host" or not stack.routes:
+    return
+
+  app_subdomain = resolved_subdomain(stack, ctx)
+  if not app_subdomain:
+    raise ValueError(f"App {stack.app} declares routes but has no [app].subdomain")
+
+  hdb = ctx.kelso_db
+  hdb.clear_routes(stack.app)
+  for route_name, route in stack.routes.items():
+    if route.needs_allocation:
+      host_port = hdb.next_free_port()
+    else:
+      host_port = route.host_port
+
+    assigned = AssignedRoute(
+      name=route_name,
+      subdomain=route.subdomain(app_subdomain),
+      run_unit_name=route.run_unit_name,
+      host_port=host_port,
+      container_port=route.container_port,
+      proto=route.proto,
+      scheme=route.scheme,
+    )
+
+    hdb.set_route(stack.app, route_name, assigned.__dict__)
+
+
+def _apply_default_route_assignments(stack: AppStack, ctx: KelsoCtx) -> None:
+  """Write default_route_provider for non-private routes with no assignment yet."""
+  store = ctx.app_store(stack.app)
+  default = ctx.config.default_route_provider
+  for route_name, route in stack.routes.items():
+    if store.has_route_assignment(route_name):
+      continue
+    if not route.private:
+      store.set_route_assignment(route_name, default)
+
+
+def _existing_volume_kinds(volumes_root: Path) -> dict[str, str]:
+  """volume name -> kind, read back from the links a previous stage left."""
+  found: dict[str, str] = {}
+  if not volumes_root.is_dir():
+    return found
+  for kind_dir in volumes_root.iterdir():
+    if not kind_dir.is_dir():
+      continue
+    for link in kind_dir.iterdir():
+      found[link.name] = kind_dir.name
+  return found
+
+
+def _make_link(destination: Path, target: Path) -> None:
+  destination.parent.mkdir(parents=True, exist_ok=True)
+  destination.symlink_to(target)
+
+
+def _rebuild_volume_links(stack: AppStack, run_data: AppRunData) -> tuple[str, ...]:
+  """Point `volumes/<kind>/<name>` at the current manifest's volumes.
+
+  host/ volumes are linked at run time instead: they can change between install
+  and start.
+  """
+  volumes_root = run_data.run_path / "volumes"
+  existing = _existing_volume_kinds(volumes_root)
+
+  for name, kind in existing.items():
+    volume = stack.volumes.get(name)
+    if volume is not None and volume.kind != kind:
+      raise ValueError(
+        f"App {stack.app} - volume {name} changed kind from {kind} to "
+        f"{volume.kind}, but its data lives under the {kind} root. Move it by "
+        f"hand, or run `kelso rm {stack.app}` to delete it."
+      )
+
+  # Only links live here; the data they point at is outside the run dir, or (for
+  # app volumes) under bundle/. So the whole tree can be torn down and rebuilt.
+  if volumes_root.exists():
+    shutil.rmtree(volumes_root)
+
+  for volume_name, link in run_data.volume_links.items():
+    if stack.volumes[volume_name].kind == "host":
+      continue
+    logger.debug("volume %s: %s -> %s", volume_name, link.destination, link.target)
+    if link.mkdir:
+      link.source.mkdir(parents=True, exist_ok=True)
+    if not link.source.exists():
+      raise ValueError(f"volume {volume_name} source does not exist: {link.source}")
+    _make_link(link.destination, link.target)
+
+  return tuple(sorted(name for name in existing if name not in stack.volumes))
+
+
+def link_host_volumes(stack: AppStack, run_data: AppRunData) -> None:
+  """Build `volumes/host/` from the binds on file. Clobber existing links."""
+  unlink_host_volumes(run_data.run_path)
+  for volume_name, link in run_data.volume_links.items():
+    if stack.volumes[volume_name].kind != "host":
+      continue
+    logger.debug("host volume %s: %s -> %s", volume_name, link.destination, link.target)
+    _make_link(link.destination, link.target)
+
+
+def unlink_host_volumes(run_path: Path) -> None:
+  """Drop `volumes/host/`. Only links are in there."""
+  host_root = run_path / "volumes" / "host"
+  if host_root.exists():
+    shutil.rmtree(host_root)
+
+
+@dataclass(frozen=True)
+class StageSuccess:
+  stack: AppStack
+  run_data: AppRunData
+  dropped_volumes: tuple[str, ...] = ()
+
+
+def materialize(stack: AppStack, ctx: KelsoCtx) -> tuple[AppRunData, tuple[str, ...]]:
+  """Rebuild everything derived from the bundle now sitting in the run dir."""
+  _clear_and_reallocate_ports(stack, ctx)
+
+  run_data = load_run_data(stack, ctx)
+  if run_data.stage_blockers:
+    raise ValueError("\n".join(i.problem for i in run_data.stage_blockers))
+
+  dropped = _rebuild_volume_links(stack, run_data)
+  with open(ctx.staged_paths(stack.app).compose_path, "w") as f:
+    yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
+
+  return run_data, dropped
+
+
+# Lives in the app's config store, so `--purge` clears it and nothing else does.
+BOUND_TO_META = "bound_to"
+
+
+@dataclass(frozen=True)
+class StagingTarget:
+  """What a `stage`/`start` argument named, and where it came from."""
+
+  app_id: AppID
+  # None when the argument was a bare id; `ctx.bundle_path` answers that.
+  bundle: Path | None
+  # None for a bundle named by path, which belongs to no repo.
+  repo: str | None
+
+  @property
+  def bound_to(self) -> str | None:
+    """The source to record, or None to leave the recorded one alone."""
+    if self.repo:
+      return f"repo {self.repo}"
+    return str(self.bundle) if self.bundle else None
+
+
+def bound_to(app: AppID | str, ctx: KelsoCtx) -> str | None:
+  """What an app is recorded as installed from, or None if nothing is."""
+  if not ctx.config.app_config_path(app).is_file():
+    return None
+  return ctx.app_store(app).get_meta(BOUND_TO_META)
+
+
+def staging_target(ctx: KelsoCtx, target: str, *, force: bool = False) -> StagingTarget:
+  """Resolve a stage/start argument -- a path, `<id>@<repo>`, or a bare id.
+
+  Raises ValueError if the target is ambiguous, or if it would install over an
+  id already bound to another source and `force` is not set.
+  """
+  if is_pathlike(target):
+    bundle = Path(target).expanduser().resolve()
+    resolved = StagingTarget(app_id_from_path(bundle), bundle, None)
+  else:
+    name, _, repo = target.partition("@")
+    resolved = _from_catalog(ctx, name, repo or None)
+
+  _check_binding(ctx, resolved, force=force)
+  return resolved
+
+
+def _from_catalog(ctx: KelsoCtx, name: str, repo: str | None) -> StagingTarget:
+  app = ctx.resolve_app(name)
+  entries = ctx.app_catalog().get(str(app), ())
+
+  if repo is not None:
+    for entry in entries:
+      if entry.source == repo:
+        return StagingTarget(app, entry.path, repo)
+    carried = ", ".join(sorted(entry.source for entry in entries))
+    raise ValueError(
+      f"Repo {repo!r} does not carry {app}."
+      + (f" It is in: {carried}." if carried else " No repo carries it.")
+    )
+
+  if not entries:
+    # No catalog entry but a staged copy: `start` runs that copy as-is.
+    if ctx.is_staged(app):
+      return StagingTarget(app, None, None)
+    raise ValueError(f'No app found for "{app}"')
+  if len(entries) > 1:
+    raise ValueError(ambiguity_message(app, entries))
+  return StagingTarget(app, entries[0].path, entries[0].source)
+
+
+def _check_binding(ctx: KelsoCtx, target: StagingTarget, *, force: bool) -> None:
+  """Refuse an id whose surviving config and secrets were made for another source."""
+  was = bound_to(target.app_id, ctx)
+  now = target.bound_to
+  if force or not was or not now or was == now:
+    return
+  raise ValueError(
+    f"{target.app_id} was previously installed from {was}, and this would "
+    f"install it from {now}.\n"
+    f"Its configuration, secrets and volume data were made for the old source "
+    f"and would carry over.\n"
+    f"Pass --force if you know that is fine. Otherwise remove it completely "
+    f"with `kelso uninstall --purge {target.app_id}` and install again."
+  )
+
+
+def apply_config_sets(
+  stack: AppStack, sets: list[tuple[str, str]], ctx: KelsoCtx
+) -> None:
+  store = ctx.app_store(stack.app)
+  running = False
+  try:
+    running = ctx.run_state(stack.app).running_count > 0
+  except ValueError:
+    pass
+
+  for name, value in sets:
+    config = stack.config.get(name)
+    if not config:
+      raise ValueError(f"No config {name} in {stack.app}'s manifest")
+    if not value:
+      raise ValueError(f"Empty value for config {name!r}")
+    if name == "subdomain":
+      try:
+        validate_identifier(value)
+      except ValueError:
+        raise ValueError(
+          f"subdomain {value!r} is not a valid identifier "
+          f"(letters, digits, _ and -; no periods)"
+        ) from None
+      if running:
+        raise ValueError(
+          f"App {stack.app} is running; run `kelso stop {stack.app}` first"
+        )
+    store.set_config(name, config.secret, value)
+    if name == "subdomain":
+      _relabel_routes(stack, value, ctx)
+
+
+def _relabel_routes(stack: AppStack, app_subdomain: str, ctx: KelsoCtx) -> None:
+  """Rewrite allocated route labels to match a new app subdomain."""
+  hdb = ctx.kelso_db
+  for name, entry in hdb.list_routes(stack.app).items():
+    route = stack.routes.get(name)
+    if route is None:
+      continue
+    updated = dict(entry)
+    updated["subdomain"] = route.subdomain(app_subdomain)
+    hdb.set_route(stack.app, name, updated)
+
+  compose_path = ctx.staged_paths(stack.app).compose_path
+  if compose_path.is_file():
+    run_data = load_run_data(stack, ctx)
+    with open(compose_path, "w") as f:
+      yaml.safe_dump(make_compose_dict(stack, run_data), f, sort_keys=False)
+
+
+def bind(stack: AppStack, volname: str, host_volume_tag: str, ctx: KelsoCtx) -> None:
+  """Record a host-volume bind against the staged bundle."""
+  app = stack.app
+
+  if volname not in stack.volumes:
+    raise ValueError(f"App {app} - no such volume {volname}")
+
+  vol = stack.volumes[volname]
+  if vol.kind != "host":
+    raise ValueError(
+      f"App {app} - volume {volname}, kind={vol.kind}, only host volumes can be bound"
+    )
+
+  host_vol = ctx.config.host_volumes.get(host_volume_tag)
+  if host_vol is None:
+    known = ", ".join(sorted(ctx.config.host_volumes)) or "(none)"
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} is not configured; "
+      f"known tags: {known}. Add [host_volume.{host_volume_tag}] to config.toml"
+    )
+
+  if host_vol.readonly and not vol.readonly:
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} is readonly, but volume "
+      f"{volname} is writable; declare it with readonly = true, or bind to a "
+      f"writable host volume"
+    )
+
+  if not host_vol.path.exists():
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} path does not exist: "
+      f"{host_vol.path}"
+    )
+
+  if host_vol.require_mount and not host_vol.path.is_mount():
+    raise ValueError(
+      f"App {app} - host volume {host_volume_tag!r} is not mounted at "
+      f"{host_vol.path}; mount the share, or clear require_mount on "
+      f"[host_volume.{host_volume_tag}]"
+    )
+
+  ctx.app_store(app).set_bind(volname, host_volume_tag)
+
+
+def stage(
+  app: AppID,
+  bundle: Path,
+  ctx: KelsoCtx,
+  *,
+  sets: list[tuple[str, str]] | None = None,
+  binds: list[tuple[str, str]] | None = None,
+  bound: str | None = None,
+) -> StageSuccess:
+  """Install `bundle` into `run/<id>/` without starting it.
+
+  `bound` is the source to record; None leaves the recorded one alone.
+  """
+  paths = ctx.staged_paths(app)
+
+  try:
+    running_count = ctx.run_state(app).running_count
+  except ValueError:
+    running_count = 0
+  if running_count:
+    raise ValueError(
+      f"App {app} has {running_count} running Kelso-labeled container(s); "
+      f"run `kelso stop {app}` first"
+    )
+
+  # Config gone while the data it belongs to is still here means someone
+  # deleted the logtab by hand. Staging would generate fresh `auto` secrets
+  # against data expecting the old ones, so refuse instead.
+  config_path = ctx.config.app_config_path(app)
+  if not config_path.is_file() and _has_volume_data(app, ctx):
+    raise ValueError(
+      f"App {app} has volume data but no config at {config_path}. "
+      f"Staging would generate new secrets that its existing data does not "
+      f"expect. Restore from a snapshot, or run "
+      f"`kelso rm {app}` to delete its config and data together."
+    )
+
+  # Extract the bundle under run/ first, validate *that* copy, then promote it
+  # to bundle/. AppStack always comes from the run tree, never the bundle.
+  run_path = paths.run_path
+  run_path.mkdir(parents=True, exist_ok=True)
+  try:
+    incoming = _stage_incoming(bundle, run_path)
+    stack = AppStack.from_file(incoming / "manifest.toml", app)
+  except Exception:
+    _discard_incoming(run_path)
+    raise
+  _commit_incoming(paths, incoming)
+
+  store = ctx.app_store(app)
+  store.set_meta("origin", str(bundle))
+  if bound is not None:
+    store.set_meta(BOUND_TO_META, bound)
+
+  # Apply configuration sets if we're given them
+  if sets:
+    apply_config_sets(stack, sets, ctx)
+
+  # Apply binds, if we're given them
+  if binds:
+    for volname, host_volume_tag in binds:
+      bind(stack, volname, host_volume_tag, ctx)
+
+  _generate_missing_config(stack, ctx)
+  _apply_default_route_assignments(stack, ctx)
+
+  try:
+    run_data, dropped = materialize(stack, ctx)
+  except Exception:
+    record_app_action("install-failed", app, ctx)
+    raise
+
+  store.set_meta("installed_at", now_ts())
+  record_app_action("installed", app, ctx)
+  return StageSuccess(stack, run_data, dropped)

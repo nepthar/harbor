@@ -1,0 +1,13 @@
+# Fixture bundle: a run unit that requests a host port (host omitted -> auto-allocated).
+
+[app]
+version      = "0.1.0"
+display_name = "Ports Demo"
+description  = "Port allocation fixture"
+runtime      = "image"
+subdomain    = "ports"
+
+[run.main]
+image  = "alpine:latest"
+cmd    = ["/bin/sh", "-c", "sleep infinity"]
+routes = { web = { port = "8080" }, admin = { port = "9000:80" } }

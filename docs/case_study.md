@@ -1,31 +1,31 @@
-# Harbor App Case Study - Unifi Network Application
+# Kelso App Case Study - Unifi Network Application
 
-In this case study, we walk through how I built the `unifi-network-application.happ` in about half an hour using Linuxserver.io's documentation and sample docker stack.
+In this case study, we walk through how I built the `unifi-network-application.klso` in about half an hour using Linuxserver.io's documentation and sample docker stack.
 
 By following along, you will see:
 
 - How habor apps enable distribution of stacks of containers
-- How to translate docker compose stacks into harbor's world
+- How to translate docker compose stacks into kelso's world
 - How to provision volumes, secrets, and routes
 
 ## Goal - Run Unifi's Network Application so you can manage your wifi
 
 The Unifi Network Application is a piece of software that Ubiquity developed to manage their wifi access points. If you fully buy into their hardware stack, this will run on their hardware. However, they also provide it in a format that can be run on your own hardware (like a raspberry pi, for instance).
 
-Linuxserver.io takes this software, packages it, and distributes it in a container that we can run. However, their instructions require a fair amount of setup and knowledge to actually stand up a robust, "home-production-ready" deployment. The harbor ecosystem solves this for us.
+Linuxserver.io takes this software, packages it, and distributes it in a container that we can run. However, their instructions require a fair amount of setup and knowledge to actually stand up a robust, "home-production-ready" deployment. The kelso ecosystem solves this for us.
 
-Feel free to skip to the completed harbor app at [apps/unifi-network-application.happ](../apps/unifi-network-application.happ).
+Feel free to skip to the completed kelso app at [apps/unifi-network-application.klso](../apps/unifi-network-application.klso).
 
 
-## Step 1. Make the bare harbor app:
-Let's start with a barebones app containing what we already know, placed in our `$harbor/repos/main` folder:
+## Step 1. Make the bare kelso app:
+Let's start with a barebones app containing what we already know, placed in our `$kelso/repos/main` folder:
 ```
-# unifi-network-app.happ/manifest.toml
+# unifi-network-app.klso/manifest.toml
 [app]
 version = "0.1.0"
 author  = "Demo Author"
 description = "The unifi network application"
-subdomain = "unifi-admin" # I want this on my network as "https://unifi-admin.<harbor-domain>"
+subdomain = "unifi-admin" # I want this on my network as "https://unifi-admin.<kelso-domain>"
 
 [config]
 # There will probably be config, not sure what yet
@@ -51,7 +51,7 @@ The setup instructions mention that this image expects a mongodb instance, prope
 
 > MongoDB >4.4 on X86_64 Hardware needs a CPU with AVX support. Some lower end Intel CPU models like Celeron and Pentium (before Tiger-Lake) more Details: Advanced Vector Extensions - Wikipedia don't support AVX, but you can still use MongoDB 4.4.
 
-It looks like we're going to have two "run units" in this harbor app, and probably two separate volumes, one for each. Let's update the compose file. The instructions suggest using the "official mongodb image"
+It looks like we're going to have two "run units" in this kelso app, and probably two separate volumes, one for each. Let's update the compose file. The instructions suggest using the "official mongodb image"
 
 **Thought**: maybe we should pin versions since it seems like there's some limitations on which versions of the app work with which versions of mongodb. Let's use latest for the application, and pick the most recent mongodb 8 release.
 
@@ -101,9 +101,9 @@ db.createUser({
 EOF
 ```
 
-Hm, that seems important to get right. Let's turn that into a file, `init-mongo.sh` as they suggest and distribute it with our happ. We know we're going to have to add that to our mongo-db run unit. Let's make a new file in our happ: `unifi-network-app.happ/init-mongo.sh` and paste those contents in there directly. The instructions say to mount it at "/docker-entrypoint-initdb.d/init-mongo.sh:ro". Great, now we've got all of the mongo volumes. Let's update the manifest again with the new information.
+Hm, that seems important to get right. Let's turn that into a file, `init-mongo.sh` as they suggest and distribute it with our bundle. We know we're going to have to add that to our mongo-db run unit. Let's make a new file in our bundle: `unifi-network-app.klso/init-mongo.sh` and paste those contents in there directly. The instructions say to mount it at "/docker-entrypoint-initdb.d/init-mongo.sh:ro". Great, now we've got all of the mongo volumes. Let's update the manifest again with the new information.
 
-We're provisioning a new type of volume - an `app` volume. `app` volumes come bundled in the .happ folder. They require a `src` field which is a relative path to a file or folder. `app` volumes are readonly.
+We're provisioning a new type of volume - an `app` volume. `app` volumes come bundled in the .klso folder. They require a `src` field which is a relative path to a file or folder. `app` volumes are readonly.
 
 Here are the updated sections:
 
@@ -256,7 +256,7 @@ MONGO_TLS = ""
 
 ## Step 4. Problems with raspberry Pi
 
-When we try to run this on a raspberry pi with `harbor start unifi-network-app`, we notice it doesn't seem to be working. Checking the logs, we find that the database uses extensions that our version of arm on the raspberry pi doesn't support. No problem, we can walk back the version of mongo until we find one that works. Between each test, we call `harbor reset unifi-network-app` to clear out all data and "start fresh" -- it keeps our configuration and route, so we only have to set those up once.
+When we try to run this on a raspberry pi with `kelso start unifi-network-app`, we notice it doesn't seem to be working. Checking the logs, we find that the database uses extensions that our version of arm on the raspberry pi doesn't support. No problem, we can walk back the version of mongo until we find one that works. Between each test, we call `kelso reset unifi-network-app` to clear out all data and "start fresh" -- it keeps our configuration and route, so we only have to set those up once.
 
 It turns out that version 8.0.11 is both > 8 and can run on the raspberry pi, so we pin it there. Since we pinned the db, let's pin the unifi-network-application to a version we can confirm works for us as well.
 
@@ -274,4 +274,4 @@ volumes = { app_config = "/config" }
 ```
 
 ## Step 5. Publish!
-Now that we've got a working happ we can share, we can throw it up on github so other users can `harbor repo add` the folder it lives in!
+Now that we've got a working bundle we can share, we can throw it up on github so other users can `kelso repo add` the folder it lives in!

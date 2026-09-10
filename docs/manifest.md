@@ -1,7 +1,7 @@
 # The manifest
 
-Every happ is a `manifest.toml` plus, optionally, the files it ships with. The
-manifest is the whole of what harbor knows about an app: what containers to
+Every bundle is a `manifest.toml` plus, optionally, the files it ships with. The
+manifest is the whole of what kelso knows about an app: what containers to
 run, what storage they need, what the operator has to fill in, and what the
 outside world can reach. Everything else — the compose file, the run
 directory, the volume links — is generated from it.
@@ -17,15 +17,15 @@ silently did nothing.
 
 ## `[app]`
 
-The only required section, and the only one that accepts keys harbor does not
+The only required section, and the only one that accepts keys kelso does not
 know: extra keys are kept and shown verbatim on the app's page, so an author
 can carry `author`, `source`, `license` and the like.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `version` | string | **required** | The happ's version. Yours, not the image's. |
+| `version` | string | **required** | The bundle's version. Yours, not the image's. |
 | `app_id` | string | from the filename | Refused if it disagrees with the filename. |
-| `display_name` | string | `""` | Shown in the UI and `harbor ps` instead of the id. |
+| `display_name` | string | `""` | Shown in the UI and `kelso ps` instead of the id. |
 | `description` | string | `""` | One line. Shown in the catalog. |
 | `main` | identifier | `"main"` | Which `[run]` unit is the app itself. Must exist. |
 | `network_mode` | `normal` \| `host` | `normal` | `host` drops port isolation and is called out as dangerous. |
@@ -42,12 +42,12 @@ subdomain    = "recipes"
 ## `[run.<unit>]`
 
 One container each. A single-container app declares just `[run.main]`; units
-reach each other by unit name as hostname, on a private network harbor
+reach each other by unit name as hostname, on a private network kelso
 creates.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `image` | string | **required** | Pin a tag. `latest` makes a happ unreproducible. |
+| `image` | string | **required** | Pin a tag. `latest` makes a bundle unreproducible. |
 | `cmd` | list of strings | image default | Overrides the image's command. |
 | `volumes` | `{ <volume> = "<path in container>" }` | `{}` | Every name must be declared in `[volumes]`. |
 | `env` | `{ KEY = "value" }` | `{}` | `${…}` placeholders are substituted; see below. |
@@ -70,9 +70,9 @@ volumes = { db_data = "/data/db" }
 
 What the app needs to keep, and what kind of thing it is. The operator decides
 *where* each kind lives, once, in `config.toml` — the manifest only says which
-kind it wants. That split is the point: a happ that says `kind = "bulk"` lands
+kind it wants. That split is the point: a bundle that says `kind = "bulk"` lands
 on the big disk on a machine that has one and in the default root on a machine
-that does not, with no change to the happ.
+that does not, with no change to the bundle.
 
 | Kind | For |
 | --- | --- |
@@ -80,7 +80,7 @@ that does not, with no change to the happ.
 | `bulk` | Large data — media libraries, archives. Usually a separate disk. |
 | `logs` | Output that can be rotated away without loss. |
 | `temp` | Caches and scratch. Safe to delete when the app is not running. |
-| `app` | Files the happ itself ships. Always mounted read-only. |
+| `app` | Files the bundle itself ships. Always mounted read-only. |
 | `host` | A directory on the machine, chosen by the operator at install time. |
 
 | Key | Type | Default | Meaning |
@@ -97,11 +97,11 @@ media       = { kind = "host", desc = "where your photo library already lives" }
 init_script = { kind = "app", src = "init-mongo.sh" }
 ```
 
-A `host` volume is not a path — it is a *request*. Harbor will not start the
+A `host` volume is not a path — it is a *request*. Kelso will not start the
 app until the operator binds it to one of the host volumes they declared:
 
 ```
-harbor config <app> --bind media=photos
+kelso config <app> --bind media=photos
 ```
 
 ## `[config]` and `[adv_config]`
@@ -116,7 +116,7 @@ so a name may appear in only one of them.
 | `default` | string | none | With no default, the app will not start until the value is set. |
 | `secret` | bool | `false` | Stored encrypted, never returned by the API or shown in the UI. |
 
-`default = "auto"` on a secret means harbor generates one at install and the
+`default = "auto"` on a secret means kelso generates one at install and the
 operator never sees or sets it — the right answer for a password two
 containers need to agree on and nobody else needs.
 
@@ -129,7 +129,7 @@ timezone    = { desc = "IANA timezone", default = "UTC" }
 mongo_pass  = { secret = true, default = "auto" }
 ```
 
-Set them with `harbor config <app> --set timezone=America/Denver`, or from the
+Set them with `kelso config <app> --set timezone=America/Denver`, or from the
 app's page in the web UI.
 
 ## `[run.<unit>.routes.<name>]`
@@ -139,7 +139,7 @@ at the app's bare subdomain; every other name gets `<name>-<subdomain>`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `port` | string | **required** | `"8080"` (harbor picks the host port), `"8443:8443"` (pinned), or either with `/udp`. |
+| `port` | string | **required** | `"8080"` (kelso picks the host port), `"8443:8443"` (pinned), or either with `/udp`. |
 | `scheme` | `http` \| `https` | `http` | How a reverse proxy should *dial the container*, not what a browser sees. |
 | `private` | bool | `false` | LAN-only: never handed to a route provider. |
 | `desc` | string | `""` | Shown beside the URL. |
@@ -150,21 +150,21 @@ main    = { port = "8443", scheme = "https" }
 metrics = { port = "9090", private = true, desc = "Prometheus scrape target" }
 ```
 
-Pin a host port only when something outside harbor already points at it — a TV
+Pin a host port only when something outside kelso already points at it — a TV
 that expects `:8096`, or an app that advertises its own port. Otherwise let
-harbor allocate, and collisions stop being your problem.
+kelso allocate, and collisions stop being your problem.
 
 ## `[commands.<name>]`
 
 Operations the app declares for itself, runnable from the CLI or as a button
-in the web UI. This is how a happ ships its own maintenance: a backup, a
+in the web UI. This is how a bundle ships its own maintenance: a backup, a
 reindex, a password reset.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `cmd` | string or list | **required** | A string runs through `/bin/sh -c` and takes operator arguments; a list is argv. |
 | `run_unit` | identifier | `"main"` | Which container to run it in. Must exist in `[run]`. |
-| `desc` | string | `""` | Shown in `harbor cmd <app>` and in the UI. |
+| `desc` | string | `""` | Shown in `kelso cmd <app>` and in the UI. |
 
 ```toml
 [commands.backup]
@@ -185,10 +185,10 @@ an empty string:
 
 - `${<config key>}` — anything from `[config]` or `[adv_config]`.
 - `${routes.<name>}` — the full public URL of a declared route.
-- `${happ.domain}`, `${happ.volumes}`, `${happ.cmd}`, `${happ.routes}` — the
+- `${klso.domain}`, `${klso.volumes}`, `${klso.cmd}`, `${klso.routes}` — the
   app's own resolved values.
 
-Every unit also gets `HAPP_ID`, `HAPP_VERSION`, and `HAPP_RUN_UNIT` for free.
+Every unit also gets `KLSO_ID`, `KLSO_VERSION`, and `KLSO_RUN_UNIT` for free.
 
 ```toml
 [run.main.env]
@@ -200,7 +200,7 @@ DB_PASSWORD                 = "${mongo_pass}"
 ## Free-form docker options
 
 `[run.<unit>.compose]` is copied verbatim into that unit's compose service, for
-the things harbor does not model:
+the things kelso does not model:
 
 ```toml
 [run.main.compose]
@@ -213,29 +213,29 @@ interval = "10s"
 
 Two rules apply.
 
-**Keys harbor generates are refused** — `image`, `volumes`, `ports`, `labels`,
+**Keys kelso generates are refused** — `image`, `volumes`, `ports`, `labels`,
 `environment`, `command`, `hostname`, `restart`, `network_mode`. Those have
 manifest fields; setting them twice would mean one of them silently losing.
 
-**Keys harbor does not recognise are announced.** There is an allowlist of
+**Keys kelso does not recognise are announced.** There is an allowlist of
 options that shape how a container runs without reaching outside it —
 `healthcheck`, `depends_on`, `mem_limit`, `user`, `ulimits`, `read_only` and
-friends — and anything outside it produces a warning on install, in `harbor
+friends — and anything outside it produces a warning on install, in `kelso
 inspect`, and on the app's card in the web UI:
 
 > Warning: This application sets free-form docker options on main that are not
 > guaranteed to be safe. Please review them before continuing
 
 Nothing is refused: the machine belongs to the operator, and `privileged =
-true` is a legitimate thing for a happ to need. But harbor cannot know what an
+true` is a legitimate thing for a bundle to need. But kelso cannot know what an
 arbitrary compose key does, so it says so and shows the operator exactly what
 was asked for. This also catches typos — compose silently ignores a key it
 does not know, so a misspelled `devcies` would otherwise do nothing at all
-and say nothing about it. See [demo-danger](../demo-apps/demo-danger.happ.md).
+and say nothing about it. See [demo-danger](../demo-apps/demo-danger.klso.md).
 
-## A happ in one file
+## A bundle in one file
 
-Anything above can live in a `<app_id>.happ.md` markdown file instead of a
+Anything above can live in a `<app_id>.klso.md` markdown file instead of a
 folder, with the manifest and any scripts in fenced code blocks tagged with
 their path:
 
@@ -244,12 +244,12 @@ their path:
 
 Whatever prose you like, including why the manifest looks the way it does.
 
-```toml happ_path="manifest.toml"
+```toml klso_path="manifest.toml"
 [app]
 version = "1.0.0"
 ```
 
-```sh happ_path="start.sh:+x"
+```sh klso_path="start.sh:+x"
 #!/bin/sh
 exec my-app --config /config
 ```
@@ -259,14 +259,14 @@ The `:+x` suffix marks the extracted file executable, which a script you
 intend to run as a container command needs.
 
 One file, committable anywhere, readable as documentation by someone who has
-never run harbor. See [demo-markdown](../demo-apps/demo-markdown.happ.md).
+never run kelso. See [demo-markdown](../demo-apps/demo-markdown.klso.md).
 
 ## Checking your work
 
 ```bash
-harbor inspect <app>      # what the manifest declares, resolved
-harbor install <app>      # parse errors, one list, with the key that caused each
+kelso inspect <app>      # what the manifest declares, resolved
+kelso install <app>      # parse errors, one list, with the key that caused each
 ```
 
-`harbor inspect` on an uninstalled app reads the manifest it *would* install
+`kelso inspect` on an uninstalled app reads the manifest it *would* install
 from, so it is the fastest way to see whether an edit did what you meant.

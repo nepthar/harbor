@@ -1,0 +1,46 @@
+import argparse
+
+from kelso.lib.kelso import KelsoCtx
+from kelso.lib.lifecycle import snapshot, start, stop
+from kelso.lib.util import Conn
+
+
+def register(subparsers) -> None:
+  parser = subparsers.add_parser(
+    "snapshot",
+    help="Capture a restore point for an installed bundle (config, bundle, and data volumes)",
+  )
+  parser.add_argument(
+    "app",
+    metavar="APP",
+    help="App ID of the bundle to snapshot",
+  )
+  parser.add_argument(
+    "--label",
+    default="",
+    metavar="LABEL",
+    help="Optional label appended to the snapshot name",
+  )
+  parser.set_defaults(func=run)
+
+
+def run(args: argparse.Namespace, ctx: KelsoCtx, conn: Conn) -> None:
+  app = ctx.resolve_app(args.app)
+  conn.out(f"Snapshotting {app}...")
+  by = f"snapshot {app}"
+  running = 0
+  with ctx.app_lock(app, by):
+    with ctx.kelso_lock(by):
+      try:
+        running = ctx.run_state(app).running_count
+      except ValueError:
+        running = 0
+      if running:
+        stop(app, ctx)
+    try:
+      path = snapshot(app, ctx, label=args.label)
+    finally:
+      if running:
+        with ctx.kelso_lock(by):
+          start(app, ctx.config.app_run_path(app), ctx)
+  conn.out(f"Snapshot of {app} written to {path}")

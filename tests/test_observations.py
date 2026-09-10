@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from harbor.lib.apps import AppID
-from harbor.lib.docker import HarborRunUnitStatus
-from harbor.lib.observations import AppObservation
+from kelso.lib.apps import AppID
+from kelso.lib.docker import KelsoRunUnitStatus
+from kelso.lib.observations import AppObservation
 
 
 def _observed(**kwargs) -> AppObservation:
@@ -16,7 +16,7 @@ def _observed(**kwargs) -> AppObservation:
     config_exists=True,
     volumes_exist=True,
     containers=(
-      HarborRunUnitStatus(
+      KelsoRunUnitStatus(
         app_id="demo.app",
         run_unit="main",
         container_id="abc",

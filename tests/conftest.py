@@ -13,13 +13,13 @@ from typing import Any
 
 import pytest
 
-from harbor.cli.main import run as cli_run
-from harbor.lib.apps import AppID
-from harbor.lib.config import VAR_DIRS
-from harbor.lib.happ import scan_happs
-from harbor.lib.logtab import LogTab
-from harbor.lib.stack import AppStack
-from harbor.lib.store import JsonLogtabStore
+from kelso.cli.main import run as cli_run
+from kelso.lib.apps import AppID
+from kelso.lib.bundle import scan_bundles
+from kelso.lib.config import VAR_DIRS
+from kelso.lib.logtab import LogTab
+from kelso.lib.stack import AppStack
+from kelso.lib.store import JsonLogtabStore
 
 # The contention tests wait this out in full; 5s each is more than the rest of
 # the suite costs. Anything that asserts on the wait should read it from here.
@@ -28,10 +28,10 @@ LOCK_TIMEOUT = 0.25
 
 def stack_of(tmp_path: Path, manifest: str, app_id: str = "demo") -> AppStack:
   """Build an `AppStack` from manifest TOML, via the real parse-and-validate path."""
-  happ = tmp_path / f"{app_id}.happ"
-  happ.mkdir()
-  (happ / "manifest.toml").write_text(manifest)
-  return AppStack.from_file(happ / "manifest.toml", AppID(app_id))
+  bundle = tmp_path / f"{app_id}.klso"
+  bundle.mkdir()
+  (bundle / "manifest.toml").write_text(manifest)
+  return AppStack.from_file(bundle / "manifest.toml", AppID(app_id))
 
 
 # `pytester` runs a throwaway pytest inside a test, which is how
@@ -50,7 +50,7 @@ default_route_provider = "web"
 
 [route_provider.web]
 kind = "noop"
-domain = "harbor.localhost"
+domain = "kelso.localhost"
 
 [host_volume.media]
 path = "external-data"
@@ -70,7 +70,7 @@ args = sys.argv[1:]
 state = Path(os.environ["FAKE_DOCKER_STATE"])
 log = Path(os.environ["FAKE_DOCKER_LOG"])
 
-# Where the `app` volume links pointed at the moment of the call. `harbor dev`
+# Where the `app` volume links pointed at the moment of the call. `kelso dev`
 # swaps them for the duration of one docker command and puts them back, so
 # this is the only way a test can observe the swap from outside.
 app_volumes = Path.cwd() / "volumes" / "app"
@@ -111,8 +111,8 @@ elif args[:2] == ["compose", "logs"]:
         unit = container["run_unit"]
         print(f"{unit}-1  | hello from {unit}")
 elif args[0] == "run":
-    # `docker run --rm -v HOST:HOST ... IMAGE sh -c SCRIPT`, harbor's stand-in
-    # for sudo (harbor/lib/lifecycle/rootfs.py). Every bind maps a host path to
+    # `docker run --rm -v HOST:HOST ... IMAGE sh -c SCRIPT`, kelso's stand-in
+    # for sudo (kelso/lib/lifecycle/rootfs.py). Every bind maps a host path to
     # itself, so running the script right here is faithful to what the
     # container would do -- the only thing the real one adds is root, which a
     # test has no way to want. stdout is inherited, so the caller still gets
@@ -127,8 +127,8 @@ elif args[:2] == ["ps", "-a"]:
             "Names": f"{container['app_id']}-{container['run_unit']}-1",
             "State": container["state"],
             "Labels": (
-                f"harbor.app_id={container['app_id']},"
-                f"harbor.run_unit={container['run_unit']}"
+                f"kelso.app_id={container['app_id']},"
+                f"kelso.run_unit={container['run_unit']}"
             ),
         }))
 elif args[0] == "stats":
@@ -146,7 +146,7 @@ elif args[0] == "stats":
 
 @dataclass(frozen=True)
 class Result:
-  """What a harbor command produced. Shaped like `CompletedProcess`."""
+  """What a kelso command produced. Shaped like `CompletedProcess`."""
 
   returncode: int
   stdout: str
@@ -154,7 +154,7 @@ class Result:
 
 
 @dataclass(frozen=True)
-class HarborEnv:
+class KelsoEnv:
   root: Path
   config: Path
   docker_state: Path
@@ -181,20 +181,20 @@ class HarborEnv:
 
   @property
   def db_path(self) -> Path:
-    return self.root / "harbordb.logtab"
+    return self.root / "kelsodb.logtab"
 
   @property
-  def harbor_lockfile_path(self) -> Path:
-    return self.root / "var" / "lock" / "harbor.lock"
+  def kelso_lockfile_path(self) -> Path:
+    return self.root / "var" / "lock" / "kelso.lock"
 
   def app_lockfile_path(self, app_id: str) -> Path:
     return self.root / "var" / "lock" / f"{app_id}.lock"
 
   def read_db(self) -> dict[str, Any]:
-    """Reconstruct the harbor DB as a nested dict from its flat logtab keys.
+    """Reconstruct the kelso DB as a nested dict from its flat logtab keys.
 
     The store persists flat ``section/.../key -> value`` entries (see
-    :class:`harbor.lib.store.JsonConfigStore`). This rebuilds the nested shape
+    :class:`kelso.lib.store.JsonConfigStore`). This rebuilds the nested shape
     tests assert against, e.g. ``db["routes"][app_id][route]`` and
     ``db["system"]["secrets"][name]``.
     """
@@ -223,10 +223,10 @@ class HarborEnv:
       store.write(key, value)
 
   def run(self, *args: str, input: str | None = None) -> Result:
-    """Run a harbor command in this process.
+    """Run a kelso command in this process.
 
     Spawning an interpreter per command cost ~0.12s and bought nothing: the
-    environment is already isolated by `harbor_env`, and `cli_main.run` is the
+    environment is already isolated by `kelso_env`, and `cli_main.run` is the
     same entry point `main` uses. Both streams are captured, which includes
     `logging` output -- `run` rebinds the log handler to the current stderr.
 
@@ -249,14 +249,14 @@ class HarborEnv:
     input: str | None = None,
     timeout: float | None = None,
   ) -> subprocess.CompletedProcess[str]:
-    """Run a harbor command as a real child process.
+    """Run a kelso command as a real child process.
 
     Only for tests about what happens *between* processes -- lock contention.
     `timeout` raises `subprocess.TimeoutExpired` (killing the child) rather
     than hanging, which is how a test asserts that a command blocked.
     """
     return subprocess.run(
-      [sys.executable, "-m", "harbor.cli", *args],
+      [sys.executable, "-m", "kelso.cli", *args],
       cwd=self.root,
       env={**os.environ},
       capture_output=True,
@@ -270,8 +270,8 @@ class HarborEnv:
 
 
 # Records the attempt before refusing it. Exiting non-zero is not enough on its
-# own: harbor calls docker with check=False in places (see
-# `load_harbor_run_unit_status`), which turns a refusal into an empty result
+# own: kelso calls docker with check=False in places (see
+# `load_kelso_run_unit_status`), which turns a refusal into an empty result
 # that looks exactly like "no containers are running". The log is what makes an
 # accidental call visible no matter how the caller handles the failure.
 DOCKER_GUARD = """#!/usr/bin/env python3
@@ -299,9 +299,9 @@ def block_real_docker(
 ):
   """Shadow the real `docker` binary for every test that has not opted in.
 
-  Autouse so this holds even for tests that never touch `harbor_env`. Two
+  Autouse so this holds even for tests that never touch `kelso_env`. Two
   things happen: the call is refused, so a developer's own containers are never
-  read or disturbed, and it is recorded, so the test fails even when harbor
+  read or disturbed, and it is recorded, so the test fails even when kelso
   swallows the error. Tests marked `docker` want the real thing and are left
   alone.
 
@@ -327,7 +327,7 @@ def block_real_docker(
     pytest.fail(
       "this test reached for the real docker binary:\n  "
       + "  ".join(log.read_text().splitlines(keepends=True))
-      + "\nUse the harbor_env fixture, whose fake docker is safe to call."
+      + "\nUse the kelso_env fixture, whose fake docker is safe to call."
     )
 
 
@@ -339,12 +339,12 @@ def expect_docker_calls(block_real_docker: Path):
 
 
 @pytest.fixture
-def harbor_env(
+def kelso_env(
   tmp_path: Path,
   monkeypatch: pytest.MonkeyPatch,
   block_real_docker: Path | None,
-) -> HarborEnv:
-  root = tmp_path / "harbor"
+) -> KelsoEnv:
+  root = tmp_path / "kelso"
   apps = root / "repos" / "main"
   apps.mkdir(parents=True)
   (root / "run").mkdir()
@@ -353,7 +353,7 @@ def harbor_env(
   for name in VAR_DIRS:
     (root / "var" / name).mkdir(parents=True)
 
-  for _, rel_path in scan_happs(FIXTURES):
+  for _, rel_path in scan_bundles(FIXTURES):
     source = FIXTURES / rel_path
     if source.is_dir():
       shutil.copytree(source, apps / source.name)
@@ -370,7 +370,7 @@ def harbor_env(
   docker.write_text(FAKE_DOCKER)
   docker.chmod(0o755)
 
-  env = HarborEnv(
+  env = KelsoEnv(
     root=root,
     config=config,
     docker_state=root / "docker-state",
@@ -383,8 +383,8 @@ def harbor_env(
   monkeypatch.setenv("FAKE_DOCKER_LOG", str(env.docker_log))
   # Commands run in-process now, so what used to be `subprocess.run` arguments
   # have to be real process state: the config location and the working
-  # directory harbor resolves relative paths against.
-  monkeypatch.setenv("HARBOR_CONFIG", str(env.config))
-  monkeypatch.setenv("HARBOR_LOCK_TIMEOUT", str(LOCK_TIMEOUT))
+  # directory kelso resolves relative paths against.
+  monkeypatch.setenv("KELSO_CONFIG", str(env.config))
+  monkeypatch.setenv("KELSO_LOCK_TIMEOUT", str(LOCK_TIMEOUT))
   monkeypatch.chdir(root)
   return env

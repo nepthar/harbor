@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import pytest
 
-from harbor.lib.manifest import ConfigError
-from harbor.lib.stack import (
-  HARBOR_APP_ID_LABEL,
-  HARBOR_RUN_UNIT_LABEL,
-  HARBOR_VERSION_LABEL,
+from kelso.lib.manifest import ConfigError
+from kelso.lib.stack import (
+  KELSO_APP_ID_LABEL,
+  KELSO_RUN_UNIT_LABEL,
+  KELSO_VERSION_LABEL,
 )
 from tests.conftest import stack_of
 
@@ -52,14 +52,14 @@ image = "alpine:latest"
   # Every unit gets its identity in both env and labels, with no manifest
   # having asked for it.
   assert main.environment == {
-    "HAPP_ID": "demo",
-    "HAPP_VERSION": "1.2.3",
-    "HAPP_RUN_UNIT": "main",
+    "KLSO_ID": "demo",
+    "KLSO_VERSION": "1.2.3",
+    "KLSO_RUN_UNIT": "main",
   }
   assert main.labels == {
-    HARBOR_APP_ID_LABEL: "demo",
-    HARBOR_VERSION_LABEL: "1.2.3",
-    HARBOR_RUN_UNIT_LABEL: "main",
+    KELSO_APP_ID_LABEL: "demo",
+    KELSO_VERSION_LABEL: "1.2.3",
+    KELSO_RUN_UNIT_LABEL: "main",
   }
 
 
@@ -67,7 +67,7 @@ def test_config_stays_as_placeholders_on_the_stack(tmp_path):
   """A stack is installation-independent; compose rewrites config later.
 
   `${admin_user}` survives until `make_compose_dict`, which turns it into
-  `${__HARBOR_CONFIG__admin_user}` so the value (and secrets) never land in
+  `${__KELSO_CONFIG__admin_user}` so the value (and secrets) never land in
   compose.yml.
   """
   stack = stack_of(
@@ -93,7 +93,7 @@ env = { USER = "${admin_user}", PASS = "${admin_pass}", PORT = "${port}", PLAIN 
   assert admin_user.secret is False
   assert admin_user.default is None
   assert admin_user.has_default() is False
-  assert admin_user.env_name() == "__HARBOR_CONFIG__admin_user"
+  assert admin_user.env_name() == "__KELSO_CONFIG__admin_user"
 
   assert stack.config["port"].has_default() is True
   assert stack.config["admin_pass"].secret is True
@@ -184,7 +184,7 @@ volumes = { bin = "/opt/bin", app_config = "/config", media = "/media" }
 """,
   )
 
-  # `app` volumes carry the happ's own files, so harbor mounts them read-only
+  # `app` volumes carry the bundle's own files, so kelso mounts them read-only
   # whether or not the manifest said so.
   assert stack.volumes["bin"].readonly is True
   assert stack.volumes["bin"].src == "scripts"
@@ -228,7 +228,7 @@ secure = { port = "8443", scheme = "https" }
 """,
   )
 
-  # No host side, so harbor allocates one at start.
+  # No host side, so kelso allocates one at start.
   primary = stack.routes["main"]
   assert primary.host_port == -1
   assert primary.needs_allocation is True
@@ -288,9 +288,9 @@ env = { POSTGRES_DB = "app" }
   assert db.command == ("postgres", "-c", "max_connections=50")
   assert db.restart == "always"
   assert db.routes == {}
-  assert db.environment["HAPP_RUN_UNIT"] == "db"
+  assert db.environment["KLSO_RUN_UNIT"] == "db"
   assert db.environment["POSTGRES_DB"] == "app"
-  assert db.labels[HARBOR_RUN_UNIT_LABEL] == "db"
+  assert db.labels[KELSO_RUN_UNIT_LABEL] == "db"
 
 
 def test_host_network_mode_carries_to_the_stack(tmp_path):

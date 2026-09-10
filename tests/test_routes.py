@@ -12,8 +12,8 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from harbor.lib.apps import AppID
-from harbor.lib.config import (
+from kelso.lib.apps import AppID
+from kelso.lib.config import (
   NONE_ROUTE_PROVIDER_TAG,
   PLACEHOLDER_DOMAIN,
   Config,
@@ -21,10 +21,10 @@ from harbor.lib.config import (
   RouteProviderKind,
   load_config_file,
 )
-from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle.routes import assigned_routes, preflight_app_routes
-from harbor.lib.manifest import ConfigError, Manifest, _validate_routes
-from harbor.lib.routes import (
+from kelso.lib.kelso import KelsoCtx
+from kelso.lib.lifecycle.routes import assigned_routes, preflight_app_routes
+from kelso.lib.manifest import ConfigError, Manifest, _validate_routes
+from kelso.lib.routes import (
   PROVIDERS,
   NginxProxyManagerRouteProvider,
   NoopRouteProvider,
@@ -33,8 +33,8 @@ from harbor.lib.routes import (
   RouteProviderError,
   get_route_provider,
 )
-from harbor.lib.run_layout import AppRunData, AssignedRoute, _route_urls
-from harbor.lib.stack import AppStack
+from kelso.lib.run_layout import AppRunData, AssignedRoute, _route_urls
+from kelso.lib.stack import AppStack
 
 
 def _model(body: str) -> Manifest:
@@ -385,7 +385,7 @@ env = { BASE_URL = "${volumes.data}" }
     )
 
 
-def test_env_may_reference_happ_keys():
+def test_env_may_reference_bundle_keys():
   stack = _stack(
     """
 [app]
@@ -394,14 +394,14 @@ subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
-env = { DOMAIN = "${happ.domain}", VOLS = "${happ.volumes}" }
+env = { DOMAIN = "${klso.domain}", VOLS = "${klso.volumes}" }
 """
   )
-  assert stack.run_units["main"].environment["DOMAIN"] == "${happ.domain}"
-  assert stack.run_units["main"].environment["VOLS"] == "${happ.volumes}"
+  assert stack.run_units["main"].environment["DOMAIN"] == "${klso.domain}"
+  assert stack.run_units["main"].environment["VOLS"] == "${klso.volumes}"
 
 
-def test_env_reference_to_an_unknown_happ_key_is_rejected():
+def test_env_reference_to_an_unknown_bundle_key_is_rejected():
   with pytest.raises(ConfigError, match="not a known substitution"):
     _stack(
       """
@@ -411,7 +411,7 @@ subdomain = "photos"
 
 [run.main]
 image = "alpine:latest"
-env = { HOST = "${happ.host}" }
+env = { HOST = "${bundle.host}" }
 """
     )
 
@@ -419,7 +419,7 @@ env = { HOST = "${happ.host}" }
 def _config(tmp_path: Path, route_providers: dict) -> Config:
   return Config(
     config_path=tmp_path / "config.toml",
-    harbor_root=tmp_path,
+    kelso_root=tmp_path,
     volume_roots={},
     repos_root=tmp_path / "repos",
     run_root=tmp_path / "run",
@@ -427,7 +427,7 @@ def _config(tmp_path: Path, route_providers: dict) -> Config:
     master_key="",
     master_keyfile=tmp_path / "master.key",
     port_base=41000,
-    harbor_address="192.168.1.10",
+    kelso_address="192.168.1.10",
     default_route_provider="web",
     route_providers={
       NONE_ROUTE_PROVIDER_TAG: RouteProviderEntry(
@@ -443,10 +443,10 @@ def _ctx(
   route_providers: dict,
   *,
   secrets: dict[str, str] | None = None,
-) -> HarborCtx:
-  ctx = HarborCtx(_config(tmp_path, route_providers))
+) -> KelsoCtx:
+  ctx = KelsoCtx(_config(tmp_path, route_providers))
   for name, value in (secrets or {}).items():
-    ctx.harbor_db.set_secret(name, value)
+    ctx.kelso_db.set_secret(name, value)
   return ctx
 
 
@@ -468,7 +468,7 @@ def test_provider_must_implement_from_config(tmp_path):
     Halfway.from_config(
       "web",
       RouteProviderEntry(kind="noop", domain="home.example"),
-      HarborCtx(_config(tmp_path, {})),
+      KelsoCtx(_config(tmp_path, {})),
     )
 
 
@@ -496,8 +496,8 @@ def _npm_provider():
     endpoint="http://npm.example",
     email="admin@example.com",
     password="test-password",
-    harbor_domain="home.example",
-    harbor_address="192.168.1.10",
+    kelso_domain="home.example",
+    kelso_address="192.168.1.10",
   )
 
 
@@ -522,8 +522,8 @@ def test_documented_route_provider_config_constructs(tmp_path):
 
   assert isinstance(provider, NginxProxyManagerRouteProvider)
   assert provider.email == "admin@example.com"
-  assert provider.harbor_address == "192.168.1.10"
-  assert provider.harbor_domain == "home.example"
+  assert provider.kelso_address == "192.168.1.10"
+  assert provider.kelso_domain == "home.example"
 
 
 def test_register_route_requires_wildcard_certificate():
@@ -550,12 +550,12 @@ def test_register_route_creates_updates_and_refuses_foreign_owner():
   assert payload["forward_scheme"] == "http"
   assert payload["certificate_id"] == 7
   assert payload["ssl_forced"] is True
-  assert payload["meta"]["harbor_app"] == app
+  assert payload["meta"]["kelso_app"] == app
 
   provider._request.reset_mock()
   provider._find_proxy_host.return_value = {
     "id": 42,
-    "meta": {"harbor_app": app},
+    "meta": {"kelso_app": app},
   }
   provider.register_route(app, 41001, "photos", "home.example")
   assert provider._request.call_args.args == (
@@ -565,7 +565,7 @@ def test_register_route_creates_updates_and_refuses_foreign_owner():
 
   provider._find_proxy_host.return_value = {
     "id": 43,
-    "meta": {"harbor_app": "io.test.other"},
+    "meta": {"kelso_app": "io.test.other"},
   }
   with pytest.raises(RouteProviderError, match="already owned"):
     provider.register_route(app, 41002, "photos", "home.example")
@@ -596,7 +596,7 @@ def test_unregister_route_deletes_existing_proxy_host():
   provider._request.assert_called_once_with("DELETE", "/api/nginx/proxy-hosts/42")
 
 
-def test_npm_route_owners_maps_harbor_meta():
+def test_npm_route_owners_maps_kelso_meta():
   provider = _npm_provider()
   provider._request = Mock(
     return_value=[
@@ -604,7 +604,7 @@ def test_npm_route_owners_maps_harbor_meta():
         "domain_names": ["photos.home.example"],
         "forward_host": "10.0.0.5",
         "forward_port": 41000,
-        "meta": {"harbor_app": "io.test.photos"},
+        "meta": {"kelso_app": "io.test.photos"},
       },
       {
         "domain_names": ["manual.home.example"],
@@ -622,7 +622,7 @@ def test_npm_route_owners_maps_harbor_meta():
         "domain_names": ["other.example.com"],
         "forward_host": "1.2.3.4",
         "forward_port": 443,
-        "meta": {"harbor_app": "ignored"},
+        "meta": {"kelso_app": "ignored"},
       },
       {
         "domain_names": ["home.example"],
@@ -663,8 +663,8 @@ def _pangolin_provider(
     api_key="test-key",
     org_id="acme",
     site=site,
-    harbor_domain="home.example",
-    harbor_address="192.168.1.10",
+    kelso_domain="home.example",
+    kelso_address="192.168.1.10",
     shared_policy=shared_policy,
   )
   provider._resolved_site_id = resolved
@@ -696,8 +696,8 @@ def test_pangolin_config_constructs(tmp_path):
   assert isinstance(provider, PangolinRouteProvider)
   assert provider.org_id == "acme"
   assert provider.site == SITE
-  assert provider.harbor_address == "192.168.1.10"
-  assert provider.harbor_domain == "home.example"
+  assert provider.kelso_address == "192.168.1.10"
+  assert provider.kelso_domain == "home.example"
   assert provider.shared_policy is None
 
 
@@ -784,7 +784,7 @@ def test_pangolin_reports_a_rejected_key_with_its_reason():
 
 
 def test_pangolin_403_names_the_permission_the_key_is_missing():
-  """Pangolin's 403 body never says which action it refused, so harbor must."""
+  """Pangolin's 403 body never says which action it refused, so kelso must."""
   provider = _pangolin_provider()
   resp = _response(
     403,
@@ -807,7 +807,7 @@ def test_pangolin_403_names_the_permission_the_key_is_missing():
 def test_pangolin_resolves_the_site_name_once():
   """Config names the site the only way the dashboard shows it: its URL name."""
   provider = _pangolin_provider(resolved=None)
-  provider._request = Mock(return_value={"siteId": 7, "name": "harbor host"})
+  provider._request = Mock(return_value={"siteId": 7, "name": "kelso host"})
 
   assert provider._site_id() == 7
   provider._request.assert_called_once_with("GET", f"/org/acme/site/{SITE}", "getSite")
@@ -838,7 +838,7 @@ def test_pangolin_target_carries_the_resolved_site_id():
   assert target.kwargs["json"]["siteId"] == 7
 
 
-def test_config_requires_harbor_address_for_proxying_providers(tmp_path):
+def test_config_requires_kelso_address_for_proxying_providers(tmp_path):
   config = tmp_path / "config.toml"
   config.write_text(
     """
@@ -850,11 +850,11 @@ kind = "pangolin"
 domain = "home.example"
 """
   )
-  with pytest.raises(ValueError, match="harbor_address"):
+  with pytest.raises(ValueError, match="kelso_address"):
     load_config_file(config)
 
 
-def test_config_allows_missing_harbor_address_when_only_noop(tmp_path):
+def test_config_allows_missing_kelso_address_when_only_noop(tmp_path):
   config = tmp_path / "config.toml"
   config.write_text(
     """
@@ -866,7 +866,7 @@ kind = "noop"
 domain = "home.example"
 """
   )
-  assert load_config_file(config).harbor_address == ""
+  assert load_config_file(config).kelso_address == ""
 
 
 @pytest.mark.parametrize(
@@ -884,8 +884,8 @@ def test_pangolin_refuses_a_non_https_endpoint(endpoint):
       api_key="test-key",
       org_id="acme",
       site=SITE,
-      harbor_domain="home.example",
-      harbor_address="192.168.1.10",
+      kelso_domain="home.example",
+      kelso_address="192.168.1.10",
     )
 
 
@@ -895,8 +895,8 @@ def test_pangolin_https_endpoint_keeps_case_and_drops_trailing_slash():
     api_key="test-key",
     org_id="acme",
     site=SITE,
-    harbor_domain="home.example",
-    harbor_address="192.168.1.10",
+    kelso_domain="home.example",
+    kelso_address="192.168.1.10",
   )
   assert provider.endpoint == "HTTPS://Pangolin.Example:3003"
 
@@ -934,7 +934,7 @@ def test_pangolin_register_creates_resource_and_target():
   create, target = provider._request.call_args_list
   assert create.args == ("PUT", "/org/acme/public-resource", "createResource")
   assert create.kwargs["json"] == {
-    "name": "harbor:io.test.photos",
+    "name": "kelso:io.test.photos",
     "subdomain": "photos",
     "domainId": "dom_1",
     "mode": "http",
@@ -956,7 +956,7 @@ def test_pangolin_register_reuses_resource_and_replaces_targets():
   provider._find_resource = Mock(
     return_value={
       "resourceId": 12,
-      "name": f"harbor:{app}",
+      "name": f"kelso:{app}",
       "fullDomain": "photos.home.example",
       "targets": [{"targetId": 99}],
     }
@@ -1021,7 +1021,7 @@ def test_pangolin_route_owners_maps_name_prefix():
     return_value=[
       {
         "resourceId": 1,
-        "name": "harbor:io.test.photos",
+        "name": "kelso:io.test.photos",
         "fullDomain": "photos.home.example",
         "targets": [{"ip": "10.0.0.5", "port": 41000}],
       },
@@ -1039,7 +1039,7 @@ def test_pangolin_route_owners_maps_name_prefix():
       },
       {
         "resourceId": 4,
-        "name": "harbor:ignored",
+        "name": "kelso:ignored",
         "fullDomain": "other.example.com",
         "targets": [],
       },
@@ -1112,7 +1112,7 @@ def test_pangolin_register_attaches_shared_policy_on_reuse():
   provider._find_resource = Mock(
     return_value={
       "resourceId": 12,
-      "name": f"harbor:{app}",
+      "name": f"kelso:{app}",
       "fullDomain": "photos.home.example",
       "targets": [{"targetId": 99}],
     }
@@ -1142,7 +1142,7 @@ def test_pangolin_register_reattaches_policy_the_list_endpoint_omits():
   provider._find_resource = Mock(
     return_value={
       "resourceId": 12,
-      "name": f"harbor:{app}",
+      "name": f"kelso:{app}",
       "fullDomain": "photos.home.example",
       "targets": [{"targetId": 99}],
     }
@@ -1257,10 +1257,10 @@ def _preflight_with(provider, stack):
       provider_domain=lambda tag: "home.example",
       route_providers={"web": {"kind": "noop", "domain": "home.example"}},
     ),
-    harbor_db=lambda: None,
+    kelso_db=lambda: None,
     app_store=lambda _app: store,
   )
-  with patch("harbor.lib.lifecycle.routes.get_route_provider", return_value=provider):
+  with patch("kelso.lib.lifecycle.routes.get_route_provider", return_value=provider):
     preflight_app_routes(_run_data(stack), ctx)
 
 
@@ -1274,7 +1274,7 @@ def test_preflight_allows_free_and_own_routes():
 def test_preflight_refuses_foreign_owner():
   provider = NoopRouteProvider()
   provider.register_route(AppID("first"), 41000, "shared", "home.example")
-  with pytest.raises(RouteProviderError, match="already owned by happ 'first'"):
+  with pytest.raises(RouteProviderError, match="already owned by bundle 'first'"):
     _preflight_with(provider, _web_stack("second", "shared"))
 
 

@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from harbor.lib.logtab import LogTab
+from kelso.lib.logtab import LogTab
 
 
 def _free_port() -> int:
@@ -21,7 +21,7 @@ def _free_port() -> int:
 # binary for every unmarked test. Without it, anything calling docker reads --
 # or disturbs -- whatever the developer has running, which silently couples
 # results to the machine (a real bug: test_curated_examples_materialize once
-# failed because an example happ was genuinely running).
+# failed because an example bundle was genuinely running).
 
 
 def test_docker_on_path_is_the_guard():
@@ -35,33 +35,33 @@ def test_invoking_docker_fails_loudly(expect_docker_calls):
   assert "must not shell out to the real docker" in result.stderr
 
 
-def test_harbor_env_prefers_the_working_fake(harbor_env):
-  assert shutil.which("docker") == str(harbor_env.root / "bin" / "docker")
+def test_kelso_env_prefers_the_working_fake(kelso_env):
+  assert shutil.which("docker") == str(kelso_env.root / "bin" / "docker")
 
 
-def test_a_refused_call_is_recorded_even_though_harbor_swallows_it(
+def test_a_refused_call_is_recorded_even_though_kelso_swallows_it(
   expect_docker_calls,
 ):
   """The reason the guard logs instead of only exiting non-zero.
 
-  `load_harbor_run_unit_status` passes check=False, so a refusal comes back as
+  `load_kelso_run_unit_status` passes check=False, so a refusal comes back as
   an empty mapping -- identical to a successful call on a machine with nothing
   running. Asserting on the return value therefore proves nothing. The log is
   what distinguishes "we were blocked" from "there was nothing to see".
   """
-  from harbor.lib.docker import load_harbor_run_unit_status
+  from kelso.lib.docker import load_kelso_run_unit_status
 
-  assert load_harbor_run_unit_status() == {}  # the swallowed failure
+  assert load_kelso_run_unit_status() == {}  # the swallowed failure
   assert "docker ps -a" in expect_docker_calls.read_text()  # the real evidence
 
 
-def test_streamed_output_goes_to_the_sink_not_stdout(harbor_env, capsys):
+def test_streamed_output_goes_to_the_sink_not_stdout(kelso_env, capsys):
   """`sink_output` is how a job captures compose output no terminal will see."""
   import io
 
-  from harbor.lib.docker import docker_run_command, sink_output
+  from kelso.lib.docker import docker_run_command, sink_output
 
-  harbor_env.set_containers(
+  kelso_env.set_containers(
     [{"app_id": "demo", "run_unit": "main", "id": "abc", "state": "running"}]
   )
   sink = io.StringIO()
@@ -75,14 +75,14 @@ def test_streamed_output_goes_to_the_sink_not_stdout(harbor_env, capsys):
   assert capsys.readouterr().out == ""
 
 
-def test_a_streamed_failure_hands_the_error_a_tail(harbor_env):
+def test_a_streamed_failure_hands_the_error_a_tail(kelso_env):
   """With a sink set, `see the docker output above` points at nothing, so the
   error carries the captured tail instead."""
   import io
 
-  from harbor.lib.docker import DockerError, docker_run_command, sink_output
+  from kelso.lib.docker import DockerError, docker_run_command, sink_output
 
-  bin_dir = harbor_env.root / "bin"
+  bin_dir = kelso_env.root / "bin"
   (bin_dir / "docker").write_text(
     "#!/usr/bin/env python3\nimport sys\nprint('boom: something broke')\nsys.exit(1)\n"
   )
@@ -100,8 +100,8 @@ def test_real_docker_up_and_down(tmp_path):
   if subprocess.run(["docker", "info"], capture_output=True).returncode != 0:
     pytest.skip("docker daemon is not available")
 
-  root = tmp_path / "harbor"
-  app = root / "apps" / "docker-smoke.happ"
+  root = tmp_path / "kelso"
+  app = root / "apps" / "docker-smoke.klso"
   app.mkdir(parents=True)
   (root / "run").mkdir()
   (root / "volumes").mkdir()
@@ -129,18 +129,18 @@ master_keyfile = "master.key"
 port_base = 41000
 """
   )
-  env = {**os.environ, "HARBOR_CONFIG": str(config)}
+  env = {**os.environ, "KELSO_CONFIG": str(config)}
 
-  def harbor(*args):
+  def kelso(*args):
     return subprocess.run(
-      [sys.executable, "-m", "harbor.cli", *args],
+      [sys.executable, "-m", "kelso.cli", *args],
       env=env,
       capture_output=True,
       text=True,
     )
 
   try:
-    started = harbor("up", "docker-smoke")
+    started = kelso("up", "docker-smoke")
     assert started.returncode == 0, started.stderr
 
     containers = subprocess.run(
@@ -149,7 +149,7 @@ port_base = 41000
         "ps",
         "-q",
         "--filter",
-        "label=harbor.app_id=docker-smoke",
+        "label=kelso.app_id=docker-smoke",
       ],
       capture_output=True,
       text=True,
@@ -164,4 +164,4 @@ port_base = 41000
     ).stdout
     assert str(port) in published
   finally:
-    harbor("down", "docker-smoke")
+    kelso("down", "docker-smoke")

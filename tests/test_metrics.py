@@ -6,12 +6,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from harbor.jobs.metrics import HostMetricsJob, VolumeMetricsJob
-from harbor.jobs.runner import metric_schedule
-from harbor.lib import activity
-from harbor.lib.config import load_config
-from harbor.lib.harbor import HarborCtx
-from harbor.lib.metric import (
+from kelso.jobs.metrics import HostMetricsJob, VolumeMetricsJob
+from kelso.jobs.runner import metric_schedule
+from kelso.lib import activity
+from kelso.lib.config import load_config
+from kelso.lib.kelso import KelsoCtx
+from kelso.lib.metric import (
   _pct,
   cpu_used_ratio,
   drive_used_ratio,
@@ -23,27 +23,27 @@ from harbor.lib.metric import (
 )
 
 
-def _ctx(harbor_env) -> HarborCtx:
+def _ctx(kelso_env) -> KelsoCtx:
   cfg = load_config()
   assert cfg is not None
-  return HarborCtx(cfg)
+  return KelsoCtx(cfg)
 
 
-def test_volume_metrics_records_each_directory(harbor_env):
-  data = harbor_env.volumes_root / "data" / "demo.app" / "uploads"
+def test_volume_metrics_records_each_directory(kelso_env):
+  data = kelso_env.volumes_root / "data" / "demo.app" / "uploads"
   data.mkdir(parents=True)
   (data / "blob").write_bytes(b"x" * 100)
-  leftover = harbor_env.volumes_root / "temp" / "gone.app" / "scratch"
+  leftover = kelso_env.volumes_root / "temp" / "gone.app" / "scratch"
   leftover.mkdir(parents=True)
   (leftover / "tmp").write_bytes(b"y" * 40)
-  media = harbor_env.root / "external-data"
+  media = kelso_env.root / "external-data"
   media.mkdir()
   (media / "clip").write_bytes(b"z" * 20)
-  snapshots = harbor_env.root / "snapshots"
+  snapshots = kelso_env.root / "snapshots"
   snapshots.mkdir()
   (snapshots / "blob").write_bytes(b"s" * 50)
 
-  ctx = _ctx(harbor_env)
+  ctx = _ctx(kelso_env)
   job = VolumeMetricsJob.call({}, ctx)
   assert job.state == "done"
 
@@ -57,8 +57,8 @@ def test_volume_metrics_records_each_directory(harbor_env):
   assert job.log is None
 
 
-def test_host_metrics_records_disk_and_app_stats(harbor_env, monkeypatch):
-  harbor_env.set_containers(
+def test_host_metrics_records_disk_and_app_stats(kelso_env, monkeypatch):
+  kelso_env.set_containers(
     [
       {
         "app_id": "demo.app",
@@ -70,13 +70,13 @@ def test_host_metrics_records_disk_and_app_stats(harbor_env, monkeypatch):
       }
     ]
   )
-  monkeypatch.setattr("harbor.lib.metric.cpu_used_ratio", lambda: 0.4)
-  monkeypatch.setattr("harbor.lib.metric.mem_used_ratio", lambda: 0.5)
-  monkeypatch.setattr("harbor.lib.metric.swap_used_ratio", lambda: 0.1)
-  monkeypatch.setattr("harbor.lib.metric.mounted_disks", lambda: [("root", Path("/"))])
-  monkeypatch.setattr("harbor.lib.metric.drive_used_ratio", lambda _p: 0.25)
+  monkeypatch.setattr("kelso.lib.metric.cpu_used_ratio", lambda: 0.4)
+  monkeypatch.setattr("kelso.lib.metric.mem_used_ratio", lambda: 0.5)
+  monkeypatch.setattr("kelso.lib.metric.swap_used_ratio", lambda: 0.1)
+  monkeypatch.setattr("kelso.lib.metric.mounted_disks", lambda: [("root", Path("/"))])
+  monkeypatch.setattr("kelso.lib.metric.drive_used_ratio", lambda _p: 0.25)
 
-  ctx = _ctx(harbor_env)
+  ctx = _ctx(kelso_env)
   HostMetricsJob.call({}, ctx)
 
   gauges = {k: float(e.value) for k, e in ctx.read_gauges("").items()}
@@ -89,7 +89,7 @@ def test_host_metrics_records_disk_and_app_stats(harbor_env, monkeypatch):
   assert activity.list_runs(ctx) == []
 
 
-def test_metric_jobs_are_on_the_harbord_schedule():
+def test_metric_jobs_are_on_the_kelsod_schedule():
   submitted: list[str] = []
   sched = metric_schedule(submitted.append)
   jobs = {j.job_func.args[0]: (j.interval, j.unit) for j in sched.get_jobs()}
@@ -98,15 +98,13 @@ def test_metric_jobs_are_on_the_harbord_schedule():
 
 
 def test_cpu_used_ratio_from_psutil(monkeypatch):
-  monkeypatch.setattr(
-    "harbor.lib.metric.psutil.cpu_percent", lambda interval=None: 40.0
-  )
+  monkeypatch.setattr("kelso.lib.metric.psutil.cpu_percent", lambda interval=None: 40.0)
   assert cpu_used_ratio() == 0.4
 
 
 def test_mem_used_ratio_from_available(monkeypatch):
   monkeypatch.setattr(
-    "harbor.lib.metric.psutil.virtual_memory",
+    "kelso.lib.metric.psutil.virtual_memory",
     lambda: SimpleNamespace(total=1000, available=250),
   )
   assert mem_used_ratio() == 0.75
@@ -114,7 +112,7 @@ def test_mem_used_ratio_from_available(monkeypatch):
 
 def test_swap_used_ratio_skips_when_there_is_none(monkeypatch):
   monkeypatch.setattr(
-    "harbor.lib.metric.psutil.swap_memory",
+    "kelso.lib.metric.psutil.swap_memory",
     lambda: SimpleNamespace(total=0, percent=0.0),
   )
   assert swap_used_ratio() is None
@@ -122,7 +120,7 @@ def test_swap_used_ratio_skips_when_there_is_none(monkeypatch):
 
 def test_mounted_disks_skips_pseudo_filesystems(monkeypatch):
   monkeypatch.setattr(
-    "harbor.lib.metric.psutil.disk_partitions",
+    "kelso.lib.metric.psutil.disk_partitions",
     lambda all=False: [
       SimpleNamespace(device="/dev/sda1", mountpoint="/", fstype="ext4"),
       SimpleNamespace(device="tmpfs", mountpoint="/run", fstype="tmpfs"),
@@ -132,13 +130,13 @@ def test_mounted_disks_skips_pseudo_filesystems(monkeypatch):
 
 
 def test_mounted_disks_falls_back_to_root_when_empty(monkeypatch):
-  monkeypatch.setattr("harbor.lib.metric.psutil.disk_partitions", lambda all=False: [])
+  monkeypatch.setattr("kelso.lib.metric.psutil.disk_partitions", lambda all=False: [])
   assert mounted_disks() == [("root", Path("/"))]
 
 
 def test_drive_used_ratio(monkeypatch):
   monkeypatch.setattr(
-    "harbor.lib.metric.psutil.disk_usage",
+    "kelso.lib.metric.psutil.disk_usage",
     lambda _p: SimpleNamespace(total=100, used=25),
   )
   assert drive_used_ratio(Path("/")) == 0.25
@@ -151,13 +149,13 @@ def test_pct_parses_docker_percent():
   assert _pct("nope") == 0.0
 
 
-def test_record_host_stats_skips_unavailable_gauges(harbor_env, monkeypatch):
-  monkeypatch.setattr("harbor.lib.metric.cpu_used_ratio", lambda: None)
-  monkeypatch.setattr("harbor.lib.metric.mem_used_ratio", lambda: None)
-  monkeypatch.setattr("harbor.lib.metric.swap_used_ratio", lambda: None)
-  monkeypatch.setattr("harbor.lib.metric.mounted_disks", lambda: [("root", Path("/"))])
-  monkeypatch.setattr("harbor.lib.metric.drive_used_ratio", lambda _p: 0.3)
-  ctx = _ctx(harbor_env)
+def test_record_host_stats_skips_unavailable_gauges(kelso_env, monkeypatch):
+  monkeypatch.setattr("kelso.lib.metric.cpu_used_ratio", lambda: None)
+  monkeypatch.setattr("kelso.lib.metric.mem_used_ratio", lambda: None)
+  monkeypatch.setattr("kelso.lib.metric.swap_used_ratio", lambda: None)
+  monkeypatch.setattr("kelso.lib.metric.mounted_disks", lambda: [("root", Path("/"))])
+  monkeypatch.setattr("kelso.lib.metric.drive_used_ratio", lambda _p: 0.3)
+  ctx = _ctx(kelso_env)
   n = record_host_stats(ctx)
   assert n == 1
   assert (
@@ -166,8 +164,8 @@ def test_record_host_stats_skips_unavailable_gauges(harbor_env, monkeypatch):
   )
 
 
-def test_record_volume_sizes_skips_missing_host_paths(harbor_env):
-  ctx = _ctx(harbor_env)
+def test_record_volume_sizes_skips_missing_host_paths(kelso_env):
+  ctx = _ctx(kelso_env)
   n = record_volume_sizes(ctx)
   # var/ and repos/ exist in a fresh root; snapshots/ does not until one is taken.
   assert n == 2
@@ -177,8 +175,8 @@ def test_record_volume_sizes_skips_missing_host_paths(harbor_env):
   assert ctx.read_gauges("snapshots_size_bytes") == {}
 
 
-def test_history_gauges_keeps_points_from_since(harbor_env):
-  ctx = _ctx(harbor_env)
+def test_history_gauges_keeps_points_from_since(kelso_env):
+  ctx = _ctx(kelso_env)
   now = int(datetime.now(UTC).timestamp())
   old = (
     (datetime.now(UTC) - timedelta(hours=3))
