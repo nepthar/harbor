@@ -27,7 +27,7 @@ NO_STORE = {"Cache-Control": "no-store"}
 # The harbord API this UI is written against. harbord bumps its own number
 # when a response shape changes, so a mismatch means one of the two was
 # installed without the other and fields this UI reads may be missing.
-NEEDS_API = 17
+NEEDS_API = 18
 _daemon_api = None
 
 
@@ -260,6 +260,24 @@ def app_detail(app_id: str, ok: str | None = None, err: str | None = None):
     app_id, version, notice=banner(ok, err)
   )
   return html(f"/apps/{app_id}", title, body, version, actions=actions)
+
+
+@app.get("/apps/{app_id}/logs")
+def app_logs(app_id: str):
+  version, unreachable = harbor_version(f"/apps/{app_id}/logs", "Logs")
+  if unreachable:
+    return unreachable
+  title, body, version, actions = installed.logs_page(app_id, version)
+  return html(f"/apps/{app_id}/logs", title, body, version, actions=actions)
+
+
+@app.get("/apps/{app_id}/logs.json")
+def app_logs_json(app_id: str):
+  """What the logs page polls. Straight through; harbord does the tailing."""
+  try:
+    return JSONResponse(api(f"/apps/{quote(app_id)}/logs"), headers=NO_STORE)
+  except ApiError as e:
+    return JSONResponse({"error": str(e)}, status_code=502, headers=NO_STORE)
 
 
 @app.get("/volumes")

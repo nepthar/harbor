@@ -10,6 +10,7 @@ from layout import (
   job_button,
   job_modal,
   kv_table,
+  mdi,
 )
 
 
@@ -76,12 +77,11 @@ def lifecycle_bar(app):
   name = app.get("display_name") or app_id
   running = app["status"] == "running"
   installed = app.get("state") == "installed"
-  # Exactly one of start/stop ever applies, so only that one is drawn, and it
-  # carries a word rather than a glyph -- it is the verb the page is for.
   primary = (
     job_button(
       "Stop",
       "stop",
+      icon="stop",
       title=f"Stop {name}",
       desc=f"Stops {app_id}'s containers. Its data and configuration are untouched.",
       args={"app": app_id},
@@ -90,6 +90,7 @@ def lifecycle_bar(app):
     else job_button(
       "Start",
       "start",
+      icon="play",
       title=f"Start {name}",
       desc=f"Starts {app_id}, installing it first if it is not installed yet.",
       args={"app": app_id},
@@ -100,6 +101,7 @@ def lifecycle_bar(app):
     job_button(
       "Reload",
       "reload",
+      icon="reload",
       title=f"Reload {name}",
       desc=(
         f"Stops {app_id} if it is running, rebuilds its installation from the "
@@ -111,6 +113,7 @@ def lifecycle_bar(app):
     job_button(
       "Snapshot",
       "snapshot",
+      icon="camera-plus",
       title=f"Snapshot {name}",
       desc=(
         f"Copies {app_id}'s volumes and run state into an archive under "
@@ -122,6 +125,7 @@ def lifecycle_bar(app):
     ),
     job_button(
       "Remove",
+      icon="delete-outline",
       title=f"Remove {name}",
       desc=(
         f"Pick how much of {app_id} to remove. To keep a copy of the data "
@@ -447,11 +451,89 @@ def detail_page(app_id, version, notice=""):
   try:
     app = api(f"/apps/{quote(app_id)}")
     title = app.get("display_name") or app_id
+    logs = (
+      f'<a class="btn icon" href="/apps/{quote(app_id)}/logs" title="Logs" '
+      f'aria-label="Logs">{mdi("text-box-outline")}</a>'
+    )
     return (
       title,
       app_page(app, notice),
       version,
-      (f'<span class="head-actions">{lifecycle_bar(app)}</span>'),
+      (f'<span class="head-actions">{logs}{lifecycle_bar(app)}</span>'),
     )
   except ApiError as e:
     return app_id, error_card(e), version, ""
+
+
+_LOGS_SCRIPT = """
+<script>
+(function () {
+  var out = document.getElementById("logs-out");
+  if (!out) return;
+  var stamp = document.getElementById("logs-stamp");
+  var toggle = document.getElementById("logs-auto");
+  var url = out.getAttribute("data-src");
+  var live = true;
+
+  // Only follow the tail while the reader is already at it. Scrolling up to
+  // read something is otherwise undone by the next refresh.
+  function atBottom() {
+    return out.scrollHeight - out.scrollTop - out.clientHeight < 24;
+  }
+
+  function refresh() {
+    var pinned = atBottom();
+    var keep = out.scrollTop;
+    fetch(url, { headers: { "Accept": "application/json" } }).then(function (r) {
+      return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+    }).then(function (res) {
+      if (!live) return;
+      if (!res.ok) { stamp.textContent = res.body.error || "unavailable"; return; }
+      out.textContent = res.body.text || "";
+      out.scrollTop = pinned ? out.scrollHeight : keep;
+      stamp.textContent = "updated " + new Date().toLocaleTimeString();
+    }).catch(function () {
+      if (live) stamp.textContent = "harbord unreachable";
+    });
+  }
+
+  toggle.addEventListener("click", function () {
+    live = !live;
+    toggle.setAttribute("aria-pressed", String(live));
+    stamp.textContent = live ? "live" : "paused";
+    if (live) refresh();
+  });
+
+  out.scrollTop = out.scrollHeight;
+  setInterval(function () { if (live) refresh(); }, 2000);
+})();
+</script>
+"""
+
+
+def logs_page(app_id, version):
+  """The last lines of an app's container logs, refreshed on a timer."""
+  app_id = unquote(app_id)
+  try:
+    app = api(f"/apps/{quote(app_id)}")
+    logs = api(f"/apps/{quote(app_id)}/logs")
+  except ApiError as e:
+    return app_id, error_card(e), version, ""
+
+  name = app.get("display_name") or app_id
+  here = f"/apps/{quote(app_id)}"
+  body = (
+    '<div class="row between">'
+    f'<p class="lede">The last {logs["tail"]} lines each container printed.</p>'
+    '<span class="row"><span class="muted" id="logs-stamp">live</span>'
+    '<button type="button" id="logs-auto" class="toggle" aria-pressed="true">'
+    "Auto-refresh</button></span>"
+    "</div>"
+    f'<pre id="logs-out" class="job-out logs-out" data-src="{esc(here)}/logs.json">'
+    f"{esc(logs['text'])}</pre>" + _LOGS_SCRIPT
+  )
+  actions = (
+    f'<span class="head-actions"><a class="btn" href="{esc(here)}">'
+    f"Back to app</a></span>"
+  )
+  return f"{name} logs", body, version, actions

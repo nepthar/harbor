@@ -58,7 +58,8 @@ def list_page():
   return (
     "<h2>Activity</h2>"
     + '<p class="lede">Recent app-related activities and output</p>'
-    + f'<div class="card">{_rows(runs)}</div>' + job_modal()
+    + f'<div class="card">{_rows(runs)}</div>'
+    + job_modal()
   )
 
 

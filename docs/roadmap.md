@@ -11,9 +11,6 @@ Our feature roadmap, roughly in order of priority
 ### Systemd unit and one-command installer
 At the moment, `harbord` runs foreground-only. We need persistence and installability
 
-### live container logs
-`docker compose logs -f` in the webui
-
 ### Cron Jobs
 Add the ability to define and execute commands and cron jobs from within the manifest.toml. Think regular admin tasks, database cleanup, password reset, etc.
 

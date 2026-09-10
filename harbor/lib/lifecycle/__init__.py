@@ -24,6 +24,7 @@ from harbor.lib.lifecycle.routes import (
 from harbor.lib.lifecycle.run import (
   ReloadResult,
   logs,
+  logs_text,
   recovery_lines,
   reload_app,
   run_command,
@@ -58,6 +59,7 @@ __all__ = [
   "dev_plan",
   "link_host_volumes",
   "logs",
+  "logs_text",
   "materialize",
   "assigned_routes",
   "preflight_app_routes",

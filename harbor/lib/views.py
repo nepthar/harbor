@@ -14,6 +14,7 @@ from harbor.lib.apps import AppID
 from harbor.lib.happ import load_happ, manifest_text
 from harbor.lib.harbor import CatalogEntry, HarborCtx
 from harbor.lib.lifecycle.restore import snapshot_names, snapshotted_app_ids
+from harbor.lib.lifecycle.run import logs_text
 from harbor.lib.lifecycle.snapshot import snapshot_archive, split_snapshot_name
 from harbor.lib.metric import HARBOR_DIRS
 from harbor.lib.observations import AppObservation
@@ -287,6 +288,15 @@ def activity_log_view(ctx: HarborCtx, filename: str) -> dict[str, Any]:
     "app_id": ".".join(middle) or None,
     "file": filename,
     "text": text,
+  }
+
+
+def app_logs_view(app_id: AppID, ctx: HarborCtx, *, tail: int) -> dict[str, Any]:
+  """One app's container logs as of now; poll it again for live output."""
+  return {
+    "app_id": str(app_id),
+    "tail": tail,
+    "text": logs_text(app_id, ctx, tail=tail),
   }
 
 

@@ -48,9 +48,15 @@ from harbor.lib.stack import AppStack
 # 16: /volumes carries `harbor_dirs` (name, description, bytes) in place of
 #     the flat `<name>_bytes` keys.
 # 17: the `restart` job verb is now `reload`.
-API_VERSION = 17
+# 18: GET /apps/{id}/logs (container logs, tail only).
+API_VERSION = 18
 
 CtxFactory = Callable[[], HarborCtx]
+
+# The logs page polls, so an uncapped `tail` would ask docker for an app's
+# whole history every couple of seconds.
+DEFAULT_TAIL = 200
+MAX_TAIL = 2000
 
 
 class HostVolumeBody(BaseModel):
@@ -175,6 +181,16 @@ def create_app(ctx_factory: CtxFactory, jobs: JobRunner) -> FastAPI:
       raise HTTPException(404, f"No app {app_id!r}") from None
     try:
       return views.app_view(resolved, ctx)
+    except (ValueError, RuntimeError) as e:
+      raise HTTPException(404, str(e)) from e
+
+  @app.get("/apps/{app_id}/logs", tags=["apps"])
+  def get_app_logs(app_id: str, ctx: Ctx, tail: int = DEFAULT_TAIL) -> dict:
+    """An app's container logs, newest `tail` lines. No lock: this is a read."""
+    if not 1 <= tail <= MAX_TAIL:
+      raise HTTPException(400, f"tail must be between 1 and {MAX_TAIL}")
+    try:
+      return views.app_logs_view(ctx.resolve_app(app_id), ctx, tail=tail)
     except (ValueError, RuntimeError) as e:
       raise HTTPException(404, str(e)) from e
 

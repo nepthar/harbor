@@ -72,12 +72,14 @@ _CHART_JS = """
 def page(version):
   body = api("/metrics?prefix=host_&hours=1")
   metrics = body.get("metrics") or {}
-  payload = json.dumps({
-    "since": body["since"],
-    "until": body["until"],
-    "cpu": metrics.get("host_cpu_used_ratio") or [],
-    "mem": metrics.get("host_mem_used_ratio") or [],
-  })
+  payload = json.dumps(
+    {
+      "since": body["since"],
+      "until": body["until"],
+      "cpu": metrics.get("host_cpu_used_ratio") or [],
+      "mem": metrics.get("host_mem_used_ratio") or [],
+    }
+  )
   return (
     '<link rel="stylesheet" href="/static/uplot-1.6.32/uPlot.min.css">'
     f'<p class="lede">Connected to harbor {esc(version)} over '
