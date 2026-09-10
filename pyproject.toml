@@ -1,5 +1,5 @@
 [project]
-name = "harbor"
+name = "kelso"
 version = "0.1.0"
 description = "A Docker Compose runtime for self-hosted applications"
 readme = "README.md"
@@ -21,26 +21,26 @@ dependencies = [
     "requests>=2.32.0",
     "tomlkit>=0.13.0",
     "psutil>=6.0",
-    # harbord's. The CLI never imports them -- see harbor/daemon/__init__.py --
-    # but harbord is how harbor is normally run, so they are not optional.
+    # kelsod's. The CLI never imports them -- see kelso/daemon/__init__.py --
+    # but kelsod is how kelso is normally run, so they are not optional.
     "fastapi>=0.121.0",
     "schedule>=1.2",
     "uvicorn>=0.34.0",
 ]
 
 [project.urls]
-Repository = "https://github.com/nepthar/harbor"
+Repository = "https://github.com/nepthar/kelso"
 
 [project.scripts]
-harbor = "harbor.cli.main:main"
-harbord = "harbor.daemon.server:main"
+kelso = "kelso.cli.main:main"
+kelsod = "kelso.daemon.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["harbor"]
+packages = ["kelso"]
 
 [dependency-groups]
 dev = [

@@ -1,11 +1,11 @@
-# Contributing to Harbor
+# Contributing to Kelso
 
-Harbor is licensed under the [Apache License 2.0](LICENSE). Contributions are
+Kelso is licensed under the [Apache License 2.0](LICENSE). Contributions are
 accepted under that same license, and you keep the copyright to your work.
 
 ## Sign off your commits (DCO)
 
-Harbor uses the [Developer Certificate of Origin](DCO) instead of a CLA. There
+Kelso uses the [Developer Certificate of Origin](DCO) instead of a CLA. There
 is nothing to sign and no account to create — you just add a `Signed-off-by`
 line to each commit, certifying that you wrote the change (or otherwise have
 the right to submit it under Apache-2.0). The full text is in [DCO](DCO); the

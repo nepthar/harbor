@@ -1,0 +1,58 @@
+[app]
+version      = "1.0.0"
+display_name = "Unifi Network Application"
+subdomain    = "unifi"
+source       = "github:nepthar/kelso/main/apps/unifi-network-application.klso"
+
+[config]
+# These secrets are automagically generated upon first install. The root
+# password exists for init-mongo.sh, which authenticates as root on first run
+# to create the unifi user.
+mongo_pass      = { desc = "MongoDB Password", secret = true, default = "auto" }
+mongo_root_pass = { desc = "MongoDB root password", secret = true, default = "auto" }
+
+[volumes]
+db_data     = { kind = "data", desc = "MongoDB data" }
+app_data    = { kind = "data", desc = "Unifi Network Application data" }
+app_logs    = { kind = "logs", desc = "Unifi Network Application logs" }
+init_script = { kind = "app", src = "init-mongo.sh", desc = "First run initialization script for mongodb" }
+
+[run.unifi-db]
+image = "docker.io/mongo:8.0.11"
+volumes = { db_data = "/data/db", init_script = "/docker-entrypoint-initdb.d/init-mongo.sh" }
+
+[run.unifi-db.env]
+# The INITDB vars are consumed by the mongo image itself: they create the root
+# user and turn on auth. init-mongo.sh then auths as root to create MONGO_USER.
+MONGO_INITDB_ROOT_USERNAME = "root"
+MONGO_INITDB_ROOT_PASSWORD = "${mongo_root_pass}"
+MONGO_USER = "unifi"
+MONGO_PASS = "${mongo_pass}"
+MONGO_DBNAME = "unifi"
+MONGO_AUTHSOURCE = "admin"
+
+[run.main]
+image = "lscr.io/linuxserver/unifi-network-application:10.0.162"
+volumes = { app_data = "/config/data", app_logs = "/config/logs" }
+
+[run.main.routes]
+# All private: the operator chooses which (if any) to publish via --route.
+admin        = { port = "8443:8443", private = true, scheme = "https" }
+stun         = { port = "3478:3478", private = true }
+ap_discovery = { port = "10001:10001/udp", private = true }
+device_comm  = { port = "8080:8080", private = true }
+discover_l2  = { port = "1900:1900/udp", private = true }
+
+[run.main.env]
+PUID = "1000"
+PGID = "1000"
+TZ = "Etc/UTC"
+MONGO_USER = "unifi"
+MONGO_PASS = "${mongo_pass}"
+MONGO_HOST = "unifi-db"
+MONGO_PORT = "27017"
+MONGO_DBNAME = "unifi"
+MONGO_AUTHSOURCE = "admin"
+MEM_LIMIT = "1024"
+MEM_STARTUP = "1024"
+MONGO_TLS = ""

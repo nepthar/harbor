@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass
+from pathlib import Path
+
+from kelso.lib.apps import AppID, record_app_action
+from kelso.lib.docker import DockerError, docker_run_command, sink_output
+from kelso.lib.kelso import KelsoCtx
+from kelso.lib.lifecycle._common import container_recovery_message, logger
+from kelso.lib.lifecycle.routes import (
+  preflight_app_routes,
+  register_app_routes,
+  unregister_app_routes,
+)
+from kelso.lib.lifecycle.stage import (
+  StageSuccess,
+  link_host_volumes,
+  stage,
+  unlink_host_volumes,
+)
+from kelso.lib.routes import RouteProviderError
+from kelso.lib.run_layout import ConfigIssue, load_run_data
+from kelso.lib.stack import AppStack
+
+
+def recovery_lines(app_id: AppID, issues: tuple[ConfigIssue, ...]) -> list[str]:
+  """Turn start blockers into what is wrong and how to fix it."""
+  lines = [f"{app_id} cannot start:"]
+  for issue in issues:
+    lines.append(f"  - {issue.problem}")
+    if issue.fix:
+      lines.append(f"    {issue.fix}")
+  return lines
+
+
+def start(
+  app: AppID,
+  bundle: Path,
+  ctx: KelsoCtx,
+  *,
+  sets: list[tuple[str, str]] | None = None,
+  binds: list[tuple[str, str]] | None = None,
+  bound: str | None = None,
+) -> StageSuccess:
+  """Stage if needed, then bring the app up and register assigned routes."""
+  paths = ctx.staged_paths(app)
+
+  if sets or binds or not ctx.is_staged(app):
+    result = stage(app, bundle, ctx, sets=sets, binds=binds, bound=bound)
+  else:
+    stack = AppStack.from_file(paths.manifest_path, app)
+    result = StageSuccess(stack, load_run_data(stack, ctx))
+
+  stack, run_data = result.stack, result.run_data
+  if run_data.start_blockers:
+    raise ValueError("\n".join(recovery_lines(app, run_data.start_blockers)))
+
+  if not paths.compose_path.is_file():
+    raise ValueError(f"App {app} is not installed; run `kelso install {app}` first")
+
+  try:
+    preflight_app_routes(run_data, ctx)
+  except RouteProviderError as e:
+    record_app_action("start-failed", app, ctx)
+    raise ValueError(str(e)) from e
+
+  # Rebuilt from scratch every start, so a bind recorded since the last one --
+  # staging does not touch these -- takes effect now.
+  link_host_volumes(stack, run_data)
+
+  try:
+    docker_run_command(
+      ["compose", "up", "-d"],
+      cwd=paths.run_path,
+      json_output=False,
+      check=True,
+      env=run_data.config_env(),
+    )
+  except DockerError as e:
+    record_app_action("start-failed", app, ctx)
+    raise ValueError(str(e)) from e
+
+  try:
+    register_app_routes(run_data, ctx)
+  except RouteProviderError as e:
+    record_app_action("start-failed", app, ctx)
+    raise ValueError(
+      f"{e}. Containers may still be running; run `kelso stop {app}` to stop them."
+    ) from e
+
+  record_app_action("started", app, ctx)
+  return result
+
+
+def _compose_env(app_id: AppID, ctx: KelsoCtx) -> dict[str, str]:
+  """The config environment compose.yml interpolates `${__KELSO_CONFIG__*}` from."""
+  try:
+    stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
+    return load_run_data(stack, ctx).config_env()
+  except ValueError as e:
+    logger.debug("no config env for %s: %s", app_id, e)
+    return {}
+
+
+def logs(app_id: AppID, extra_args: list[str], ctx: KelsoCtx) -> None:
+  """Stream ``docker compose logs`` for a staged app."""
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    raise ValueError(
+      f"App {app_id} is not installed; run `kelso install {app_id}` first"
+    )
+
+  docker_run_command(
+    ["compose", "logs", *(extra_args or [])],
+    cwd=state.run_path,
+    json_output=False,
+    check=True,
+    env=_compose_env(app_id, ctx),
+  )
+
+
+def logs_text(app_id: AppID, ctx: KelsoCtx, *, tail: int) -> str:
+  """The last `tail` lines of an app's container logs, as text.
+
+  Never follows, and returns docker's failure text rather than raising on one.
+  """
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    raise ValueError(
+      f"App {app_id} is not installed; run `kelso install {app_id}` first"
+    )
+
+  captured = io.StringIO()
+  with sink_output(captured):
+    docker_run_command(
+      ["compose", "logs", "--no-color", "--tail", str(tail)],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=_compose_env(app_id, ctx),
+    )
+  return captured.getvalue()
+
+
+def run_command(
+  app_id: AppID,
+  cmd_name: str,
+  args: list[str],
+  ctx: KelsoCtx,
+) -> int:
+  """Run a manifest `[commands]` entry in its target unit."""
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    raise ValueError(
+      f"App {app_id} is not installed; run `kelso install {app_id}` first"
+    )
+
+  stack = AppStack.from_file(ctx.staged_paths(app_id).manifest_path, app_id)
+  entry = stack.commands.get(cmd_name)
+  if entry is None:
+    available = ", ".join(sorted(stack.commands)) or "(none)"
+    raise ValueError(
+      f"Unknown command {cmd_name!r} for {app_id}; "
+      f"available: {available}. List with `kelso cmd {app_id}`"
+    )
+
+  running = {c.run_unit for c in state.containers if c.state.lower() == "running"}
+  argv = [*entry.argv, *args]
+  env = _compose_env(app_id, ctx)
+
+  if entry.run_unit in running:
+    return docker_run_command(
+      ["compose", "exec", entry.run_unit, *argv],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=env,
+    ).returncode
+
+  # Host binds are only linked while an app runs; restore them for the one-off
+  # so compose mounts resolve, then tear them down again if nothing else is up.
+  was_fully_stopped = state.running_count == 0
+  if was_fully_stopped:
+    link_host_volumes(stack, load_run_data(stack, ctx))
+  try:
+    return docker_run_command(
+      ["compose", "run", "--rm", "--no-deps", entry.run_unit, *argv],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=env,
+    ).returncode
+  finally:
+    if was_fully_stopped:
+      unlink_host_volumes(state.run_path)
+
+
+@dataclass(frozen=True)
+class ReloadResult:
+  """What a reload did, so a caller can say so without re-deriving it."""
+
+  stage: StageSuccess
+  # Whether the app was running when the reload began, and so was started
+  # again at the end. A reload never starts an app that was not running.
+  was_running: bool
+
+
+def reload_app(
+  app: AppID,
+  bundle: Path,
+  ctx: KelsoCtx,
+  *,
+  bound: str | None = None,
+) -> ReloadResult:
+  """Stop if running, re-stage from the bundle, and start again if it was.
+
+  The point is picking up a changed manifest or pending configuration without
+  the operator having to remember which of stop/install/start apply. Whether
+  the app comes back up is decided by whether it was up to begin with -- a
+  reload is never a way to start something.
+
+  The caller holds the app lock: both the running check and the decision to
+  start again depend on nothing else touching the app in between.
+  """
+  try:
+    running = bool(ctx.run_state(app).running_count)
+  except ValueError:
+    # Never installed, so nothing to stop -- staging below is the whole job.
+    running = False
+
+  if running:
+    stop(app, ctx)
+  result = stage(app, bundle, ctx, bound=bound)
+  if running:
+    start(app, ctx.config.app_run_path(app), ctx)
+  return ReloadResult(stage=result, was_running=running)
+
+
+def stop(app_id: AppID, ctx: KelsoCtx) -> None:
+  """Tear down routes, then bring an app's containers down."""
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    if state.containers:
+      raise ValueError(container_recovery_message(app_id, ctx))
+    raise ValueError(
+      f"App {app_id} is not installed; run `kelso install {app_id}` first"
+    )
+
+  try:
+    unregister_app_routes(app_id, ctx)
+  except Exception as e:
+    logger.error("failed to unregister routes for %s: %s", app_id, e)
+
+  try:
+    docker_run_command(
+      ["compose", "down"],
+      cwd=state.run_path,
+      json_output=False,
+      check=True,
+      env=_compose_env(app_id, ctx),
+    )
+    # Nothing is mounting them now, and leaving them behind is how a stopped
+    # app keeps looking like it is still bound to somebody's data.
+    unlink_host_volumes(state.run_path)
+    record_app_action("stopped", app_id, ctx)
+  except DockerError as e:
+    record_app_action("stop-failed", app_id, ctx)
+    raise ValueError(str(e)) from e

@@ -1,0 +1,88 @@
+import argparse
+
+from kelso.lib.kelso import KelsoCtx
+from kelso.lib.lifecycle import DevPlan, dev, dev_plan
+from kelso.lib.receipt import LABEL_WIDTH, route_lines
+from kelso.lib.util import Conn
+
+
+def register(subparsers) -> None:
+  parser = subparsers.add_parser(
+    "dev",
+    help="Run an installed app in this terminal with its bundle mounted from source",
+  )
+  parser.add_argument("app", metavar="APP", help="App ID of an installed app")
+  parser.add_argument(
+    "--routes",
+    action="store_true",
+    help="Publish the app's routes to their providers for the duration of the run",
+  )
+  parser.set_defaults(func=run)
+
+
+def run(args: argparse.Namespace, ctx: KelsoCtx, conn: Conn) -> None:
+  app = ctx.resolve_app(args.app)
+  with ctx.locked(f"dev {app}", app):
+    plan = dev_plan(app, ctx, publish_routes=args.routes)
+
+    if plan.manifest_stale and not _confirmed(plan, conn):
+      conn.out("Nothing started.")
+      return
+
+    conn.out(_receipt(plan, ctx))
+
+    code = dev(plan, ctx)
+    if code:
+      raise SystemExit(code)
+
+
+def _confirmed(plan: DevPlan, conn: Conn) -> bool:
+  """Ask before a dev run against a manifest the operator has already moved past."""
+  conn.out(
+    f"{plan.app_id}'s manifest has changed since it was staged:\n"
+    f"  source: {plan.source / 'manifest.toml'}\n"
+    f"  staged: {plan.run_path / 'bundle' / 'manifest.toml'}\n"
+    f"Run `kelso install {plan.app_id}` to update it. Until then this dev run "
+    f"uses the staged copy: images, env, ports and mounts are all from it."
+  )
+  try:
+    answer = conn.read("Continue anyway? [y/N] ")
+  except EOFError:
+    return False
+  return answer.strip().lower() in ("y", "yes")
+
+
+def _receipt(plan: DevPlan, ctx: KelsoCtx) -> str:
+  """What is mounted live, and what a dev run deliberately does not do."""
+  rows: list[tuple[str, str]] = [("Source:", str(plan.source))]
+  for name, path in plan.mounts.items():
+    rows.append((f"  {name}:", str(path)))
+  if not plan.mounts:
+    rows.append(("", "(no app volumes: nothing is mounted from it)"))
+
+  # The same block `kelso start` prints; only what is published differs.
+  for i, line in enumerate(
+    route_lines(
+      plan.stack,
+      plan.run_data,
+      plan.published,
+      host=ctx.config.kelso_address or "localhost",
+    )
+  ):
+    rows.append(("Routes:" if i == 0 else "", line))
+
+  if plan.manifest_stale:
+    rows.append(
+      (
+        "Note:",
+        f"manifest has changed, `kelso install {plan.app_id}` may be required "
+        f"to reflect changes",
+      )
+    )
+  if not plan.published:
+    rows.append(("", "routes are not published; publish them with --routes"))
+
+  width = max(LABEL_WIDTH, max(len(label) for label, _ in rows))
+  lines = [f"Dev {plan.app_id} (ctrl-c to stop)"]
+  lines.extend(f"  {label:<{width}}  {value}" for label, value in rows)
+  return "\n".join(lines)

@@ -1,4 +1,4 @@
-"""The activity log: harbor's own run output, on disk and indexed."""
+"""The activity log: kelso's own run output, on disk and indexed."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from harbor.lib import activity
-from harbor.lib.apps import AppID
-from harbor.lib.config import load_config
-from harbor.lib.harbor import HarborCtx
+from kelso.lib import activity
+from kelso.lib.apps import AppID
+from kelso.lib.config import load_config
+from kelso.lib.kelso import KelsoCtx
 
 
 @pytest.fixture
-def ctx(harbor_env):
+def ctx(kelso_env):
   cfg = load_config()
   assert cfg is not None
-  return HarborCtx(cfg)
+  return KelsoCtx(cfg)
 
 
 def _record(ctx, verb="start", app="demo.app", status=activity.OK, output="hello"):
@@ -41,11 +41,11 @@ def test_a_run_leaves_a_file_and_an_index_row(ctx):
 
   path = ctx.config.activity_root / relpath
   assert relpath == "2026-08-25T033000Z.demo.app.start.log"
-  assert path == ctx.config.harbor_root / "var" / "logs" / relpath
+  assert path == ctx.config.kelso_root / "var" / "logs" / relpath
   assert path.is_file()
   body = path.read_text()
   assert "line one\nline two" in body
-  assert "# harbor start demo.app" in body
+  assert "# kelso start demo.app" in body
   assert "— ok" in body
 
   runs = activity.list_runs(ctx)
@@ -75,7 +75,7 @@ def test_appless_runs_omit_the_app_id(ctx):
   relpath = _record(ctx, verb="fetch", app=None, output="Installed x")
   assert relpath == "2026-08-25T033000Z.fetch.log"
 
-  runs = activity.list_runs(ctx, app=activity.HARBOR_DIR)
+  runs = activity.list_runs(ctx, app=activity.KELSO_DIR)
   assert len(runs) == 1
   assert runs[0]["app_id"] is None
   assert runs[0]["verb"] == "fetch"
@@ -141,7 +141,7 @@ def test_begin_run_is_readable_before_finish(ctx):
     started=started,
   )
   path = ctx.config.activity_root / relpath
-  assert "# harbor cmd demo.app" in path.read_text()
+  assert "# kelso cmd demo.app" in path.read_text()
   assert activity.list_runs(ctx) == []
 
   with path.open("a") as log:
@@ -170,13 +170,13 @@ def test_begin_run_is_readable_before_finish(ctx):
 def test_activity_records_a_free_form_block(ctx):
   """The context manager, used the way a CLI verb would use it."""
   with activity.Activity(ctx, "refresh", app="demo.app") as act:
-    logging.getLogger("harbor.lifecycle").info("stopped")
+    logging.getLogger("kelso.lifecycle").info("stopped")
     act.write("copied 3 volumes\n")
-    logging.getLogger("harbor.lifecycle").info("started")
+    logging.getLogger("kelso.lifecycle").info("started")
 
   assert act.error is None
   body = (ctx.config.activity_root / act.log).read_text()
-  assert "# harbor refresh demo.app" in body
+  assert "# kelso refresh demo.app" in body
   assert re.search(r"\d\d:\d\d:\d\dZ \w+ +stopped", body)
   assert "copied 3 volumes" in body
   assert re.search(r"\d\d:\d\d:\d\dZ \w+ +started", body)
@@ -193,7 +193,7 @@ def test_activity_records_a_free_form_block(ctx):
 def test_activity_records_a_failure_and_reraises(ctx):
   act = activity.Activity(ctx, "refresh", app="demo.app")
   with pytest.raises(ValueError, match="volume is gone"), act:
-    logging.getLogger("harbor.lifecycle").info("stopping")
+    logging.getLogger("kelso.lifecycle").info("stopping")
     raise ValueError("volume is gone")
 
   assert act.error == "volume is gone"
@@ -207,7 +207,7 @@ def test_activity_records_a_failure_and_reraises(ctx):
 def test_activity_echo_copies_the_log_to_a_stream(ctx):
   echo = io.StringIO()
   with activity.Activity(ctx, "refresh", echo=echo) as act:
-    logging.getLogger("harbor").info("working")
+    logging.getLogger("kelso").info("working")
 
   # Same bytes, both places -- but the trailer belongs to the file alone.
   assert "working" in echo.getvalue()

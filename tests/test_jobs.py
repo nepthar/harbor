@@ -6,11 +6,11 @@ import io
 
 import pytest
 
-from harbor.jobs import DONE, Job
-from harbor.jobs.job import logger
-from harbor.lib import activity
-from harbor.lib.config import load_config
-from harbor.lib.harbor import HarborCtx
+from kelso.jobs import DONE, Job
+from kelso.jobs.job import logger
+from kelso.lib import activity
+from kelso.lib.config import load_config
+from kelso.lib.kelso import KelsoCtx
 
 
 class SleepJob(Job):
@@ -34,10 +34,10 @@ class SleepJob(Job):
 
 
 @pytest.fixture
-def ctx(harbor_env) -> HarborCtx:
+def ctx(kelso_env) -> KelsoCtx:
   cfg = load_config()
   assert cfg is not None
-  return HarborCtx(cfg)
+  return KelsoCtx(cfg)
 
 
 def _log_text(ctx, job) -> str:
@@ -46,7 +46,7 @@ def _log_text(ctx, job) -> str:
 
 
 def test_call_files_an_activity_log(ctx):
-  job = SleepJob.call({"seconds": "0", "say_name": "harbor"}, ctx)
+  job = SleepJob.call({"seconds": "0", "say_name": "kelso"}, ctx)
 
   assert job.state == DONE
   assert job.error is None
@@ -62,19 +62,19 @@ def test_call_files_an_activity_log(ctx):
   assert job.log == runs[0]["log"]
 
   body = _log_text(ctx, job)
-  assert "# harbor sleep" in body
-  assert "Hello, harbor! Sleeping for 0 seconds..." in body
+  assert "# kelso sleep" in body
+  assert "Hello, kelso! Sleeping for 0 seconds..." in body
   assert "Done sleeping for 0 seconds!" in body
   assert "— ok" in body
 
 
 def test_echo_copies_the_log_to_the_stream(ctx):
   echo = io.StringIO()
-  job = SleepJob.call({"seconds": "0", "say_name": "harbor"}, ctx, echo=echo)
+  job = SleepJob.call({"seconds": "0", "say_name": "kelso"}, ctx, echo=echo)
 
   assert job.state == DONE
   # Same bytes, both places: the terminal sees what the log file keeps.
-  assert "Hello, harbor!" in echo.getvalue()
+  assert "Hello, kelso!" in echo.getvalue()
   assert echo.getvalue() in _log_text(ctx, job)
 
 

@@ -3,7 +3,7 @@
 Copying data volumes is done by a throwaway container rather than by this
 process, because containers write their files as root. The fake docker runs the
 container's script on the host, so what these tests pin down is the command
-harbor builds and the data that survives the round trip; whether the *real*
+kelso builds and the data that survives the round trip; whether the *real*
 container preserves root ownership is a live test in docs/testing.md.
 """
 
@@ -17,18 +17,18 @@ from pathlib import Path
 import pytest
 import yaml
 
-from harbor.lib.apps import read_last_app_action
-from harbor.lib.config import load_config_file
-from harbor.lib.harbor import HarborCtx
-from harbor.lib.lifecycle.rootfs import ROOTFS_IMAGE, run_as_root
+from kelso.lib.apps import read_last_app_action
+from kelso.lib.config import load_config_file
+from kelso.lib.kelso import KelsoCtx
+from kelso.lib.lifecycle.rootfs import ROOTFS_IMAGE, run_as_root
 
 BASIC = "io.p2net.basic-features"
 
 
-def _snapshot(harbor_env, app_id: str, label: str) -> str:
+def _snapshot(kelso_env, app_id: str, label: str) -> str:
   """Stop `app_id`, snapshot it, and return the snapshot name."""
-  assert harbor_env.run("stop", app_id).returncode == 0
-  taken = harbor_env.run("snapshot", app_id, "--label", label)
+  assert kelso_env.run("stop", app_id).returncode == 0
+  taken = kelso_env.run("snapshot", app_id, "--label", label)
   assert taken.returncode == 0, taken.stderr
   written = Path(taken.stdout.split("written to ")[1].strip())
   name = written.name.removesuffix(".tar.gz")
@@ -37,11 +37,11 @@ def _snapshot(harbor_env, app_id: str, label: str) -> str:
   return name
 
 
-def _root_runs(harbor_env) -> list[list[str]]:
+def _root_runs(kelso_env) -> list[list[str]]:
   """Every `docker run` the fake recorded, oldest first."""
   return [
     entry["args"]
-    for entry in map(json.loads, harbor_env.docker_log.read_text().splitlines())
+    for entry in map(json.loads, kelso_env.docker_log.read_text().splitlines())
     if entry["args"][0] == "run"
   ]
 
@@ -50,21 +50,21 @@ def _mounts(args: list[str]) -> list[str]:
   return [args[i + 1] for i, arg in enumerate(args) if arg == "-v"]
 
 
-def test_snapshot_copies_data_volumes_in_a_container(harbor_env):
-  """The copy harbor cannot do itself: `cp -a` over root-owned volume files."""
-  assert harbor_env.run("install", BASIC).returncode == 0
-  volume = harbor_env.volumes_root / "data" / BASIC / "config"
+def test_snapshot_copies_data_volumes_in_a_container(kelso_env):
+  """The copy kelso cannot do itself: `cp -a` over root-owned volume files."""
+  assert kelso_env.run("install", BASIC).returncode == 0
+  volume = kelso_env.volumes_root / "data" / BASIC / "config"
   (volume / "db.txt").write_text("v1")
   # cp -a must not follow this: dereferencing a symlink inside a volume is how
   # a snapshot silently becomes a different thing than the volume was.
   (volume / "current").symlink_to("db.txt")
 
-  taken = harbor_env.run("snapshot", BASIC, "--label", "one")
+  taken = kelso_env.run("snapshot", BASIC, "--label", "one")
   assert taken.returncode == 0, taken.stderr
   archive = Path(taken.stdout.split("written to ")[1].strip())
 
-  copy = next(args for args in _root_runs(harbor_env) if "cp -a -- " in args[-1])
-  staged = harbor_env.root / "var" / "temp" / "current_snapshot" / "volumes" / "data"
+  copy = next(args for args in _root_runs(kelso_env) if "cp -a -- " in args[-1])
+  staged = kelso_env.root / "var" / "temp" / "current_snapshot" / "volumes" / "data"
   assert copy[:2] == ["run", "--rm"]
   assert copy[-3:-1] == ["sh", "-c"]
   assert copy[copy.index("sh") - 1] == ROOTFS_IMAGE
@@ -74,23 +74,23 @@ def test_snapshot_copies_data_volumes_in_a_container(harbor_env):
   assert copy[-1] == f"cp -a -- {volume} {staged}"
 
   # The archive is written by this process, not the container, so it belongs to
-  # whoever ran harbor. The container is never even told where it goes.
+  # whoever ran kelso. The container is never even told where it goes.
   assert archive.stat().st_uid == os.getuid()
-  tar = next(args for args in _root_runs(harbor_env) if args[-1].startswith("tar -czf"))
+  tar = next(args for args in _root_runs(kelso_env) if args[-1].startswith("tar -czf"))
   assert str(archive) not in " ".join(tar)
 
 
-def test_restore_brings_a_data_volume_back(harbor_env):
-  assert harbor_env.run("install", BASIC).returncode == 0
-  volume = harbor_env.volumes_root / "data" / BASIC / "config"
+def test_restore_brings_a_data_volume_back(kelso_env):
+  assert kelso_env.run("install", BASIC).returncode == 0
+  volume = kelso_env.volumes_root / "data" / BASIC / "config"
   (volume / "db.txt").write_text("v1")
   (volume / "current").symlink_to("db.txt")
-  name = _snapshot(harbor_env, BASIC, "one")
+  name = _snapshot(kelso_env, BASIC, "one")
 
   (volume / "db.txt").write_text("v2")
   (volume / "stray.txt").write_text("written since")
 
-  restored = harbor_env.run("restore", BASIC, name, "-y")
+  restored = kelso_env.run("restore", BASIC, name, "-y")
   assert restored.returncode == 0, restored.stderr
   assert (volume / "db.txt").read_text() == "v1"
   assert not (volume / "stray.txt").exists()
@@ -100,92 +100,92 @@ def test_restore_brings_a_data_volume_back(harbor_env):
   # One container removes the live volume and copies the snapshot's in, so a
   # container that cannot start has deleted nothing.
   put_back = next(
-    args for args in _root_runs(harbor_env) if args[-1].startswith("set -e;")
+    args for args in _root_runs(kelso_env) if args[-1].startswith("set -e;")
   )
-  data_root = harbor_env.volumes_root / "data" / BASIC
-  source = harbor_env.root / "snapshots" / BASIC / name / "volumes" / "data" / "config"
+  data_root = kelso_env.volumes_root / "data" / BASIC
+  source = kelso_env.root / "snapshots" / BASIC / name / "volumes" / "data" / "config"
   assert _mounts(put_back) == [f"{data_root}:{data_root}", f"{source}:{source}"]
   assert put_back[-1] == f"set -e; rm -rf -- {volume}; cp -a -- {source} {data_root}"
 
 
-def test_restore_rebuilds_a_removed_app_from_its_snapshot(harbor_env):
+def test_restore_rebuilds_a_removed_app_from_its_snapshot(kelso_env):
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "before")
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "before")
 
-  assert harbor_env.run("rm", app_id, "-y").returncode == 0
-  assert not (harbor_env.run_root / app_id).exists()
-  assert not harbor_env.app_logtab(app_id).exists()
-  assert app_id not in harbor_env.read_db().get("routes", {})
+  assert kelso_env.run("rm", app_id, "-y").returncode == 0
+  assert not (kelso_env.run_root / app_id).exists()
+  assert not kelso_env.app_logtab(app_id).exists()
+  assert app_id not in kelso_env.read_db().get("routes", {})
 
-  restored = harbor_env.run("restore", app_id, name, "-y")
+  restored = kelso_env.run("restore", app_id, name, "-y")
   assert restored.returncode == 0, restored.stderr
-  assert not (harbor_env.root / "snapshots" / app_id / name).exists()
-  assert harbor_env.app_logtab(app_id).is_file()
+  assert not (kelso_env.root / "snapshots" / app_id / name).exists()
+  assert kelso_env.app_logtab(app_id).is_file()
 
   # compose.yml is regenerated rather than copied back, so the host ports it
-  # publishes are the ones harbordb has just re-allocated.
-  compose = yaml.safe_load((harbor_env.run_root / app_id / "compose.yml").read_text())
+  # publishes are the ones kelsodb has just re-allocated.
+  compose = yaml.safe_load((kelso_env.run_root / app_id / "compose.yml").read_text())
   assert compose["services"]["main"]["ports"] == ["41000:8080", "9000:80"]
-  assert harbor_env.read_db()["routes"][app_id]["web"]["host_port"] == 41000
+  assert kelso_env.read_db()["routes"][app_id]["web"]["host_port"] == 41000
 
-  ctx = HarborCtx(load_config_file(harbor_env.config))
+  ctx = KelsoCtx(load_config_file(kelso_env.config))
   assert read_last_app_action(app_id, ctx) == f"restored - {name}"
 
-  assert harbor_env.run("start", app_id).returncode == 0
+  assert kelso_env.run("start", app_id).returncode == 0
 
 
-def test_restore_clobbers_whatever_is_there_now(harbor_env):
+def test_restore_clobbers_whatever_is_there_now(kelso_env):
   """Roll-forward: the snapshot's state simply becomes the current state.
 
   Nothing about the restored app records that it came from an older point;
   today's config and today's stray files are gone, not set aside.
   """
   app_id = "routes-demo"
-  assert harbor_env.run("start", app_id, "--set", "subdomain=photos").returncode == 0
-  name = _snapshot(harbor_env, app_id, "photos")
+  assert kelso_env.run("start", app_id, "--set", "subdomain=photos").returncode == 0
+  name = _snapshot(kelso_env, app_id, "photos")
 
-  assert harbor_env.run("config", app_id, "--set", "subdomain=albums").returncode == 0
-  scratch = harbor_env.run_root / app_id / "happ" / "scratch.txt"
+  assert kelso_env.run("config", app_id, "--set", "subdomain=albums").returncode == 0
+  scratch = kelso_env.run_root / app_id / "bundle" / "scratch.txt"
   scratch.write_text("left over from today")
 
-  restored = harbor_env.run("restore", app_id, name, "-y")
+  restored = kelso_env.run("restore", app_id, name, "-y")
   assert restored.returncode == 0, restored.stderr
 
-  shown = harbor_env.run("config", app_id, "--get", "subdomain")
+  shown = kelso_env.run("config", app_id, "--get", "subdomain")
   assert shown.stdout.strip() == "photos"
   assert not scratch.exists()
 
   pre = [
     p.name.removesuffix(".tar.gz")
-    for p in (harbor_env.root / "snapshots" / app_id).iterdir()
+    for p in (kelso_env.root / "snapshots" / app_id).iterdir()
     if p.name.endswith("_pre-restore.tar.gz")
   ]
   assert pre, "restore over a live run dir should take a pre-restore snapshot"
 
 
-def test_restore_no_snapshot_skips_pre_restore(harbor_env):
+def test_restore_no_snapshot_skips_pre_restore(kelso_env):
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "kept")
-  before = {p.name for p in (harbor_env.root / "snapshots" / app_id).iterdir()}
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "kept")
+  before = {p.name for p in (kelso_env.root / "snapshots" / app_id).iterdir()}
 
-  restored = harbor_env.run("restore", app_id, name, "-y", "--no-snapshot")
+  restored = kelso_env.run("restore", app_id, name, "-y", "--no-snapshot")
   assert restored.returncode == 0, restored.stderr
 
-  after = {p.name for p in (harbor_env.root / "snapshots" / app_id).iterdir()}
+  after = {p.name for p in (kelso_env.root / "snapshots" / app_id).iterdir()}
   assert after == before
 
 
-def test_restoring_latest_pre_restore_skips_new_snapshot(harbor_env):
+def test_restoring_latest_pre_restore_skips_new_snapshot(kelso_env):
   """Undoing the last restore must not mint yet another pre-restore snapshot."""
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "kept")
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "kept")
 
-  restored = harbor_env.run("restore", app_id, name, "-y")
+  restored = kelso_env.run("restore", app_id, name, "-y")
   assert restored.returncode == 0, restored.stderr
-  snapshots = harbor_env.root / "snapshots" / app_id
+  snapshots = kelso_env.root / "snapshots" / app_id
   pre = sorted(
     p.name.removesuffix(".tar.gz")
     for p in snapshots.iterdir()
@@ -193,7 +193,7 @@ def test_restoring_latest_pre_restore_skips_new_snapshot(harbor_env):
   )
   assert len(pre) == 1
 
-  undo = harbor_env.run("restore", app_id, pre[-1], "-y")
+  undo = kelso_env.run("restore", app_id, pre[-1], "-y")
   assert undo.returncode == 0, undo.stderr
   after = {
     p.name.removesuffix(".tar.gz")
@@ -203,53 +203,53 @@ def test_restoring_latest_pre_restore_skips_new_snapshot(harbor_env):
   assert after == set(pre)
 
 
-def test_restore_refuses_while_containers_are_running(harbor_env):
+def test_restore_refuses_while_containers_are_running(kelso_env):
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "up")
-  assert harbor_env.run("start", app_id).returncode == 0
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "up")
+  assert kelso_env.run("start", app_id).returncode == 0
 
-  refused = harbor_env.run("restore", app_id, name, "-y")
+  refused = kelso_env.run("restore", app_id, name, "-y")
   assert refused.returncode == 1
-  assert f"harbor stop {app_id}" in refused.stderr
+  assert f"kelso stop {app_id}" in refused.stderr
 
 
-def test_restore_names_the_snapshots_it_could_have_used(harbor_env):
+def test_restore_names_the_snapshots_it_could_have_used(kelso_env):
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "real")
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "real")
 
-  missing = harbor_env.run("restore", app_id, "nosuchsnapshot", "-y")
+  missing = kelso_env.run("restore", app_id, "nosuchsnapshot", "-y")
   assert missing.returncode == 1
   assert name in missing.stderr
 
-  unknown = harbor_env.run("restore", "never-snapshotted", name, "-y")
+  unknown = kelso_env.run("restore", "never-snapshotted", name, "-y")
   assert unknown.returncode == 1
   assert "No snapshots found" in unknown.stderr
 
 
-def test_restore_without_snapshot_lists_recent_ones(harbor_env):
+def test_restore_without_snapshot_lists_recent_ones(kelso_env):
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "listed")
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "listed")
 
-  omitted = harbor_env.run("restore", app_id)
+  omitted = kelso_env.run("restore", app_id)
   assert omitted.returncode == 1
   assert "SNAPSHOT is required" in omitted.stderr
   assert name in omitted.stderr
-  assert f"harbor restore {app_id}" in omitted.stderr
+  assert f"kelso restore {app_id}" in omitted.stderr
 
 
-def test_restore_without_snapshot_caps_the_list_at_ten(harbor_env):
+def test_restore_without_snapshot_caps_the_list_at_ten(kelso_env):
   """Plant archives directly: real snapshots collide within the same minute."""
   app_id = "ports-demo"
-  snap_dir = harbor_env.root / "snapshots" / app_id
+  snap_dir = kelso_env.root / "snapshots" / app_id
   snap_dir.mkdir(parents=True)
   names = [f"2020-01-{day:02d}_00-00Z" for day in range(1, 13)]
   for name in names:
     (snap_dir / f"{name}.tar.gz").write_bytes(b"")
 
-  omitted = harbor_env.run("restore", app_id)
+  omitted = kelso_env.run("restore", app_id)
   assert omitted.returncode == 1
   # Newest first, capped at 10; the two oldest stay off the list.
   assert names[0] not in omitted.stderr
@@ -258,30 +258,30 @@ def test_restore_without_snapshot_caps_the_list_at_ten(harbor_env):
   assert omitted.stderr.index(names[-1]) < omitted.stderr.index(names[2])
 
 
-def test_restore_declined_at_the_prompt_changes_nothing(harbor_env):
+def test_restore_declined_at_the_prompt_changes_nothing(kelso_env):
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
-  name = _snapshot(harbor_env, app_id, "kept")
-  marker = harbor_env.run_root / app_id / "happ" / "marker.txt"
+  assert kelso_env.run("start", app_id).returncode == 0
+  name = _snapshot(kelso_env, app_id, "kept")
+  marker = kelso_env.run_root / app_id / "bundle" / "marker.txt"
   marker.write_text("still here")
 
-  declined = harbor_env.run("restore", app_id, name, input="n\n")
+  declined = kelso_env.run("restore", app_id, name, input="n\n")
   assert declined.returncode == 0, declined.stderr
   assert "Nothing restored." in declined.stdout
   assert marker.exists()
 
 
-def test_snapshot_stops_and_restarts_a_running_app(harbor_env):
-  """Snapshot holds the app, releases harbor during the copy, and brings it back."""
+def test_snapshot_stops_and_restarts_a_running_app(kelso_env):
+  """Snapshot holds the app, releases kelso during the copy, and brings it back."""
   app_id = "ports-demo"
-  assert harbor_env.run("start", app_id).returncode == 0
+  assert kelso_env.run("start", app_id).returncode == 0
 
-  taken = harbor_env.run("snapshot", app_id, "--label", "live")
+  taken = kelso_env.run("snapshot", app_id, "--label", "live")
   assert taken.returncode == 0, taken.stderr
   archive = Path(taken.stdout.split("written to ")[1].strip())
   assert archive.is_file()
 
-  ps = harbor_env.run("ps")
+  ps = kelso_env.run("ps")
   assert ps.returncode == 0, ps.stderr
   assert app_id in ps.stdout
   assert "running" in ps.stdout
@@ -290,24 +290,24 @@ def test_snapshot_stops_and_restarts_a_running_app(harbor_env):
 # --- what does and does not need a container -------------------------------
 
 
-def test_a_volumeless_snapshot_is_cleaned_up_without_a_container(harbor_env):
+def test_a_volumeless_snapshot_is_cleaned_up_without_a_container(kelso_env):
   """Nothing in it is root-owned, so paying for a container would only make
   cleanup fail whenever docker is down."""
-  assert harbor_env.run("install", "ports-demo").returncode == 0
-  taken = harbor_env.run("snapshot", "ports-demo", "--label", "bare")
+  assert kelso_env.run("install", "ports-demo").returncode == 0
+  taken = kelso_env.run("snapshot", "ports-demo", "--label", "bare")
   assert taken.returncode == 0, taken.stderr
 
   archive = Path(taken.stdout.split("written to ")[1].strip())
   assert archive.is_file()
   assert not (archive.parent / archive.name.removesuffix(".tar.gz")).exists()
   # The archive itself still needs one; removing the staging folder does not.
-  assert not [args for args in _root_runs(harbor_env) if "rm -rf -- " in args[-1]]
+  assert not [args for args in _root_runs(kelso_env) if "rm -rf -- " in args[-1]]
 
 
 def test_a_failed_extract_reports_itself_not_its_cleanup(tmp_path, monkeypatch):
   """The cleanup runs in the same container that just failed, so it fails too.
   Its message must not replace the only one that says what went wrong."""
-  snapshot_mod = importlib.import_module("harbor.lib.lifecycle.snapshot")
+  snapshot_mod = importlib.import_module("kelso.lib.lifecycle.snapshot")
   archive = tmp_path / "2026-01-01_00-00Z.tar.gz"
   archive.write_bytes(b"not a tarball")
 

@@ -1,0 +1,39 @@
+[app]
+version      = "0.6.0"
+display_name = "Kelso UI"
+description  = "Web interface for kelso, over the kelsod admin socket"
+subdomain    = "kelso"
+
+[config]
+# Development escape hatch. Docker Desktop's bind mounts cannot carry a unix
+# socket, so on macOS the socket is visible in the container and unusable --
+# point this at `kelsod --port N --host 0.0.0.0` instead. Empty means use the
+# socket, which is what a Linux host should do.
+api_address = { default = "", desc = "host:port of kelsod, instead of the admin socket" }
+admin_pass  = { secret = true, desc = "password for the web ui" }
+
+[volumes]
+ui   = { kind = "app", src = "ui", desc = "The application"}
+venv = { kind = "temp", desc = "virtual env, dependencies, etc." }
+tls  = { kind = "data", desc = "self-signed cert for the https listener" }
+conn = { kind = "host", desc = "The $kelso/var/conn directory holding admin.sock" }
+
+[run.main]
+image   = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
+cmd     = ["/app/start.sh"]
+volumes = { ui = "/app", venv = "/venv", tls = "/tls", conn = "/kelso/conn" }
+routes  = { main = { port = "8080", scheme = "https" } }
+
+[run.main.env]
+KELSO_SOCKET            = "/kelso/conn/admin.sock"
+KELSO_API               = "${api_address}"
+ADMIN_PASSWORD           = "${admin_pass}"
+TLS_DOMAIN               = "${klso.domain}"
+PORT                     = "8080"
+PYTHONUNBUFFERED         = "1"
+UV_PROJECT_ENVIRONMENT   = "/venv"
+UV_NO_MANAGED_PYTHON     = "1"
+
+[commands.test]
+cmd = ["/bin/sh", "-c", "echo 'Hello, world!'"]
+desc = "Test running a command"
