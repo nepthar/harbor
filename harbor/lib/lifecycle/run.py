@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from pathlib import Path
 
 from harbor.lib.apps import AppID, record_app_action
-from harbor.lib.docker import DockerError, docker_run_command
+from harbor.lib.docker import DockerError, docker_run_command, sink_output
 from harbor.lib.harbor import HarborCtx
 from harbor.lib.lifecycle._common import container_recovery_message, logger
 from harbor.lib.lifecycle.routes import (
@@ -117,6 +118,29 @@ def logs(app_id: AppID, extra_args: list[str], ctx: HarborCtx) -> None:
     check=True,
     env=_compose_env(app_id, ctx),
   )
+
+
+def logs_text(app_id: AppID, ctx: HarborCtx, *, tail: int) -> str:
+  """The last `tail` lines of an app's container logs, as text.
+
+  Never follows, and returns docker's failure text rather than raising on one.
+  """
+  state = ctx.run_state(app_id)
+  if not state.compose_exists:
+    raise ValueError(
+      f"App {app_id} is not installed; run `harbor install {app_id}` first"
+    )
+
+  captured = io.StringIO()
+  with sink_output(captured):
+    docker_run_command(
+      ["compose", "logs", "--no-color", "--tail", str(tail)],
+      cwd=state.run_path,
+      json_output=False,
+      check=False,
+      env=_compose_env(app_id, ctx),
+    )
+  return captured.getvalue()
 
 
 def run_command(

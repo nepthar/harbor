@@ -103,6 +103,13 @@ elif args[:2] == ["compose", "down"]:
         state.write_text(json.dumps(containers))
     else:
         state.unlink(missing_ok=True)
+elif args[:2] == ["compose", "logs"]:
+    app_id = Path.cwd().name
+    for container in containers:
+        if container["app_id"] != app_id:
+            continue
+        unit = container["run_unit"]
+        print(f"{unit}-1  | hello from {unit}")
 elif args[0] == "run":
     # `docker run --rm -v HOST:HOST ... IMAGE sh -c SCRIPT`, harbor's stand-in
     # for sudo (harbor/lib/lifecycle/rootfs.py). Every bind maps a host path to

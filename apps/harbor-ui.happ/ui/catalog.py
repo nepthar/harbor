@@ -68,10 +68,7 @@ def repo_actions(repo):
       "Remove",
       "repo-remove",
       title=f"Remove {name}",
-      desc=(
-        f"Drops {name} from the catalog and deletes its mirrored copy."
-        f"{warning}"
-      ),
+      desc=(f"Drops {name} from the catalog and deletes its mirrored copy.{warning}"),
       args={"name": name},
       danger=True,
       done="/catalog",

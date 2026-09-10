@@ -239,6 +239,27 @@ def test_app_detail(harbor_env, client):
   ]
 
 
+def test_app_logs_returns_a_tail(harbor_env, client):
+  harbor_env.run("start", "basic-features", "--set", "admin_user=root")
+
+  body = client.get(f"/apps/{APP}/logs").json()
+  assert body["app_id"] == APP
+  assert body["tail"] == 200
+  assert "hello from main" in body["text"]
+  tail = ["compose", "logs", "--no-color", "--tail", "200"]
+  assert tail in _compose_calls(harbor_env)
+
+
+def test_app_logs_refuses_an_out_of_range_tail(harbor_env, client):
+  harbor_env.run("install", "basic-features")
+  assert client.get(f"/apps/{APP}/logs?tail=0").status_code == 400
+  assert client.get(f"/apps/{APP}/logs?tail=99999").status_code == 400
+
+
+def test_app_logs_for_an_uninstalled_app_is_404(harbor_env, client):
+  assert client.get("/apps/basic-features/logs").status_code == 404
+
+
 def test_app_detail_never_projects_a_secret(harbor_env, client):
   harbor_env.run("start", "basic-features", "--set", "admin_user=root")
 
